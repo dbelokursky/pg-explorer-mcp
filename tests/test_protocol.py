@@ -13,6 +13,7 @@ from pg_mcp.protocol import (
     Server,
     negotiate_protocol_version,
 )
+from pg_mcp.budget import DEFAULT_BUDGET
 from pg_mcp.tools import Tool, ToolError
 
 
@@ -27,6 +28,7 @@ def make_server() -> Server:
         [
             Tool("echo", "Echo", "Echo the text back", {"text": {"type": "string"}}, echo),
             Tool("fail", "Fail", "Always fails", {}, fail),
+            Tool("need", "Need", "Needs x", {"x": {"type": "string"}}, lambda args: ["got " + args["x"]], required=("x",)),
         ]
     )
 
@@ -41,12 +43,15 @@ def call(server: Server, method: str, params=None, msg_id=1) -> dict:
 
 
 class ProtocolTests(unittest.TestCase):
-    """The JSON-RPC layer, with version negotiation stubbed out."""
+    """The JSON-RPC layer, with version negotiation and the response budget stubbed out."""
 
     def setUp(self):
-        patcher = mock.patch.object(protocol, "negotiate_protocol_version", return_value="2025-06-18")
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for patcher in (
+            mock.patch.object(protocol, "negotiate_protocol_version", return_value="2025-06-18"),
+            mock.patch("pg_mcp.tools.fit_to_budget", side_effect=lambda lines, budget: lines),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.server = make_server()
 
     def test_initialize_announces_tools_and_instructions(self):
@@ -58,10 +63,17 @@ class ProtocolTests(unittest.TestCase):
 
     def test_tools_list_keeps_registration_order_and_marks_tools_read_only(self):
         tools = call(self.server, "tools/list")["result"]["tools"]
-        self.assertEqual([tool["name"] for tool in tools], ["echo", "fail"])
+        self.assertEqual([tool["name"] for tool in tools], ["echo", "fail", "need"])
         for tool in tools:
             self.assertTrue(tool["annotations"]["readOnlyHint"])
             self.assertFalse(tool["inputSchema"]["additionalProperties"])
+        self.assertEqual(tools[2]["inputSchema"]["required"], ["x"])
+        self.assertNotIn("required", tools[0]["inputSchema"])
+
+    def test_missing_required_argument_is_a_tool_error(self):
+        result = call(self.server, "tools/call", {"name": "need", "arguments": {}})["result"]
+        self.assertTrue(result["isError"])
+        self.assertIn("Missing argument(s): x", result["content"][0]["text"])
 
     def test_tools_call_returns_text_content(self):
         result = call(self.server, "tools/call", {"name": "echo", "arguments": {"text": "привет"}})["result"]
@@ -80,7 +92,7 @@ class ProtocolTests(unittest.TestCase):
     def test_unknown_tool_is_invalid_params(self):
         error = call(self.server, "tools/call", {"name": "drop_table", "arguments": {}})["error"]
         self.assertEqual(error["code"], INVALID_PARAMS)
-        self.assertIn("echo, fail", error["message"])
+        self.assertIn("echo, fail, need", error["message"])
 
     def test_unknown_method_is_method_not_found(self):
         # Clients of revision 2026-07-28 probe with server/discover and fall back on this error.
@@ -106,6 +118,14 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(reply.isascii())
         self.assertNotIn(b"\n", reply)
         self.assertEqual(json.loads(reply)["result"]["content"][0]["text"], "echo: таблица\nзаказы")
+
+
+class BudgetWiringTests(unittest.TestCase):
+    def test_every_tool_answer_goes_through_the_budget(self):
+        tool = Tool("echo", "Echo", "Echo", {"text": {"type": "string"}}, lambda args: "echo: " + args["text"])
+        with mock.patch("pg_mcp.tools.fit_to_budget", return_value=["… cut"]) as fit:
+            self.assertEqual(tool.call({"text": "hi"}), "… cut")
+        fit.assert_called_once_with(["echo: hi"], DEFAULT_BUDGET)
 
 
 class NegotiationTests(unittest.TestCase):
