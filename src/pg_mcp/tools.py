@@ -27,12 +27,21 @@ SAMPLE_ROWS_DEFAULT = 10
 SAMPLE_ROWS_LIMIT = 50
 RUN_SELECT_LIMIT = 200
 PLAN_LINES_LIMIT = 500
+SEARCH_LIMIT = 100
 
 # Tools per group profile, from structure only to free read-only SQL (ADR 0002).
 PROFILES: dict[str, tuple[str, ...]] = {
-    "schema": ("status", "list_tables", "describe_table"),
-    "explore": ("status", "list_tables", "describe_table", "sample_rows", "explain_query"),
-    "analyst": ("status", "list_tables", "describe_table", "sample_rows", "explain_query", "run_select"),
+    "schema": ("status", "list_tables", "search_schema", "describe_table"),
+    "explore": ("status", "list_tables", "search_schema", "describe_table", "sample_rows", "explain_query"),
+    "analyst": (
+        "status",
+        "list_tables",
+        "search_schema",
+        "describe_table",
+        "sample_rows",
+        "explain_query",
+        "run_select",
+    ),
 }
 DEFAULT_PROFILE = "explore"
 STRICTEST_PROFILE = "schema"
@@ -82,6 +91,37 @@ SIMILAR_RELATIONS_SQL = (
     + _READABLE_RELATIONS
     + "  AND c.relname ILIKE '%' || :fragment || '%'\n"
     + 'ORDER BY n.nspname COLLATE "C", c.relname COLLATE "C"\nLIMIT 10'
+)
+
+# Tables and views whose name or comment matches, then columns whose name or comment matches;
+# a table's own line comes before its columns. A UNION may only be ordered by its output columns,
+# so the collation is applied outside it.
+_SEARCH_MATCHES = """
+SELECT nspname, relname, relkind, estimate, comment, column_name, data_type, not_null, column_comment
+FROM (
+    SELECT r.nspname, r.relname, r.relkind, r.estimate, r.comment, NULL::name AS column_name,
+           NULL::text AS data_type, NULL::boolean AS not_null, NULL::text AS column_comment, 0 AS position
+    FROM readable r
+    WHERE r.relname ILIKE ANY (CAST(:patterns AS text[])) OR r.comment ILIKE ANY (CAST(:patterns AS text[]))
+    UNION ALL
+    SELECT r.nspname, r.relname, r.relkind, NULL::bigint, NULL::text, a.attname,
+           format_type(a.atttypid, a.atttypmod), a.attnotnull, col_description(a.attrelid, a.attnum), a.attnum
+    FROM readable r
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = r.oid AND a.attnum > 0 AND NOT a.attisdropped
+    WHERE a.attname ILIKE ANY (CAST(:patterns AS text[]))
+       OR col_description(a.attrelid, a.attnum) ILIKE ANY (CAST(:patterns AS text[]))
+) AS found
+ORDER BY nspname COLLATE "C", relname COLLATE "C", position
+LIMIT :limit
+"""
+
+SEARCH_SQL = (
+    "WITH readable AS (\nSELECT c.oid, n.nspname, c.relname, c.relkind, "
+    + _ESTIMATE
+    + " AS estimate, obj_description(c.oid, 'pg_class') AS comment"
+    + _READABLE_RELATIONS
+    + "  AND (CAST(:schema AS text) IS NULL OR n.nspname = CAST(:schema AS text))\n)"
+    + _SEARCH_MATCHES
 )
 
 COLUMNS_SQL = """
@@ -210,6 +250,14 @@ def build_tools(
             handler=lambda args: list_tables(db, args.get("schema")),
         ),
         Tool(
+            name="search_schema",
+            title=t("tool.search_schema.title"),
+            description=t("tool.search_schema.description", limit=SEARCH_LIMIT),
+            properties={"text": {"type": "string", "description": t("argument.text")}, "schema": schema_argument},
+            required=("text",),
+            handler=lambda args: search_schema(db, args.get("text"), args.get("schema")),
+        ),
+        Tool(
             name="describe_table",
             title=t("tool.describe_table.title"),
             description=t("tool.describe_table.description"),
@@ -304,18 +352,39 @@ def list_tables(db: Database, schema: Any | None) -> list[str]:
     return lines
 
 
+def search_schema(db: Database, text: Any, schema: Any) -> list[str]:
+    if not isinstance(text, str) or not text.strip():
+        raise ToolError(t("error.text"))
+    if schema is not None and (not isinstance(schema, str) or not schema.strip()):
+        raise ToolError(t("error.schema_search"))
+    fragment = text.strip()
+    rows = db.query(
+        SEARCH_SQL,
+        patterns=_like_patterns(fragment),
+        schema=schema.strip().strip('"') if schema else None,
+        limit=SEARCH_LIMIT + 1,
+    )
+    if not rows:
+        return [t("search.nothing", text=fragment)]
+    lines = []
+    for row in rows[:SEARCH_LIMIT]:
+        schema_name, relation, kind, estimate, comment, column, data_type, not_null, column_comment = row
+        if column is None:
+            lines.append(_describe_relation(schema_name, relation, kind, estimate, comment))
+        else:
+            name = f"{schema_name}.{relation}.{column}"
+            lines.append(_column_line(name, data_type, not_null=not_null, comment=column_comment))
+    if len(rows) > SEARCH_LIMIT:
+        lines.append(t("search.more", limit=SEARCH_LIMIT))
+    return lines
+
+
 def describe_table(db: Database, table: Any, schema: Any) -> list[str]:
     oid, schema_name, relation, kind, estimate, comment = _resolve_relation(db, table, schema)
     lines = [_describe_relation(schema_name, relation, kind, estimate, comment), t("describe.columns")]
     for column, data_type, not_null, default, column_comment in db.query(COLUMNS_SQL, oid=oid):
-        line = f"  {column} {data_type}"
-        if not_null:
-            line += " NOT NULL"
-        if default:
-            line += f" DEFAULT {shorten(default)}"
-        if column_comment:
-            line += f"  -- {shorten(column_comment)}"
-        lines.append(line)
+        line = _column_line(column, data_type, not_null=not_null, default=default, comment=column_comment)
+        lines.append(f"  {line}")
     constraints = db.query(CONSTRAINTS_SQL, oid=oid)
     _section(lines, t("describe.constraints"), (f"{name}: {shorten(definition)}" for name, definition in constraints))
     referenced_by = db.query(REFERENCED_BY_SQL, oid=oid, limit=REFERENCED_BY_LIMIT)
@@ -387,11 +456,39 @@ def _split_name(table: Any, schema: Any) -> tuple[str, str | None]:
 
 def _not_found(db: Database, name: str, schema: str | None) -> str:
     where = t("error.in_schema", schema=schema) if schema else ""
-    fragment = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    similar = [row[0] for row in db.query(SIMILAR_RELATIONS_SQL, fragment=fragment)]
+    similar = [row[0] for row in db.query(SIMILAR_RELATIONS_SQL, fragment=_like_escape(name))]
     if similar:
         return t("error.not_found_similar", name=name, where=where, similar=", ".join(similar))
     return t("error.not_found", name=name, where=where)
+
+
+def _like_escape(text: str) -> str:
+    """Text that LIKE matches literally: its wildcards and backslashes escaped."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _like_patterns(fragment: str) -> list[str]:
+    """ILIKE patterns for the usual spellings of a fragment.
+
+    Under LC_CTYPE=C, ILIKE folds only ASCII letters, so "заказ" would miss "Заказы";
+    searching for the lower, upper and capitalized spellings as well covers the common cases.
+    """
+    escaped = _like_escape(fragment)
+    spellings = dict.fromkeys((escaped, escaped.lower(), escaped.upper(), escaped.capitalize()))
+    return [f"%{spelling}%" for spelling in spellings]
+
+
+def _column_line(
+    name: str, data_type: str, *, not_null: bool, default: str | None = None, comment: str | None = None
+) -> str:
+    line = f"{name} {data_type}"
+    if not_null:
+        line += " NOT NULL"
+    if default:
+        line += f" DEFAULT {shorten(default)}"
+    if comment:
+        line += f"  -- {shorten(comment)}"
+    return line
 
 
 def _choose_columns(available: list[str], columns: Any, relation: str) -> list[str]:

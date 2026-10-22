@@ -32,6 +32,7 @@ English or Russian.
 |---|---|---|
 | `status` | which database, as which role, which profile and language, which limits; on failure, what to fix | all |
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
+| `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
@@ -188,6 +189,7 @@ Talk to the agent in plain words; it picks the tools.
 |---|---|
 | "Check the database connection" | `status` |
 | "Which tables are in the shop schema?" | `list_tables` |
+| "Where are the customers stored?" | `search_schema` |
 | "Describe the orders table" | `describe_table` |
 | "Show me a few orders" | `sample_rows` |
 | "Why is this query slow: …" | `explain_query` |
@@ -201,7 +203,7 @@ agent's interface.
 ```text
 pg-mcp 0.2.0 on Python 3.9.6, installed at /Users/me/pg-mcp
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
-profile: analyst (status, list_tables, describe_table, sample_rows, explain_query, run_select)
+profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 language: en
 database: connected to pg_mcp_demo as mcp_demo_agent, PostgreSQL 16.15
 limits: read only = on, statement timeout = 5s, list_tables returns at most 200 entries, answers are cut at 8000 characters
@@ -214,6 +216,13 @@ shop.customers | table | ~50 rows | Покупатели
 shop.order_items | table | ~2.2k rows | Позиции заказов: цена фиксируется на момент заказа
 shop.orders | table | ~500 rows | Заказы
 shop.products | table | ~20 rows | Каталог товаров
+```
+
+`search_schema` with `text: "customer"` finds the table and a column of another table:
+
+```text
+shop.customers | table | ~50 rows | Покупатели
+shop.orders.customer_id integer NOT NULL
 ```
 
 `describe_table` for `shop.orders`:
@@ -265,6 +274,7 @@ The last line is about the `hr` schema, which the role has no rights to: for the
 | What | How much |
 |---|---|
 | Entries from `list_tables` | at most 200; pass `schema` to narrow the list |
+| Matches from `search_schema` | at most 100 |
 | Rows from `sample_rows` | 10 by default, at most 50 |
 | Rows from `run_select` | at most 200 |
 | Plan lines | at most 500 |
@@ -281,7 +291,7 @@ The profile decides which tools the agent sees:
 
 | Profile | Tools | For |
 |---|---|---|
-| `schema` | `status`, `list_tables`, `describe_table` | people who need the structure only: the agent sees no data rows at all |
+| `schema` | `status`, `list_tables`, `search_schema`, `describe_table` | people who need the structure only: the agent sees no data rows at all |
 | `explore` | plus `sample_rows`, `explain_query` | developers; the default |
 | `analyst` | plus `run_select` and `explain_query` with `ANALYZE` | analysts who need their own SQL |
 

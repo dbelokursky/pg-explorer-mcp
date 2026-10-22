@@ -27,7 +27,7 @@ def test_unknown_profile_falls_back_to_the_strictest_with_a_warning() -> None:
     assert warning is not None
     assert "PG_MCP_PROFILE='admin'" in warning
     status = tools_for(profile, warning)["status"].call({})
-    assert "profile: schema (status, list_tables, describe_table)" in status
+    assert "profile: schema (status, list_tables, search_schema, describe_table)" in status
     assert "warning: PG_MCP_PROFILE='admin'" in status
 
 

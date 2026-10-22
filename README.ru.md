@@ -32,6 +32,7 @@ stdio. Работает на Python 3.9+ без установки пакето�
 |---|---|---|
 | `status` | к какой базе подключён, под какой ролью, какой профиль и язык, какие лимиты; при сбое — что исправить | все |
 | `list_tables` | таблицы, представления и внешние таблицы, доступные роли, с оценкой числа строк и комментариями | все |
+| `search_schema` | таблицы, представления и колонки, в имени или комментарии которых есть фрагмент, во всех доступных схемах; для больших баз | все |
 | `describe_table` | колонки с типами, `NOT NULL`, значениями по умолчанию и комментариями; ключи, ссылки на таблицу, индексы | все |
 | `sample_rows` | несколько строк таблицы, можно выбрать колонки | `explore`, `analyst` |
 | `explain_query` | план запроса без выполнения; в профиле `analyst` — и с реальным временем (`ANALYZE`) | `explore`, `analyst` |
@@ -189,6 +190,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 |---|---|
 | «Проверь подключение к базе» | `status` |
 | «Какие таблицы есть в схеме shop?» | `list_tables` |
+| «Где у нас хранятся цены?» | `search_schema` |
 | «Опиши таблицу заказов» | `describe_table` |
 | «Покажи несколько заказов» | `sample_rows` |
 | «Почему этот запрос медленный: …» | `explain_query` |
@@ -202,7 +204,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 ```text
 pg-mcp 0.2.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
-профиль: analyst (status, list_tables, describe_table, sample_rows, explain_query, run_select)
+профиль: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 язык: ru
 база: подключено к pg_mcp_demo под ролью mcp_demo_agent, PostgreSQL 16.15
 лимиты: только чтение = on, таймаут запроса = 5s, list_tables возвращает не больше 200 записей, ответы обрезаются до 8000 символов
@@ -215,6 +217,12 @@ shop.customers | таблица | ~50 строк | Покупатели
 shop.order_items | таблица | ~2,2 тыс. строк | Позиции заказов: цена фиксируется на момент заказа
 shop.orders | таблица | ~500 строк | Заказы
 shop.products | таблица | ~20 строк | Каталог товаров
+```
+
+`search_schema` с `text: "цена"` находит таблицу по комментарию:
+
+```text
+shop.order_items | таблица | ~2,2 тыс. строк | Позиции заказов: цена фиксируется на момент заказа
 ```
 
 `describe_table` для `shop.orders`:
@@ -264,6 +272,7 @@ id | status | created_at
 | Что | Сколько |
 |---|---|
 | Записей в `list_tables` | не больше 200; передайте `schema`, чтобы сузить |
+| Совпадений в `search_schema` | не больше 100 |
 | Строк в `sample_rows` | 10 по умолчанию, не больше 50 |
 | Строк в `run_select` | не больше 200 |
 | Строк плана | не больше 500 |
@@ -281,7 +290,7 @@ id | status | created_at
 
 | Профиль | Инструменты | Кому |
 |---|---|---|
-| `schema` | `status`, `list_tables`, `describe_table` | тем, кому нужна только структура: агент не видит ни одной строки данных |
+| `schema` | `status`, `list_tables`, `search_schema`, `describe_table` | тем, кому нужна только структура: агент не видит ни одной строки данных |
 | `explore` | плюс `sample_rows`, `explain_query` | разработчикам; профиль по умолчанию |
 | `analyst` | плюс `run_select` и `explain_query` с `ANALYZE` | аналитикам, которым нужен свой SQL |
 
