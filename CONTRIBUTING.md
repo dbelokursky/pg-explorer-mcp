@@ -32,9 +32,9 @@ uvx pre-commit install
 
 Интеграционные тесты ходят в настоящий PostgreSQL. Они создают и удаляют схемы `mcp_it`,
 `mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`, а тесты стендов — схемы
-`mcp_it_billing`, `mcp_it_orders`, одноимённые роли и базу `mcp_it_other` (нужен суперпользователь);
-тестам роли нужен `psql`, тестам TLS — `openssl` (они ставят перед сервером TLS-прослойку со своим
-сертификатом, самому серверу TLS не нужен):
+`mcp_it_billing`, `mcp_it_orders`, одноимённые роли и вторую базу `mcp_it_stand` (для неё нужен
+суперпользователь); тестам роли нужен `psql`, тестам TLS — `openssl` (они ставят перед сервером
+TLS-прослойку со своим сертификатом, самому серверу TLS не нужен):
 
 ```bash
 PG_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov

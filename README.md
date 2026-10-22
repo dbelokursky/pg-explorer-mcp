@@ -303,6 +303,7 @@ The last line is about the `hr` schema, which the role has no rights to: for the
 | A whole tool answer | 8000 characters (`PG_MCP_MAX_RESPONSE_CHARS`) |
 | One query | 5 seconds (`PG_MCP_STATEMENT_TIMEOUT_MS`) |
 | Open connections of an entry for stands | at most 8 (`PG_MCP_MAX_CONNECTIONS`) |
+| Stands in one call (`stands`) | at most 10; the rows of `run_select` and the matches of `search_schema` are shared among them, at least 10 per stand |
 
 A longer answer is cut at whole lines, and its last line says how much is shown. Local models run with
 small context windows, and an answer that is too long can end the agent's session.
@@ -359,6 +360,8 @@ exists in several databases of the stand.
 | "Which schemas are on dev7?" | `list_schemas` |
 | "Where are the orders on dev7?" | `search_schema` with `stand` and `text` |
 | "How many orders per status are in shop on dev7?" | `run_select` with `stand` and `schema` (profile `analyst`) |
+| "On which dev stand is there an order 123?" | `run_select` with `stands` and `schema` |
+| "Which stands have a discount column in shop?" | `search_schema` with `stands` and `text` |
 | "How does shop on dev7 differ from dev12?" | `compare_schema` with `stand_a`, `stand_b` and `schema` |
 
 Every answer starts with where it came from. Real answers on the demo database:
@@ -404,6 +407,31 @@ Without `schema`, `list_tables`, `search_schema` and `describe_table` cover the 
 come from the system catalog, which every login can see, through one login per database, and only the
 schemas of the registry are shown. The data stays behind each schema's own privileges: a login that
 cannot read a neighbouring schema gets `permission denied` there.
+
+**4. Several stands at once.** `search_schema` and `run_select` take `stands` instead of `stand`: stand
+names separated by commas or a pattern, `dev1,dev2,dev3` or `dev*`, at most 10 stands in one call. The
+stands are asked one after another, in the order `status` lists them, and the answer has a section per
+stand under its `stand / database / schema` line. A stand that is unreachable, has no login for the
+schema or rejects the query gets one line saying so under its header, and the other stands still answer.
+The 200 rows of `run_select` and the 100 matches of `search_schema` are shared among the stands, at least
+10 per stand, so the whole answer fits the budget. The call keeps to 25 of the client's 30 seconds: when
+the stands asked so far have used most of it, the rest are named as not tried, and the agent asks for
+them in another call.
+
+`run_select` with `stands: dev*`, `schema: shop` and `SELECT count(*) FROM orders WHERE id = 123`:
+
+```text
+dev1 / demo / shop
+count
+1
+(1 row)
+dev2 / demo / shop
+count
+0
+(1 row)
+dev3 / demo / shop
+  Connecting to dev3-db.example.com:5432 timed out. The host may be behind a firewall or a VPN.
+```
 
 A failure stays small. An unreachable stand or a broken login affects only the answers that need it,
 and `status` with `stand` tries a second login when the server turned the first one down. Without
@@ -487,6 +515,9 @@ Every tool call adds one JSON line. These two are real, from the demo database:
 - `outcome` is `ok`, `refused` (by the SQL check), `error` (bad arguments or a PostgreSQL error),
   `unavailable` (no connection) or `failed` (a bug in the server);
 - `rows` is how many rows the agent's own statement returned (`sample_rows`, `run_select`, `explain_query`);
+- a call over several stands (`stands`) is still one line: `stands` maps each stand to its outcome (`ok`,
+  `unavailable`, `error`, or `skipped` when the call had no time left for it), `rows` is the total, and
+  `role` and `database` are empty, since every stand has its own;
 - the rows themselves and the tools' answers are never written.
 
 The file is created readable by its owner only, since literals in SQL may carry personal data, and a

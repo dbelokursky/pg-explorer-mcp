@@ -1,9 +1,10 @@
 """Many stands against a real PostgreSQL: stands emulated on one server, a login per schema (ADR 0006).
 
 Run them with PG_MCP_IT=1 and the usual PG* variables pointing at a database where the tests may
-create and drop the schemas mcp_it_billing and mcp_it_orders and the roles of the same names, as a
-superuser that may also create and drop the database mcp_it_other. Every stand of the test registry
-points at that database, except dev5, which is the second database with the same schemas built
+create and drop the schemas mcp_it_billing and mcp_it_orders and the roles of the same names, with a
+superuser login that may also create and drop the database mcp_it_stand next to it. Most stands of
+the test registry point at the first database; dev4 and ift1 point at the second, where billing
+holds other rows and orders is built differently, so that stands answer
 differently; each schema's role logs in with a password from a password file of the test's own.
 """
 
@@ -28,6 +29,7 @@ pytestmark = pytest.mark.integration
 
 BILLING = "mcp_it_billing"
 ORDERS = "mcp_it_orders"
+OTHER_DATABASE = "mcp_it_stand"  # a second database: the stand that points at it answers differently
 PASSWORDS = {BILLING: "billing-secret", ORDERS: "orders-secret"}
 
 FIXTURES = (
@@ -41,17 +43,17 @@ FIXTURES = (
     f"INSERT INTO {ORDERS}.orders VALUES (10, 1), (11, 2), (12, 2)",
     f"CREATE TABLE {ORDERS}.invoices (id int)",  # the same name as in billing
 )
-
-# Stand dev5: a second database with the same schemas built differently, for compare_schema.
-OTHER_DATABASE = "mcp_it_other"
+# The second database. Stand dev4 reads its billing: the table again, with other rows. Stand ift1 reads
+# its orders, built differently, and the schema the first database lacks, for compare_schema.
 OTHER_FIXTURES = (
-    f"CREATE SCHEMA {BILLING}",  # exists, holds nothing
+    f"CREATE SCHEMA {BILLING}",
+    f"CREATE TABLE {BILLING}.invoices (id int PRIMARY KEY, amount numeric(10,2) NOT NULL)",
+    f"INSERT INTO {BILLING}.invoices VALUES (1, 10), (2, 20), (3, 30)",
     f"CREATE SCHEMA {ORDERS}",
     f"CREATE TABLE {ORDERS}.orders (id int PRIMARY KEY, invoice_id int CHECK (invoice_id > 0), note text DEFAULT '')",
     f"CREATE INDEX orders_invoice_idx ON {ORDERS}.orders (invoice_id)",
     f"CREATE TABLE {ORDERS}.shipments ()",  # a table without columns
-    "CREATE SCHEMA mcp_it_ghost",  # what the first database lacks
-    "CREATE TABLE mcp_it_ghost.spirits (id int)",
+    "CREATE SCHEMA mcp_it_ghost",  # exists, holds nothing
 )
 
 
@@ -78,10 +80,10 @@ def registry_text(settings: Settings, dead_port: str) -> str:
         f"[dev2.shop.mcp_it_aaa]\n{live}\n"  # a role the server does not have, first in line
         f"[dev2.shop.{BILLING}]\n{live}\n"
         f"[dev3.shop.mcp_it_ghost]\n{live}user={BILLING}\n\n"  # a schema the database does not have
-        f"[dev5.shop.{BILLING}]\n{other}\n"
-        f"[dev5.shop.{ORDERS}]\n{other}\n"
-        f"[dev5.shop.mcp_it_ghost]\n{other}user={ORDERS}\n\n"
+        f"[dev4.shop.{BILLING}]\n{other}\n"  # the same schema in the second database: other rows
         f"[dev9.shop.{BILLING}]\n{dead}\n"
+        f"[ift1.shop.{ORDERS}]\n{other}\n"  # the second database again: the same schema built differently
+        f"[ift1.shop.mcp_it_ghost]\n{other}user={ORDERS}\n\n"  # what the first database lacks
     )
 
 
@@ -94,6 +96,7 @@ def pool(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Pool]:
     for role, password in PASSWORDS.items():
         drop_role(admin, role)
         admin.run(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
+    # As the Windows job creates its database: the cluster's own encoding may not be UTF-8.
     admin.run(f"CREATE DATABASE {OTHER_DATABASE} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'")
     other = connect(OTHER_DATABASE)
     for statement in OTHER_FIXTURES:
@@ -142,7 +145,7 @@ def names_of(lines: list[str]) -> list[str]:
 
 class TestStatus:
     def test_lists_the_stands(self, tools: dict[str, Tool]) -> None:
-        assert "stands: 5 (dev1–dev3, dev5, dev9), connections in the registry: 9" in lines_of(tools["status"])
+        assert "stands: 6 (dev1–dev4, dev9, ift1), connections in the registry: 9" in lines_of(tools["status"])
 
     def test_checks_a_stand_with_a_login_of_its_own(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["status"], stand="dev1")
@@ -224,38 +227,33 @@ class TestStructure:
 
 
 class TestCompareSchema:
-    """One schema on two stands: dev5 is the second database, where the same schemas are built differently."""
+    """One schema on two stands: ift1 reads the second database, where orders is built differently."""
 
     def test_differences_are_listed_by_table(self, tools: dict[str, Tool]) -> None:
         index = f"CREATE INDEX orders_invoice_idx ON {ORDERS}.orders USING btree (invoice_id)"
-        assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b="dev5", schema=ORDERS) == [
-            f"dev1 / shop / {ORDERS}  vs  dev5 / shop / {ORDERS}",
+        assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b="ift1", schema=ORDERS) == [
+            f"dev1 / shop / {ORDERS}  vs  ift1 / shop / {ORDERS}",
             "only on dev1:",
             "  invoices | table",
-            "only on dev5:",
+            "only on ift1:",
             "  shipments | table",
             "differ:",
-            "  orders.invoice_id: dev1 integer NOT NULL | dev5 integer",
-            "  orders.note only on dev5: text DEFAULT ''::text",
-            "  orders: constraint orders_invoice_id_check only on dev5: CHECK (invoice_id > 0)",
-            f"  orders: index orders_invoice_idx only on dev5: {index}",
+            "  orders.invoice_id: dev1 integer NOT NULL | ift1 integer",
+            "  orders.note only on ift1: text DEFAULT ''::text",
+            "  orders: constraint orders_invoice_id_check only on ift1: CHECK (invoice_id > 0)",
+            f"  orders: index orders_invoice_idx only on ift1: {index}",
         ]
 
-    def test_the_same_structure_is_one_line(self, tools: dict[str, Tool]) -> None:
-        assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b="dev2", schema=BILLING) == [
-            f"dev1 / shop / {BILLING}  vs  dev2 / shop / {BILLING}",
+    @pytest.mark.parametrize("stand_b", ["dev2", "dev4"])  # the same database, and the other one with other rows
+    def test_the_same_structure_is_one_line_whatever_the_rows(self, tools: dict[str, Tool], stand_b: str) -> None:
+        assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b=stand_b, schema=BILLING) == [
+            f"dev1 / shop / {BILLING}  vs  {stand_b} / shop / {BILLING}",
             "identical: 1 table, 2 columns",
         ]
 
-    def test_an_empty_schema_is_compared_not_reported_missing(self, tools: dict[str, Tool]) -> None:
-        assert lines_of(tools["compare_schema"], stand_a="dev5", stand_b="dev1", schema=BILLING) == [
-            f"dev5 / shop / {BILLING}  vs  dev1 / shop / {BILLING}",
-            "only on dev1:",
-            "  invoices | table",
-        ]
-
-    @pytest.mark.parametrize(("stand_a", "stand_b"), [("dev3", "dev5"), ("dev5", "dev3")])
+    @pytest.mark.parametrize(("stand_a", "stand_b"), [("dev3", "ift1"), ("ift1", "dev3")])
     def test_a_schema_the_database_lacks_is_an_error(self, tools: dict[str, Tool], stand_a: str, stand_b: str) -> None:
+        # ift1 has the schema, empty; the database of dev3 has no such schema at all
         with pytest.raises(ToolError) as caught:
             tools["compare_schema"].call({"stand_a": stand_a, "stand_b": stand_b, "schema": "mcp_it_ghost"})
         assert str(caught.value) == (
@@ -295,6 +293,80 @@ class TestData:
         lines = lines_of(tools["explain_query"], stand="dev1", schema=BILLING, query=query, analyze=True)
         assert lines[0] == f"dev1 / shop / {BILLING}"
         assert any("Seq Scan on invoices" in line for line in lines)
+
+
+class TestManyStands:
+    """stands: the same request on several stands, each answering under its own label."""
+
+    def test_the_same_query_answers_stand_by_stand(self, tools: dict[str, Tool]) -> None:
+        query = "SELECT count(*) FROM invoices"
+        assert lines_of(tools["run_select"], stands="dev4,dev1", schema=BILLING, query=query) == [
+            f"dev1 / shop / {BILLING}",
+            "count",
+            "2",
+            "(1 row)",
+            f"dev4 / shop / {BILLING}",
+            "count",
+            "3",
+            "(1 row)",
+        ]
+
+    def test_a_pattern_asks_every_stand_and_a_failure_is_one_line(self, tools: dict[str, Tool]) -> None:
+        query = "SELECT count(*) FROM invoices"
+        lines = lines_of(tools["run_select"], stands="dev*", schema=BILLING, query=query)
+        first, second = lines[:4], lines[4:8]
+        assert first == [f"dev1 / shop / {BILLING}", "count", "2", "(1 row)"]
+        assert second == [f"dev2 / shop / {BILLING}", "count", "2", "(1 row)"]
+        assert lines[8] == "dev3"
+        assert lines[9].startswith(f"  Stand dev3 has no schema '{BILLING}' that the server has a login for.")
+        assert lines[10:15] == [f"dev4 / shop / {BILLING}", "count", "3", "(1 row)", f"dev9 / shop / {BILLING}"]
+        assert lines[15].startswith("  ")
+        assert len(lines) == 16
+
+    def test_the_rows_are_shared_among_the_stands(self, tools: dict[str, Tool]) -> None:
+        query = "SELECT n FROM generate_series(1, 100) AS n"
+        lines = lines_of(tools["run_select"], stands="dev1,dev2,dev4", schema=BILLING, query=query)
+        more = "(66 rows shown, there are more: narrow the query with WHERE, ORDER BY or LIMIT)"
+        assert lines.count(more) == 3
+        assert len(lines) == 3 * (2 + 66 + 1)
+
+    def test_a_query_that_fails_on_a_stand_is_one_line_there(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        query = f"SELECT count(*) FROM {ORDERS}.orders"  # billing may not read orders on either stand
+        lines = lines_of(tools["run_select"], stands="dev1,dev4", schema=BILLING, query=query)
+        assert (lines[0], lines[2], len(lines)) == (f"dev1 / shop / {BILLING}", f"dev4 / shop / {BILLING}", 4)
+        assert all(f"permission denied for schema {ORDERS}" in line for line in (lines[1], lines[3]))
+        assert pool.outcomes == {"dev1": "error", "dev4": "error"}
+
+    def test_search_covers_each_stand_database_by_database(self, tools: dict[str, Tool]) -> None:
+        found = names_of(lines_of(tools["search_schema"], stands="dev1,dev4", text="invoice"))
+        split = found.index("dev4 / shop")
+        assert found[0] == "dev1 / shop"
+        assert {f"{BILLING}.invoices", f"{ORDERS}.invoices"} <= set(found[1:split])
+        assert found[split + 1 :] == [f"{BILLING}.invoices"]
+
+    def test_search_in_one_schema_uses_the_login_of_each_stand(self, tools: dict[str, Tool]) -> None:
+        found = names_of(lines_of(tools["search_schema"], stands="dev1,dev4", text="invoice", schema=BILLING))
+        assert found == [
+            f"dev1 / shop / {BILLING}",
+            f"{BILLING}.invoices",
+            f"dev4 / shop / {BILLING}",
+            f"{BILLING}.invoices",
+        ]
+
+    def test_an_unreachable_stand_does_not_hide_the_others(self, tools: dict[str, Tool]) -> None:
+        found = names_of(lines_of(tools["search_schema"], stands="dev9,dev4", text="invoice", schema=BILLING))
+        assert found[:3] == [f"dev4 / shop / {BILLING}", f"{BILLING}.invoices", f"dev9 / shop / {BILLING}"]
+        assert found[3].startswith("  ")
+        assert len(found) == 4
+
+    def test_the_query_log_has_one_line_with_the_outcome_of_each_stand(self, pool: Pool, tmp_path: Path) -> None:
+        log = tmp_path / "queries.jsonl"
+        tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst", query_log=QueryLog(str(log), pool)))
+        tools["run_select"].call({"stands": "dev1,dev4,dev9", "schema": BILLING, "query": "SELECT * FROM invoices"})
+        (entry,) = (json.loads(line) for line in log.read_text(encoding="utf-8").splitlines())
+        assert entry["stands"] == {"dev1": "ok", "dev4": "ok", "dev9": "unavailable"}
+        assert (entry["outcome"], entry["rows"], entry["role"], entry["database"]) == ("ok", 5, None, None)
+        assert "stand" not in entry
 
 
 def test_only_the_recent_connections_stay_open(pool: Pool, tools: dict[str, Tool]) -> None:

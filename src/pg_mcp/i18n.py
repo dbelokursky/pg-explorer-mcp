@@ -306,10 +306,14 @@ EN: dict[str, str] = {
     # Many stands in one server entry (ADR 0006).
     "stands.instructions": (
         "This server reaches many stands. status lists them and list_schemas shows the schemas of one; every "
-        "tool takes stand, and reading data takes schema as well. compare_schema shows how one schema differs "
-        "between two stands."
+        "tool takes stand, and reading data takes schema as well. search_schema and run_select take stands "
+        "instead of stand to ask several stands the same thing in one call. compare_schema shows how one "
+        "schema differs between two stands."
     ),
     "stands.tool_note": "Pass stand, and schema to read data with that schema's login.",
+    "stands.tool_note_many": (
+        "Pass stand, or stands to ask several stands in one call; and schema to read data with that schema's login."
+    ),
     "stands.status_note": "Without stand it lists the stands; with stand it also checks that stand's connection.",
     "tool.list_schemas.title": "List schemas",
     "tool.list_schemas.description": (
@@ -317,6 +321,10 @@ EN: dict[str, str] = {
         "Call it before working on a stand you have not used yet."
     ),
     "argument.stand": 'Stand name, e.g. "dev7"; status lists the stands.',
+    "argument.stands": (
+        'Several stands in one call, instead of stand: names separated by commas or a pattern, e.g. "dev1,dev2" '
+        'or "dev*"; at most {limit} stands.'
+    ),
     "argument.stand_status": 'A stand to check, e.g. "dev7". Omit it for the list of stands.',
     "argument.database": "Database on the stand. Needed only when the schema exists in several of its databases.",
     "argument.schema_data": "Schema to work in: the server uses its login, and unqualified names resolve in it.",
@@ -325,13 +333,32 @@ EN: dict[str, str] = {
     "status.registry": "registry: {files}",
     "status.limits_stands": (
         "limits: list_tables returns at most {tables} entries per database, answers are cut at {budget} "
-        "characters, at most {connections} connections stay open"
+        "characters, at most {connections} connections stay open, stands covers at most {many} stands per call"
     ),
     "status.stand_hint": "pass stand to status to check that stand's connection",
     "status.checked_with": "checked with {label}",
     "stands.no_stand_argument": "Pass {argument}, one of: {stands}.",
     "stands.unknown": "No stand {stand!r} in the registry. Stands: {stands}.",
     "stands.unknown_similar": "No stand {stand!r} in the registry. Similar: {similar}.",
+    "stands.no_stand_or_stands": (
+        'Pass stand, one of: {stands}; or stands for several at once, e.g. "dev1,dev2" or "dev*".'
+    ),
+    "stands.bad_stands_argument": (
+        'stands must be stand names separated by commas or a pattern, e.g. "dev1,dev2" or "dev*". Stands: {stands}.'
+    ),
+    "stands.one_or_many": "Pass either stand or stands, not both.",
+    "stands.no_match": "No stand matches {pattern!r}. Stands: {stands}.",
+    "stands.too_many.one": (
+        "{patterns!r} means {count} stand ({stands}), and one call covers at most {limit}. "
+        "Narrow the pattern or name up to {limit} stands separated by commas."
+    ),
+    "stands.too_many.other": (
+        "{patterns!r} means {count} stands ({stands}), and one call covers at most {limit}. "
+        "Narrow the pattern or name up to {limit} stands separated by commas."
+    ),
+    "stands.out_of_time": (
+        "{stands}: not tried, the call would exceed its {budget} seconds; ask for them in another call."
+    ),
     "stands.no_schema_argument": (
         "Pass schema: on stand {stand} the server reads data with the login of the schema you name. "
         "list_schemas shows them."
@@ -629,10 +656,15 @@ RU: dict[str, str] = {
     "sql.reason.slots": "она меняет слоты репликации",
     "stands.instructions": (
         "Этот сервер работает со многими стендами. status перечисляет их, list_schemas показывает схемы стенда; "
-        "каждый инструмент принимает stand, а для чтения данных нужна ещё и schema. compare_schema показывает, "
-        "чем одна схема на одном стенде отличается от другого."
+        "каждый инструмент принимает stand, а для чтения данных нужна ещё и schema. search_schema и run_select "
+        "принимают вместо stand ещё и stands: один и тот же запрос к нескольким стендам за один вызов. "
+        "compare_schema показывает, чем одна схема на одном стенде отличается от другого."
     ),
     "stands.tool_note": "Передайте stand, а для чтения данных — schema: данные читаются под учёткой этой схемы.",
+    "stands.tool_note_many": (
+        "Передайте stand или stands — несколько стендов за один вызов, а для чтения данных — schema: данные "
+        "читаются под учёткой этой схемы."
+    ),
     "stands.status_note": "Без stand перечисляет стенды; со stand ещё и проверяет подключение к этому стенду.",
     "tool.list_schemas.title": "Список схем",
     "tool.list_schemas.description": (
@@ -640,6 +672,10 @@ RU: dict[str, str] = {
         "Вызывайте перед работой со стендом, на котором ещё не были."
     ),
     "argument.stand": 'Имя стенда, например "dev7"; status перечисляет стенды.',
+    "argument.stands": (
+        'Несколько стендов за один вызов, вместо stand: имена через запятую или шаблон, например "dev1,dev2" '
+        'или "dev*"; не больше {limit} стендов.'
+    ),
     "argument.stand_status": 'Стенд, который нужно проверить, например "dev7". Без него — список стендов.',
     "argument.database": "База на стенде. Нужна, только если схема есть в нескольких его базах.",
     "argument.schema_data": "Схема, в которой работать: сервер берёт её учётку, а имена без схемы ищутся в ней.",
@@ -648,13 +684,38 @@ RU: dict[str, str] = {
     "status.registry": "реестр: {files}",
     "status.limits_stands": (
         "лимиты: list_tables возвращает не больше {tables} записей на базу, ответы обрезаются до {budget} "
-        "символов, открытыми держатся не больше {connections} подключений"
+        "символов, открытыми держатся не больше {connections} подключений, stands охватывает не больше {many} "
+        "стендов за вызов"
     ),
     "status.stand_hint": "передайте status стенд, чтобы проверить подключение к нему",
     "status.checked_with": "проверено через {label}",
     "stands.no_stand_argument": "Передайте {argument}, один из: {stands}.",
     "stands.unknown": "В реестре нет стенда {stand!r}. Стенды: {stands}.",
     "stands.unknown_similar": "В реестре нет стенда {stand!r}. Похожие: {similar}.",
+    "stands.no_stand_or_stands": (
+        'Передайте stand, один из: {stands}; или stands для нескольких сразу, например "dev1,dev2" или "dev*".'
+    ),
+    "stands.bad_stands_argument": (
+        'Параметр stands должен быть именами стендов через запятую или шаблоном, например "dev1,dev2" или "dev*". '
+        "Стенды: {stands}."
+    ),
+    "stands.one_or_many": "Передайте либо stand, либо stands, но не оба сразу.",
+    "stands.no_match": "Под {pattern!r} не подходит ни один стенд. Стенды: {stands}.",
+    "stands.too_many.one": (
+        "{patterns!r} — это {count} стенд ({stands}), а один вызов охватывает не больше {limit}. "
+        "Сузьте шаблон или перечислите через запятую не больше {limit} стендов."
+    ),
+    "stands.too_many.few": (
+        "{patterns!r} — это {count} стенда ({stands}), а один вызов охватывает не больше {limit}. "
+        "Сузьте шаблон или перечислите через запятую не больше {limit} стендов."
+    ),
+    "stands.too_many.many": (
+        "{patterns!r} — это {count} стендов ({stands}), а один вызов охватывает не больше {limit}. "
+        "Сузьте шаблон или перечислите через запятую не больше {limit} стендов."
+    ),
+    "stands.out_of_time": (
+        "{stands}: не проверялись, вызов не уложился бы в {budget} секунд; спросите о них отдельным вызовом."
+    ),
     "stands.no_schema_argument": (
         "Передайте schema: на стенде {stand} сервер читает данные под учёткой схемы, которую вы назовёте. "
         "list_schemas покажет схемы."
