@@ -95,3 +95,54 @@ def test_check_reports_a_server_that_does_not_start(capsys: pytest.CaptureFixtur
     assert "did not answer" in capsys.readouterr().out
     assert install.check({"command": "/no/such/python", "args": []}) is False
     assert "did not run" in capsys.readouterr().out
+
+
+def test_language_goes_into_the_server_env() -> None:
+    assert install.server_entry(language="ru")["env"]["PG_MCP_LANG"] == "ru"
+
+
+def test_check_speaks_russian_when_asked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    assert install.main(["--check", "--lang", "ru"]) == 1
+    output = capsys.readouterr().out
+    assert "протокол 2025-06-18" in output
+    assert "база: недоступна" in output
+
+
+def test_language_comes_from_the_locale_and_is_written_into_the_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    for name in ("PG_MCP_LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LANG", "ru_RU.UTF-8")
+    assert install.main(["--client", "qwen"]) == 1
+    settings = read(tmp_path / ".qwen" / "settings.json")
+    assert isinstance(settings, dict)
+    assert settings["mcpServers"]["pg"]["env"]["PG_MCP_LANG"] == "ru"
+    output = capsys.readouterr().out
+    assert "MCP-сервер 'pg' зарегистрирован" in output
+    assert "дальше: qwen extensions link" in output
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "database: connected to shop as agent, PostgreSQL 16.4",
+        "база: подключено к shop под ролью agent, PostgreSQL 16.4",
+    ],
+)
+def test_a_connection_is_recognised_in_either_language(line: str) -> None:
+    assert install.connected(f"pg-mcp 0.3.0 on Python 3.9.6\n{line}\nlimits: read only = on")
+
+
+def test_an_unavailable_database_is_not_a_connection() -> None:
+    assert not install.connected("database: unavailable. Nothing accepts connections at db:5432.")
+
+
+def test_old_python_is_refused_in_the_chosen_language(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "version_info", (3, 8, 18))
+    with pytest.raises(SystemExit, match=r"pg-mcp нужен Python 3\.9 или новее"):
+        install.main(["--lang", "ru", "--check"])

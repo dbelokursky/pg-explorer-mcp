@@ -65,6 +65,8 @@ ignore = [
 # Tests assert, start subprocesses, build fixture SQL from constants and speak Russian on purpose.
 "tests/**" = ["S101", "S603", "S607", "S608", "PLR0915", "FBT003", "RUF001"]
 "install.py" = ["T201", "S603"]
+# The Russian catalog: Cyrillic letters that look Latin are the point there, not a trick.
+"src/pg_mcp/i18n.py" = ["RUF001"]
 "scripts/**" = ["T201"]
 
 [tool.ruff.format]

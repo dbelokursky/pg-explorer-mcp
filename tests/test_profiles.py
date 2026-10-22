@@ -9,7 +9,8 @@ from tests.helpers import ROOT
 
 def tools_for(profile: str, warning: str | None = None) -> dict[str, Tool]:
     database = Database({"PGPORT": "not-a-number"})  # never connects: building tools needs no database
-    return {tool.name: tool for tool in build_tools(database, str(ROOT), profile=profile, profile_warning=warning)}
+    warnings = [warning] if warning else []
+    return {tool.name: tool for tool in build_tools(database, str(ROOT), profile=profile, warnings=warnings)}
 
 
 @pytest.mark.parametrize(

@@ -57,3 +57,20 @@ def test_modern_session_needs_no_initialize(unreachable_env: dict[str, str]) -> 
     assert len(tools["result"]["tools"]) == 5
     assert status["result"]["resultType"] == "complete"
     assert "database: unavailable" in status["result"]["content"][0]["text"]
+
+
+def test_russian_session_stays_ascii_on_the_wire(unreachable_env: dict[str, str]) -> None:
+    lines, proc = run_stdio_session(
+        [
+            rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}}),
+            rpc(2, "tools/list"),
+            rpc(3, "tools/call", {"name": "status", "arguments": {}}),
+        ],
+        env=dict(unreachable_env, PG_MCP_LANG="ru"),
+    )
+    assert len(lines) == 3, proc.stderr.decode("utf-8", "replace")
+    assert all(line.isascii() for line in lines)
+    initialize, tools, status = (json.loads(line) for line in lines)
+    assert "Отвечайте пользователю" in initialize["result"]["instructions"]
+    assert tools["result"]["tools"][0]["title"] == "Состояние подключения к базе"
+    assert "база: недоступна" in status["result"]["content"][0]["text"]

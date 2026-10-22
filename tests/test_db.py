@@ -44,6 +44,12 @@ FIXTURES = (
     f"ANALYZE {SCHEMA}.orders",
     f"CREATE VIEW {SCHEMA}.big_orders AS SELECT * FROM {SCHEMA}.orders WHERE total > 5000",
     f"CREATE TABLE {ARCHIVE}.orders (id int)",
+    # Cyrillic names, unquoted as people write them: PostgreSQL folds only ASCII letters to lower case.
+    f"CREATE TABLE {SCHEMA}.заказы (номер int PRIMARY KEY, сумма numeric(10,2) NOT NULL)",
+    f"COMMENT ON TABLE {SCHEMA}.заказы IS 'Заказы по-русски'",
+    f"COMMENT ON COLUMN {SCHEMA}.заказы.сумма IS 'Сумма в рублях'",
+    f"INSERT INTO {SCHEMA}.заказы VALUES (1, 100), (2, 250.5), (3, 1000)",
+    f"ANALYZE {SCHEMA}.заказы",
 )
 
 
@@ -109,6 +115,7 @@ class TestStructure:
             f"{SCHEMA}.big_orders | view",
             f"{SCHEMA}.customers | table | ~10 rows",
             f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов",
+            f"{SCHEMA}.заказы | table | ~3 rows | Заказы по-русски",
         ]
 
     def test_unknown_schema_points_to_the_schemas_that_exist(self, tools: dict[str, Tool]) -> None:
@@ -250,6 +257,51 @@ class TestData:
     def test_database_errors_reach_the_model_as_text(self, analyst: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="SQLSTATE 42P01"):
             analyst["run_select"].call({"query": "SELECT * FROM no_such_table"})
+
+
+@pytest.mark.usefixtures("russian")
+class TestRussian:
+    """The same tools in Russian, on a table whose names are Cyrillic as well."""
+
+    def test_status_is_in_russian(self, tools: dict[str, Tool]) -> None:
+        text = tools["status"].call({})
+        assert "база: подключено к " in text
+        assert "лимиты: только чтение = on" in text
+
+    def test_list_tables_names_kinds_and_estimates_in_russian(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["list_tables"], schema=SCHEMA) == [
+            f"{SCHEMA}.big_orders | представление",
+            f"{SCHEMA}.customers | таблица | ~10 строк",
+            f"{SCHEMA}.orders | таблица | ~1 тыс. строк | Заказы клиентов",
+            f"{SCHEMA}.заказы | таблица | ~3 строки | Заказы по-русски",
+        ]
+
+    def test_describe_finds_a_cyrillic_name_written_with_a_capital(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["describe_table"], table="Заказы", schema=SCHEMA)
+        assert lines[:4] == [
+            f"{SCHEMA}.заказы | таблица | ~3 строки | Заказы по-русски",
+            "колонки:",
+            "  номер integer NOT NULL",
+            "  сумма numeric(10,2) NOT NULL  -- Сумма в рублях",
+        ]
+        assert lines[4] == "ограничения:"
+        assert "индексы:" in lines
+
+    def test_sample_rows_agree_with_their_count(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["sample_rows"], table=f"{SCHEMA}.заказы", columns="номер, СУММА", limit=2)
+        assert lines[:2] == [f"{SCHEMA}.заказы:", "номер | сумма"]
+        assert lines[-1] == "(показаны 2 строки, есть ещё: сузьте запрос через WHERE, ORDER BY или LIMIT)"
+
+    def test_mistakes_are_explained_in_russian(self, tools: dict[str, Tool], analyst: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=f"Похожие имена: {SCHEMA}.заказы"):
+            tools["describe_table"].call({"table": "заказ", "schema": SCHEMA})
+        with pytest.raises(ToolError, match="Команда DELETE запрещена"):
+            analyst["run_select"].call({"query": f"DELETE FROM {SCHEMA}.заказы"})
+        assert lines_of(analyst["run_select"], query=f"SELECT sum(сумма) FROM {SCHEMA}.заказы") == [
+            "sum",
+            "1350.50",
+            "(1 строка)",
+        ]
 
 
 class TestDefences:

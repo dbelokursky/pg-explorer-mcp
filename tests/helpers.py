@@ -56,5 +56,6 @@ def unreachable_database_env() -> dict[str, str]:
         PGDATABASE="pg_mcp_test",
         PGSSLMODE="disable",
         PGPASSFILE=str(ROOT / "no-such-pgpass"),
+        PG_MCP_LANG="en",  # not the locale of whoever runs the tests
     )
     return env

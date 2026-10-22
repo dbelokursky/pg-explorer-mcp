@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO
 
+from . import i18n
 from .budget import budget_from_env
 from .db import Database
 from .protocol import Server
@@ -38,9 +39,18 @@ def main(
 
     source = stdin if stdin is not None else sys.stdin.buffer
     sink = stdout if stdout is not None else sys.stdout.buffer
+    # The language comes first: every text built below is in it.
+    language, ignored = i18n.language_from_env(env, i18n.system_locale())
+    i18n.use(language)
+    warnings = []
+    if ignored is not None:
+        choices = ", ".join(i18n.LANGUAGES)
+        warnings.append(i18n.t("warning.language", value=ignored, choices=choices, fallback=language))
     db = Database(env)
-    profile, warning = profile_from_env(env)
-    server = Server(build_tools(db, INSTALL_DIR, budget_from_env(env), profile, warning))
+    profile, profile_warning = profile_from_env(env)
+    if profile_warning is not None:
+        warnings.append(profile_warning)
+    server = Server(build_tools(db, INSTALL_DIR, budget_from_env(env), profile, warnings))
     try:
         for line in iter(source.readline, b""):
             if not line.strip():

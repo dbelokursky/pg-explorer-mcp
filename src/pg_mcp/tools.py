@@ -18,6 +18,7 @@ from typing import Any, Callable, Union
 from . import __version__
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
+from .i18n import current, number, plural, t
 from .sqlguard import ROW_SOURCES, SqlRejectedError, check_read_only
 
 LIST_TABLES_LIMIT = 200
@@ -39,7 +40,8 @@ STRICTEST_PROFILE = "schema"
 # MCP tool annotations: clients may run read-only tools without asking the user.
 READ_ONLY_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 
-RELATION_KINDS = {"r": "table", "p": "partitioned table", "v": "view", "m": "materialized view", "f": "foreign table"}
+# pg_class.relkind values the tools show; each is named by the text kind.<relkind>.
+RELATION_KINDS = ("r", "p", "v", "m", "f")
 
 _READABLE_RELATIONS = """
 FROM pg_catalog.pg_class c
@@ -109,16 +111,6 @@ WHERE ix.indrelid = CAST(:oid AS oid)
 ORDER BY i.relname COLLATE "C"
 """
 
-TABLE_ARGUMENT = {
-    "type": "string",
-    "description": 'Table or view name, optionally with its schema: "orders" or "sales.orders".',
-}
-SCHEMA_ARGUMENT = {
-    "type": "string",
-    "description": "Schema to look in. Omit it to search every schema the role can read.",
-}
-QUERY_ARGUMENT = {"type": "string", "description": "One SQL statement in the PostgreSQL dialect."}
-
 Answer = Union[str, list[str]]
 
 
@@ -153,14 +145,14 @@ class Tool:
         if arguments is None:
             arguments = {}
         if not isinstance(arguments, dict):
-            raise ToolError("arguments must be a JSON object")
+            raise ToolError(t("error.arguments"))
         unknown = sorted(set(arguments) - set(self.properties))
         if unknown:
-            allowed = ", ".join(sorted(self.properties)) or "none"
-            raise ToolError(f"Unknown argument(s): {', '.join(unknown)}. Allowed: {allowed}.")
+            allowed = ", ".join(sorted(self.properties)) or t("error.none")
+            raise ToolError(t("error.unknown_arguments", unknown=", ".join(unknown), allowed=allowed))
         missing = [name for name in self.required if arguments.get(name) in (None, "")]
         if missing:
-            raise ToolError(f"Missing argument(s): {', '.join(missing)}.")
+            raise ToolError(t("error.missing_arguments", missing=", ".join(missing)))
         try:
             answer = self.handler(arguments)
         except (DatabaseUnavailableError, QueryFailedError, SqlRejectedError) as exc:
@@ -174,7 +166,7 @@ def profile_from_env(env: Mapping[str, str]) -> tuple[str, str | None]:
     raw = env.get("PG_MCP_PROFILE") or DEFAULT_PROFILE
     if raw.strip().lower() in PROFILES:
         return raw.strip().lower(), None
-    return STRICTEST_PROFILE, f"PG_MCP_PROFILE={raw!r} is not one of {', '.join(PROFILES)}; using {STRICTEST_PROFILE!r}"
+    return STRICTEST_PROFILE, t("warning.profile", value=raw, choices=", ".join(PROFILES), fallback=STRICTEST_PROFILE)
 
 
 def build_tools(
@@ -182,84 +174,55 @@ def build_tools(
     install_dir: str,
     budget: int = DEFAULT_BUDGET,
     profile: str = DEFAULT_PROFILE,
-    profile_warning: str | None = None,
+    warnings: Sequence[str] = (),
 ) -> list[Tool]:
+    """The tools of this profile, described in the current language."""
     names = PROFILES[profile]
     analyze = profile == "analyst"
-    explain_description = (
-        "Show PostgreSQL's plan for one read-only query: SELECT, WITH ... SELECT, VALUES or TABLE, "
-        "passed without EXPLAIN. The query is not run"
-    )
-    explain_properties: dict[str, Any] = {"query": QUERY_ARGUMENT}
+    table_argument = {"type": "string", "description": t("argument.table")}
+    schema_argument = {"type": "string", "description": t("argument.schema")}
+    query_argument = {"type": "string", "description": t("argument.query")}
+    explain_properties: dict[str, Any] = {"query": query_argument}
     if analyze:
-        explain_description += (
-            " unless analyze is true: then it runs inside a read-only transaction and the plan shows real timings"
-        )
-        explain_properties["analyze"] = {
-            "type": "boolean",
-            "description": "Run the query to get real timings. Default false.",
-        }
+        explain_properties["analyze"] = {"type": "boolean", "description": t("argument.analyze")}
     tools = [
         Tool(
             name="status",
-            title="Database connection status",
-            description=(
-                "Show which PostgreSQL database this server uses, as which role, the profile with its tools, "
-                "and the limits in force. Call it first, and again whenever another tool reports a connection "
-                "problem: its output says what to fix."
-            ),
+            title=t("tool.status.title"),
+            description=t("tool.status.description"),
             properties={},
             handler=lambda _args: status(
-                db, install_dir, budget=budget, profile=profile, names=names, warning=profile_warning
+                db, install_dir, budget=budget, profile=profile, names=names, warnings=warnings
             ),
         ),
         Tool(
             name="list_tables",
-            title="List tables",
-            description=(
-                "List the tables, views, materialized views and foreign tables the current role "
-                f"can read, with estimated row counts and comments. At most {LIST_TABLES_LIMIT} "
-                "entries; pass schema to narrow the list."
-            ),
-            properties={
-                "schema": {
-                    "type": "string",
-                    "description": 'Only list objects in this schema, e.g. "public". Omit to list all schemas.',
-                },
-            },
+            title=t("tool.list_tables.title"),
+            description=t("tool.list_tables.description", limit=LIST_TABLES_LIMIT),
+            properties={"schema": {"type": "string", "description": t("tool.list_tables.schema")}},
             handler=lambda args: list_tables(db, args.get("schema")),
         ),
         Tool(
             name="describe_table",
-            title="Describe a table",
-            description=(
-                "Describe one table or view the current role can read: columns with types, NOT NULL, "
-                "defaults and comments, then primary, unique and foreign keys, the tables that "
-                'reference it, and its indexes. Accepts "orders" or "sales.orders".'
-            ),
-            properties={"table": TABLE_ARGUMENT, "schema": SCHEMA_ARGUMENT},
+            title=t("tool.describe_table.title"),
+            description=t("tool.describe_table.description"),
+            properties={"table": table_argument, "schema": schema_argument},
             required=("table",),
             handler=lambda args: describe_table(db, args.get("table"), args.get("schema")),
         ),
         Tool(
             name="sample_rows",
-            title="Sample rows",
-            description=(
-                "Show a few rows of one table or view the current role can read, optionally only some columns. "
-                f"Default {SAMPLE_ROWS_DEFAULT} rows, at most {SAMPLE_ROWS_LIMIT}, in no particular order."
-            ),
+            title=t("tool.sample_rows.title"),
+            description=t("tool.sample_rows.description", default=SAMPLE_ROWS_DEFAULT, limit=SAMPLE_ROWS_LIMIT),
             properties={
-                "table": TABLE_ARGUMENT,
-                "schema": SCHEMA_ARGUMENT,
-                "columns": {
-                    "type": "string",
-                    "description": 'Comma-separated column names, e.g. "id, total". Omit for all.',
-                },
+                "table": table_argument,
+                "schema": schema_argument,
+                "columns": {"type": "string", "description": t("argument.columns")},
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": SAMPLE_ROWS_LIMIT,
-                    "description": f"How many rows, 1 to {SAMPLE_ROWS_LIMIT}. Default {SAMPLE_ROWS_DEFAULT}.",
+                    "description": t("argument.limit", limit=SAMPLE_ROWS_LIMIT, default=SAMPLE_ROWS_DEFAULT),
                 },
             },
             required=("table",),
@@ -269,71 +232,74 @@ def build_tools(
         ),
         Tool(
             name="explain_query",
-            title="Explain a query",
-            description=explain_description + ".",
+            title=t("tool.explain_query.title"),
+            description=t("tool.explain_query.description_analyze" if analyze else "tool.explain_query.description"),
             properties=explain_properties,
             required=("query",),
             handler=lambda args: explain_query(db, args.get("query"), args.get("analyze") if analyze else None),
         ),
         Tool(
             name="run_select",
-            title="Run a read-only query",
-            description=(
-                "Run one read-only SQL statement in the PostgreSQL dialect: SELECT, WITH ... SELECT, VALUES, "
-                f"TABLE, EXPLAIN or SHOW. Returns at most {RUN_SELECT_LIMIT} rows; use WHERE, ORDER BY and "
-                "LIMIT to get the rows you need. Statements that change data, structure, settings or other "
-                "sessions are refused."
-            ),
-            properties={"query": QUERY_ARGUMENT},
+            title=t("tool.run_select.title"),
+            description=t("tool.run_select.description", limit=RUN_SELECT_LIMIT),
+            properties={"query": query_argument},
             required=("query",),
             handler=lambda args: run_select(db, args.get("query")),
         ),
     ]
     offered = [tool for tool in tools if tool.name in names]
-    return [Tool(t.name, t.title, t.description, t.properties, t.handler, t.required, budget) for t in offered]
+    return [
+        Tool(tool.name, tool.title, tool.description, tool.properties, tool.handler, tool.required, budget)
+        for tool in offered
+    ]
 
 
 def status(
-    db: Database, install_dir: str, *, budget: int, profile: str, names: Sequence[str], warning: str | None
+    db: Database, install_dir: str, *, budget: int, profile: str, names: Sequence[str], warnings: Sequence[str]
 ) -> list[str]:
     lines = [
-        f"pg-mcp {__version__} on Python {platform.python_version()}, installed at {install_dir}",
-        f"target: {db.describe_target()}",
-        f"profile: {profile} ({', '.join(names)})",
+        t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
+        t("status.target", target=db.describe_target()),
+        t("status.profile", profile=profile, tools=", ".join(names)),
+        t("status.language", language=current()),
     ]
-    if warning:
-        lines.append(f"warning: {warning}")
+    lines.extend(t("status.warning", warning=warning) for warning in warnings)
     try:
         info = db.server_info()
     except DatabaseUnavailableError as exc:
-        lines.append(f"database: unavailable. {exc}")
+        lines.append(t("status.unavailable", reason=exc))
         return lines
-    lines.append(f"database: connected to {info['database']} as {info['user']}, PostgreSQL {info['server_version']}")
+    lines.append(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
     lines.append(
-        f"limits: read only = {info['read_only']}, statement timeout = {info['statement_timeout']}, "
-        f"list_tables returns at most {LIST_TABLES_LIMIT} entries, answers are cut at {budget} characters"
+        t(
+            "status.limits",
+            read_only=info["read_only"],
+            timeout=info["statement_timeout"],
+            tables=LIST_TABLES_LIMIT,
+            budget=budget,
+        )
     )
     return lines
 
 
 def list_tables(db: Database, schema: Any | None) -> list[str]:
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
-        raise ToolError('schema must be a non-empty string such as "public"; omit it to list all schemas')
+        raise ToolError(t("error.schema"))
     rows = db.query(LIST_TABLES_SQL, schema=schema, limit=LIST_TABLES_LIMIT + 1)
     if not rows:
         if schema is None:
-            raise ToolError("The current role cannot read any table in this database. Ask the DBA to grant SELECT.")
-        visible = ", ".join(row[0] for row in db.query(SCHEMAS_SQL)) or "none"
-        raise ToolError(f"No readable tables in schema {schema!r}. Schemas with readable tables: {visible}.")
+            raise ToolError(t("error.no_tables"))
+        visible = ", ".join(row[0] for row in db.query(SCHEMAS_SQL)) or t("error.none")
+        raise ToolError(t("error.no_tables_in_schema", schema=schema, visible=visible))
     lines = [_describe_relation(*row) for row in rows[:LIST_TABLES_LIMIT]]
     if len(rows) > LIST_TABLES_LIMIT:
-        lines.append(f"... more than {LIST_TABLES_LIMIT} entries; pass schema to narrow the list")
+        lines.append(t("list.more", limit=LIST_TABLES_LIMIT))
     return lines
 
 
 def describe_table(db: Database, table: Any, schema: Any) -> list[str]:
     oid, schema_name, relation, kind, estimate, comment = _resolve_relation(db, table, schema)
-    lines = [_describe_relation(schema_name, relation, kind, estimate, comment), "columns:"]
+    lines = [_describe_relation(schema_name, relation, kind, estimate, comment), t("describe.columns")]
     for column, data_type, not_null, default, column_comment in db.query(COLUMNS_SQL, oid=oid):
         line = f"  {column} {data_type}"
         if not_null:
@@ -344,10 +310,15 @@ def describe_table(db: Database, table: Any, schema: Any) -> list[str]:
             line += f"  -- {shorten(column_comment)}"
         lines.append(line)
     constraints = db.query(CONSTRAINTS_SQL, oid=oid)
-    _section(lines, "constraints:", (f"{name}: {shorten(definition)}" for name, definition in constraints))
+    _section(lines, t("describe.constraints"), (f"{name}: {shorten(definition)}" for name, definition in constraints))
     referenced_by = db.query(REFERENCED_BY_SQL, oid=oid, limit=REFERENCED_BY_LIMIT)
-    _section(lines, "referenced by:", (f"{source}: {shorten(definition)}" for source, definition in referenced_by))
-    _section(lines, "indexes:", (shorten(definition) for (definition,) in db.query(INDEXES_SQL, oid=oid)))
+    _section(
+        lines,
+        t("describe.referenced_by"),
+        (f"{source}: {shorten(definition)}" for source, definition in referenced_by),
+    )
+    indexes = db.query(INDEXES_SQL, oid=oid)
+    _section(lines, t("describe.indexes"), (shorten(definition) for (definition,) in indexes))
     return lines
 
 
@@ -365,7 +336,7 @@ def sample_rows(db: Database, table: Any, schema: Any, columns: Any, limit: Any)
 
 def explain_query(db: Database, query: Any, analyze: Any) -> list[str]:
     if check_read_only(query) not in ROW_SOURCES:
-        raise ToolError("explain_query takes a SELECT, WITH ... SELECT, VALUES or TABLE statement, without EXPLAIN.")
+        raise ToolError(t("error.explain_row_sources"))
     options = "ANALYZE, BUFFERS, FORMAT TEXT" if _flag(analyze, "analyze") else "FORMAT TEXT"
     _, rows, more = db.read_only(f"EXPLAIN ({options}) {query}", PLAN_LINES_LIMIT, cursor=False)
     return _plan_lines(rows, more=more)
@@ -392,15 +363,15 @@ def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:
         raise ToolError(_not_found(db, name, schema))
     if len(matches) > 1:
         options = ", ".join(f"{row[1]}.{row[2]}" for row in matches)
-        raise ToolError(f"{name!r} exists in several schemas: {options}. Pass schema to pick one.")
+        raise ToolError(t("error.ambiguous", name=name, options=options))
     return tuple(matches[0])
 
 
 def _split_name(table: Any, schema: Any) -> tuple[str, str | None]:
     if not isinstance(table, str) or not table.strip():
-        raise ToolError('table must be a non-empty string such as "orders" or "sales.orders"')
+        raise ToolError(t("error.table"))
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
-        raise ToolError('schema must be a non-empty string such as "public"; omit it to search every schema')
+        raise ToolError(t("error.schema_search"))
     name = table.strip()
     if schema is None and "." in name:
         schema, name = name.split(".", 1)
@@ -408,12 +379,12 @@ def _split_name(table: Any, schema: Any) -> tuple[str, str | None]:
 
 
 def _not_found(db: Database, name: str, schema: str | None) -> str:
-    where = f" in schema {schema!r}" if schema else ""
+    where = t("error.in_schema", schema=schema) if schema else ""
     fragment = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     similar = [row[0] for row in db.query(SIMILAR_RELATIONS_SQL, fragment=fragment)]
     if similar:
-        return f"No readable table or view named {name!r}{where}. Similar names: {', '.join(similar)}."
-    return f"No readable table or view named {name!r}{where}. Call list_tables to see what exists."
+        return t("error.not_found_similar", name=name, where=where, similar=", ".join(similar))
+    return t("error.not_found", name=name, where=where)
 
 
 def _choose_columns(available: list[str], columns: Any, relation: str) -> list[str]:
@@ -424,14 +395,14 @@ def _choose_columns(available: list[str], columns: Any, relation: str) -> list[s
     elif isinstance(columns, list) and all(isinstance(part, str) for part in columns):
         wanted = [part.strip().strip('"') for part in columns if part.strip()]
     else:
-        raise ToolError('columns must be a comma-separated string such as "id, total"')
+        raise ToolError(t("error.columns"))
     by_name = {name: name for name in available}
     by_lower = {name.lower(): name for name in available}
     chosen = []
     for name in wanted:
         match = by_name.get(name) or by_lower.get(name.lower())
         if match is None:
-            raise ToolError(f"No column {name!r} in {relation}. Columns: {', '.join(available)}.")
+            raise ToolError(t("error.no_column", name=name, relation=relation, columns=", ".join(available)))
         chosen.append(match)
     return chosen or available
 
@@ -440,16 +411,16 @@ def _whole_number(value: Any, name: str, default: int, low: int, high: int) -> i
     if value is None or value == "":
         return default
     if isinstance(value, bool):
-        raise ToolError(f"{name} must be a whole number from {low} to {high}")
+        raise ToolError(t("error.whole_number", name=name, low=low, high=high))
     try:
-        number = int(value)
+        whole = int(value)
     except (TypeError, ValueError):
-        raise ToolError(f"{name} must be a whole number from {low} to {high}") from None
-    if number != value and str(number) != str(value).strip():
-        raise ToolError(f"{name} must be a whole number from {low} to {high}")
-    if not low <= number <= high:
-        raise ToolError(f"{name} must be from {low} to {high}, got {number}")
-    return number
+        raise ToolError(t("error.whole_number", name=name, low=low, high=high)) from None
+    if whole != value and str(whole) != str(value).strip():
+        raise ToolError(t("error.whole_number", name=name, low=low, high=high))
+    if not low <= whole <= high:
+        raise ToolError(t("error.out_of_range", name=name, low=low, high=high, number=whole))
+    return whole
 
 
 def _flag(value: Any, name: str) -> bool:
@@ -457,7 +428,7 @@ def _flag(value: Any, name: str) -> bool:
         return bool(value)
     if isinstance(value, str) and value.strip().lower() in ("true", "false", "yes", "no", "1", "0"):
         return value.strip().lower() in ("true", "yes", "1")
-    raise ToolError(f"{name} must be true or false")
+    raise ToolError(t("error.flag", name=name))
 
 
 def _quote_ident(name: str) -> str:
@@ -467,17 +438,14 @@ def _quote_ident(name: str) -> str:
 def _format_rows(names: list[str], rows: list[Sequence[Any]], *, more: bool) -> list[str]:
     lines = [" | ".join(names)] if names else []
     lines.extend(" | ".join(_cell(value) for value in row) for row in rows)
-    if more:
-        lines.append(f"({len(rows)} rows shown, there are more: narrow the query with WHERE, ORDER BY or LIMIT)")
-    else:
-        lines.append(f"({len(rows)} row{'' if len(rows) == 1 else 's'})")
+    lines.append(plural("rows.more" if more else "rows.count", len(rows)))
     return lines
 
 
 def _plan_lines(rows: list[Sequence[Any]], *, more: bool) -> list[str]:
     lines = [str(row[0]) for row in rows]
     if more:
-        lines.append(f"... plan longer than {PLAN_LINES_LIMIT} lines")
+        lines.append(t("plan.more", limit=PLAN_LINES_LIMIT))
     return lines
 
 
@@ -501,7 +469,7 @@ def _section(lines: list[str], title: str, entries: Any) -> None:
 
 
 def _describe_relation(schema: str, name: str, kind: str, estimate: int | None, comment: str | None) -> str:
-    parts = [f"{schema}.{name}", RELATION_KINDS.get(kind, kind)]
+    parts = [f"{schema}.{name}", t(f"kind.{kind}") if kind in RELATION_KINDS else kind]
     if kind in ("r", "p", "m"):
         parts.append(_estimate(estimate))
     if comment:
@@ -511,8 +479,8 @@ def _describe_relation(schema: str, name: str, kind: str, estimate: int | None, 
 
 def _estimate(rows: int | None) -> str:
     if rows is None or rows < 0:
-        return "rows unknown (never analyzed)"
-    for unit, suffix in ((10**9, "B"), (10**6, "M"), (10**3, "k")):
+        return t("estimate.unknown")
+    for unit, scale in ((10**9, "estimate.billions"), (10**6, "estimate.millions"), (10**3, "estimate.thousands")):
         if rows >= unit:
-            return f"~{rows / unit:.1f}".rstrip("0").rstrip(".") + f"{suffix} rows"
-    return f"~{rows} rows"
+            return t("estimate.scaled", amount=t(scale, value=number(rows / unit)))
+    return plural("estimate.rows", rows)
