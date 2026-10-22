@@ -21,6 +21,7 @@ from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, number, plural, t
 from .querylog import ERROR, FAILED, OK, REFUSED, UNAVAILABLE, Mark, QueryLog
 from .sqlguard import ROW_SOURCES, SqlRejectedError, check_read_only
+from .stands import StandError
 
 LIST_TABLES_LIMIT = 200
 REFERENCED_BY_LIMIT = 50
@@ -126,6 +127,14 @@ SEARCH_SQL = (
     + _SEARCH_MATCHES
 )
 
+# On a stand the catalog is read through any login of the database, so instead of that
+# login's privileges the queries keep to the schemas the registry has logins for.
+_PRIVILEGE = "  AND has_table_privilege(c.oid, 'SELECT')\n"
+_REGISTRY_RELATIONS = _READABLE_RELATIONS.replace(_PRIVILEGE, "  AND n.nspname = ANY (CAST(:schemas AS text[]))\n")
+LIST_TABLES_IN_SCHEMAS_SQL = LIST_TABLES_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
+FIND_RELATION_IN_SCHEMAS_SQL = FIND_RELATION_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
+SEARCH_IN_SCHEMAS_SQL = SEARCH_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
+
 COLUMNS_SQL = """
 SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull,
        pg_get_expr(d.adbin, d.adrelid), col_description(a.attrelid, a.attnum)
@@ -204,7 +213,7 @@ class Tool:
         except DatabaseUnavailableError as exc:
             self._log(mark, arguments, UNAVAILABLE, str(exc))
             raise ToolError(str(exc)) from exc
-        except QueryFailedError as exc:
+        except (QueryFailedError, StandError) as exc:
             self._log(mark, arguments, ERROR, str(exc))
             raise ToolError(str(exc)) from exc
         except ToolError as exc:
@@ -383,11 +392,17 @@ def status(
     return lines
 
 
-def list_tables(db: Database, schema: Any | None) -> list[str]:
+def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None = None) -> list[str]:
+    """Readable tables, or with schemas (on a stand) the tables of those schemas."""
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema"))
-    rows = db.query(LIST_TABLES_SQL, schema=schema, limit=LIST_TABLES_LIMIT + 1)
+    if schemas is None:
+        rows = db.query(LIST_TABLES_SQL, schema=schema, limit=LIST_TABLES_LIMIT + 1)
+    else:
+        rows = db.query(LIST_TABLES_IN_SCHEMAS_SQL, schema=schema, schemas=list(schemas), limit=LIST_TABLES_LIMIT + 1)
     if not rows:
+        if schemas is not None:  # the catalog does not depend on privileges here: the schemas are empty or gone
+            raise ToolError(t("stands.no_tables", schemas=", ".join(schemas)))
         if schema is None:
             raise ToolError(t("error.no_tables"))
         visible = ", ".join(row[0] for row in db.query(SCHEMAS_SQL)) or t("error.none")
@@ -398,18 +413,21 @@ def list_tables(db: Database, schema: Any | None) -> list[str]:
     return lines
 
 
-def search_schema(db: Database, text: Any, schema: Any) -> list[str]:
+def search_schema(db: Database, text: Any, schema: Any, schemas: Sequence[str] | None = None) -> list[str]:
     if not isinstance(text, str) or not text.strip():
         raise ToolError(t("error.text"))
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema_search"))
     fragment = text.strip()
-    rows = db.query(
-        SEARCH_SQL,
-        patterns=_like_patterns(fragment),
-        schema=schema.strip().strip('"') if schema else None,
-        limit=SEARCH_LIMIT + 1,
-    )
+    params: dict[str, Any] = {
+        "patterns": _like_patterns(fragment),
+        "schema": schema.strip().strip('"') if schema else None,
+        "limit": SEARCH_LIMIT + 1,
+    }
+    if schemas is None:
+        rows = db.query(SEARCH_SQL, **params)
+    else:
+        rows = db.query(SEARCH_IN_SCHEMAS_SQL, schemas=list(schemas), **params)
     if not rows:
         return [t("search.nothing", text=fragment)]
     lines = []
@@ -475,7 +493,7 @@ def run_select(db: Database, query: Any) -> list[str]:
 
 def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:
     """The pg_class row of the one readable relation the arguments name, or a ToolError with a hint."""
-    name, schema = _split_name(table, schema)
+    name, schema = split_name(table, schema)
     matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
     if not matches and name != name.lower():
         # Unquoted identifiers are folded to lower case, so "Orders" usually means orders.
@@ -489,7 +507,7 @@ def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:
     return tuple(matches[0])
 
 
-def _split_name(table: Any, schema: Any) -> tuple[str, str | None]:
+def split_name(table: Any, schema: Any) -> tuple[str, str | None]:
     if not isinstance(table, str) or not table.strip():
         raise ToolError(t("error.table"))
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):

@@ -64,7 +64,10 @@ def negotiate_protocol_version(requested: Any) -> str:
 class Server:
     """Turns one incoming JSON-RPC line into at most one reply line."""
 
-    def __init__(self, tools: list[Tool], name: str = "pg-mcp", version: str = __version__) -> None:
+    def __init__(
+        self, tools: list[Tool], name: str = "pg-mcp", version: str = __version__, instructions: str | None = None
+    ) -> None:
+        self._instructions = instructions
         self._tools = {tool.name: tool for tool in tools}
         self._order = [tool.name for tool in tools]
         self._info = {"name": name, "version": version}
@@ -155,14 +158,14 @@ class Server:
             "protocolVersion": self.protocol_version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": self._info,
-            "instructions": t("server.instructions"),
+            "instructions": self._instructions or t("server.instructions"),
         }
 
     def _discover(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {
             "supportedVersions": list(MODERN_PROTOCOL_VERSIONS),
             "capabilities": {"tools": {"listChanged": False}},
-            "instructions": t("server.instructions"),
+            "instructions": self._instructions or t("server.instructions"),
         }
 
     def _tools_list(self, _params: dict[str, Any]) -> dict[str, Any]:

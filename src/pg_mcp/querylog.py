@@ -22,9 +22,9 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from .db import Database
+from .db import Settings
 from .i18n import t
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,19 @@ _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW",
 _FILE_MODE = 0o600  # SQL literals may carry personal data
 
 
+class LogSource(Protocol):
+    """Where the queries go: one Database, or the pool of a server with many stands."""
+
+    @property
+    def statements_run(self) -> int: ...
+
+    @property
+    def rows_read(self) -> int: ...
+
+    @property
+    def settings(self) -> Settings | None: ...
+
+
 @dataclass(frozen=True)
 class Mark:
     """Where a tool call started: the clock and the database's counters."""
@@ -53,7 +66,7 @@ class Mark:
 
 
 class QueryLog:
-    def __init__(self, path: str | None, db: Database | None = None) -> None:
+    def __init__(self, path: str | None, db: LogSource | None = None) -> None:
         self.path = path
         self.problem: str | None = None
         self._db = db
@@ -63,7 +76,7 @@ class QueryLog:
         self._os_user = _os_user()
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str], db: Database | None = None) -> QueryLog:
+    def from_env(cls, env: Mapping[str, str], db: LogSource | None = None) -> QueryLog:
         raw = env.get("PG_MCP_QUERY_LOG", "").strip()
         return cls(str(Path(raw).expanduser()) if raw else None, db)
 
@@ -90,6 +103,7 @@ class QueryLog:
             "pid": os.getpid(),
             "role": settings.user if settings else None,
             "database": settings.database if settings else None,
+            **getattr(db, "log_context", dict)(),  # the stand and schema, on a server with many stands
             "tool": tool,
             "arguments": arguments,
             "outcome": outcome,

@@ -2,8 +2,9 @@
 
 **English** | [Русский](README.ru.md)
 
-An MCP server that gives an agent **read-only** access to one PostgreSQL database. The agent sees the
-database structure, can look at sample rows and query plans, and analysts can run their own `SELECT`s.
+An MCP server that gives an agent **read-only** access to a PostgreSQL database, or through one entry to
+[dozens of stands](#many-stands). The agent sees the database structure, can look at sample rows and
+query plans, and analysts can run their own `SELECT`s.
 Nothing can change data, structure or settings through this server.
 
 Built for GigaCode CLI and Qwen Code, and works with any MCP client that starts servers over stdio.
@@ -16,6 +17,7 @@ English or Russian.
 - [Quick start](#quick-start)
 - [Installation step by step](#installation-step-by-step)
 - [Usage](#usage)
+- [Many stands](#many-stands)
 - [Group profiles](#group-profiles)
 - [Language](#language)
 - [Security](#security)
@@ -32,6 +34,7 @@ English or Russian.
 | Tool | What it does | Profiles |
 |---|---|---|
 | `status` | which database, as which role, which profile and language, which limits; on failure, what to fix | all |
+| `list_schemas` | with [many stands](#many-stands): the databases of a stand and their schemas the server has logins for | all |
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
@@ -296,9 +299,94 @@ The last line is about the `hr` schema, which the role has no rights to: for the
 | One value in an answer | at most 200 characters |
 | A whole tool answer | 8000 characters (`PG_MCP_MAX_RESPONSE_CHARS`) |
 | One query | 5 seconds (`PG_MCP_STATEMENT_TIMEOUT_MS`) |
+| Open connections of an entry for stands | at most 8 (`PG_MCP_MAX_CONNECTIONS`) |
 
 A longer answer is cut at whole lines, and its last line says how much is shown. Local models run with
 small context windows, and an answer that is too long can end the agent's session.
+
+## Many stands
+
+When there are dozens of stands (`dev1` to `dev50`, `ift1` to `ift3`), each with several databases and a
+login per schema, an entry per connection would cost the model thousands of characters of tool
+descriptions in every request. One entry serves them all instead: the tools are described once, and
+each call names the stand and the schema.
+
+**1. The registry.** Connections are kept in the `pg_service.conf` format of libpq, a section per schema
+named `stand.database.schema`:
+
+```ini
+[dev7.demo.shop]
+host=dev7-db.example.com
+
+[dev7.demo.hr]
+host=dev7-db.example.com
+
+[ift2.demo.shop]
+host=ift2-db.example.com
+port=6432
+user=shop_reader
+```
+
+- only `host` is required; `port` (5432), `dbname` (the database part of the name), `user` (the schema
+  name), `sslmode`, `sslrootcert` and `connect_timeout` (10 seconds) are optional;
+- passwords go into the password file, a line per login, just as for one database;
+- the server reads `~/.pg-mcp/stands.conf` (on Windows `%APPDATA%\pg-mcp\stands.conf`, or the file
+  `PG_MCP_STANDS_FILE` names) and your own `~/.pg_service.conf`; with equal names the first file wins.
+  Sections named otherwise are ordinary psql services and stay out of it;
+- psql reads the same sections: `psql service=dev7.demo.shop`.
+
+**2. The entry.**
+
+```bash
+PG_MCP_STANDS='*' python3 install.py --name stands
+```
+
+This registers `pg-stands` next to `pg`. `PG_MCP_STANDS` switches stands on: `*` takes every stand,
+patterns such as `dev*,ift2` take some. The check succeeds once the stands are found: a stand behind a
+VPN is reached only when a tool needs it.
+
+**3. Use.** Every tool takes `stand`. Reading data also takes `schema`: the server connects with that
+schema's login and looks for unqualified names in it first. `database` is needed only when the schema
+exists in several databases of the stand.
+
+| You ask | The agent calls |
+|---|---|
+| "Which stands are there?" | `status` |
+| "Is dev7 reachable?" | `status` with `stand` |
+| "Which schemas are on dev7?" | `list_schemas` |
+| "Where are the orders on dev7?" | `search_schema` with `stand` and `text` |
+| "How many orders per status are in shop on dev7?" | `run_select` with `stand` and `schema` (profile `analyst`) |
+
+Every answer starts with where it came from. Real answers on the demo database:
+
+`list_schemas` with `stand: dev7`:
+
+```text
+dev7 / demo: hr, shop
+```
+
+`run_select` with `stand: dev7` and `schema: shop`:
+
+```text
+dev7 / demo / shop
+status | count
+shipped | 174
+paid | 162
+cancelled | 90
+new | 74
+(4 rows)
+```
+
+Without `schema`, `list_tables`, `search_schema` and `describe_table` cover the whole stand: the names
+come from the system catalog, which every login can see, through one login per database, and only the
+schemas of the registry are shown. The data stays behind each schema's own privileges: a login that
+cannot read a neighbouring schema gets `permission denied` there.
+
+A failure stays small. An unreachable stand or a broken login affects only the answers that need it,
+and `status` with `stand` tries a second login when the first one fails. Without `PG_MCP_STANDS`, or when
+no stand is found, the entry works with the `PG*` variables as before, and `status` says why. At most 8
+connections stay open (`PG_MCP_MAX_CONNECTIONS`), and an unreachable host is given up after 10 seconds.
+The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
 
 ## Group profiles
 
@@ -406,6 +494,11 @@ All settings are environment variables in the `env` block of the `pg` server in 
 | `PG_MCP_LOG_LEVEL` | `INFO` | detail of the stderr log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `PG_MCP_QUERY_LOG` | — (off) | absolute path of the [query log](#query-log) file |
 | `PG_MCP_NAME` | `pg` | the entry's name that `status` shows; `install.py --name` writes it |
+| `PG_MCP_SOCKET_TIMEOUT_S` | `30`, for stands `10` | seconds to wait for the network; always longer than the query timeout |
+| `PG_MCP_STANDS` | — (off) | `*` or stand name patterns such as `dev*,ift2`: one entry for [many stands](#many-stands) |
+| `PG_MCP_STANDS_FILE` | `~/.pg-mcp/stands.conf`, on Windows `%APPDATA%\pg-mcp\stands.conf` | the stands registry |
+| `PGSERVICEFILE` | `~/.pg_service.conf`, on Windows `%APPDATA%\postgresql\.pg_service.conf` | your psql services; stands are read from it too |
+| `PG_MCP_MAX_CONNECTIONS` | `8` | connections an entry for stands keeps open |
 
 The budget counts characters. Russian text takes more tokens per character than English, so if the
 model's context is small, lower the budget rather than raise it.
@@ -457,6 +550,8 @@ says what is wrong.
 | An answer ends with "… answer cut to" | the answer budget kicked in | narrow the question, or raise `PG_MCP_MAX_RESPONSE_CHARS` with the model's context in mind |
 | `python3` not found | Python is missing or has another name | `python --version`, on Windows `py -3 --version`; install Python 3.9+ |
 | "query log: …, not written: …" | the folder does not exist, no permission, a relative path, or a symlink in place of the file | fix `PG_MCP_QUERY_LOG` |
+| "No stand … in the registry" | a typo, or the stand is missing from the registry or from `PG_MCP_STANDS` | `status` lists the stands; check the registry |
+| "PG_MCP_STANDS is set, but no stands were found" | no registry file, or its sections are not named `stand.database.schema` | check the files the warning names |
 
 The server logs to stderr; `PG_MCP_LOG_LEVEL=DEBUG` adds detail. If the server does not answer the
 check, `install.py --check` prints that log.

@@ -31,7 +31,8 @@ uvx pre-commit install
 | `python3 scripts/client_smoke.py --qwen "$(command -v qwen)"` | проверка в настоящем клиенте, Qwen Code (`npm install -g @qwen-code/qwen-code`), по переменным `PG*`; модель не нужна |
 
 Интеграционные тесты ходят в настоящий PostgreSQL. Они создают и удаляют схемы `mcp_it`,
-`mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`; тестам роли нужен `psql`:
+`mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`, а тесты стендов — схемы
+`mcp_it_billing`, `mcp_it_orders` и одноимённые роли; тестам роли нужен `psql`:
 
 ```bash
 PG_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov
