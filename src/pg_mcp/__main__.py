@@ -18,6 +18,7 @@ from . import i18n
 from .budget import budget_from_env
 from .db import Database
 from .protocol import Server
+from .querylog import QueryLog
 from .tools import build_tools, profile_from_env
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -50,7 +51,11 @@ def main(
     profile, profile_warning = profile_from_env(env)
     if profile_warning is not None:
         warnings.append(profile_warning)
-    server = Server(build_tools(db, INSTALL_DIR, budget_from_env(env), profile, warnings))
+    query_log = QueryLog.from_env(env, db)
+    tools = build_tools(
+        db, INSTALL_DIR, budget=budget_from_env(env), profile=profile, warnings=warnings, query_log=query_log
+    )
+    server = Server(tools)
     try:
         for line in iter(source.readline, b""):
             if not line.strip():

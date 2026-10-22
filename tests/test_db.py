@@ -7,16 +7,19 @@ mcp_it_role and the roles mcp_it_agent and mcp_it_login.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from collections.abc import Iterator
+from pathlib import Path
 
 import pg8000.exceptions
 import pg8000.native
 import pytest
 
 from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_mcp.querylog import QueryLog
 from pg_mcp.tools import Tool, ToolError, build_tools
 from tests.helpers import ROOT
 
@@ -337,6 +340,29 @@ class TestRussian:
             "1350.50",
             "(1 строка)",
         ]
+
+
+class TestQueryLog:
+    def test_rows_refusals_and_errors_reach_the_log(self, db: Database, tmp_path: Path) -> None:
+        log_file = tmp_path / "queries.jsonl"
+        tools = by_name(build_tools(db, str(ROOT), profile="analyst", query_log=QueryLog(str(log_file), db)))
+        lines_of(tools["run_select"], query=f"SELECT id FROM {SCHEMA}.orders ORDER BY id LIMIT 3")
+        lines_of(tools["sample_rows"], table=f"{SCHEMA}.orders", limit=2)
+        lines_of(tools["describe_table"], table=f"{SCHEMA}.orders")
+        for query in (f"DELETE FROM {SCHEMA}.orders", "SELECT * FROM no_such_table"):
+            with pytest.raises(ToolError):
+                tools["run_select"].call({"query": query})
+
+        logged = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
+        assert [(entry["tool"], entry["outcome"], entry.get("rows")) for entry in logged] == [
+            ("run_select", "ok", 3),
+            ("sample_rows", "ok", 2),
+            ("describe_table", "ok", None),
+            ("run_select", "refused", None),
+            ("run_select", "error", None),
+        ]
+        assert "SQLSTATE 42P01" in logged[-1]["message"]
+        assert logged[0]["role"] == Settings.from_env(os.environ).user
 
 
 class TestDefences:

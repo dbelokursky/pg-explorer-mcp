@@ -85,6 +85,9 @@ class Database:
         self._conn: pg8000.native.Connection | None = None
         self.settings: Settings | None = None
         self._config_error: str | None = None
+        # Statements run through read_only and the rows they returned, for the query log.
+        self.statements_run = 0
+        self.rows_read = 0
         try:
             self.settings = Settings.from_env(os.environ if env is None else env)
         except ValueError as exc:
@@ -138,7 +141,10 @@ class Database:
                 continue
             columns = [str(column["name"]) for column in context.columns or []]
             rows = list(context.rows or [])
-            return columns, rows[:max_rows], len(rows) > max_rows
+            returned = rows[:max_rows]
+            self.statements_run += 1
+            self.rows_read += len(returned)
+            return columns, returned, len(rows) > max_rows
         raise AssertionError("unreachable")
 
     def server_info(self) -> dict[str, str]:

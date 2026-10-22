@@ -19,6 +19,7 @@ English or Russian.
 - [Group profiles](#group-profiles)
 - [Language](#language)
 - [Security](#security)
+- [Query log](#query-log)
 - [Settings](#settings)
 - [For DBAs: a role for the agent](#for-dbas-a-role-for-the-agent)
 - [Troubleshooting](#troubleshooting)
@@ -205,6 +206,7 @@ pg-mcp 0.2.0 on Python 3.9.6, installed at /Users/me/pg-mcp
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 language: en
+query log: off
 database: connected to pg_mcp_demo as mcp_demo_agent, PostgreSQL 16.15
 limits: read only = on, statement timeout = 5s, list_tables returns at most 200 entries, answers are cut at 8000 characters
 ```
@@ -338,6 +340,37 @@ The full policy is in [ADR 0002](docs/adr/0002-read-only-sql-policy.md) (in Russ
 Everything the tools return goes into the model's context. With a local model inside your organisation
 the data stays there, but pick the profile by the task: `schema` shows no data at all.
 
+## Query log
+
+To keep a journal of what the agent asked the database, set `PG_MCP_QUERY_LOG` to an absolute file path
+(`~` is fine) before running `install.py`, or add it to the server's `env` block later:
+
+```bash
+export PG_MCP_QUERY_LOG=~/pg-mcp-queries.jsonl
+python3 install.py
+```
+
+Every tool call adds one JSON line. These two are real, from the demo database:
+
+```json
+{"time": "2026-10-22T13:54:20.570Z", "os_user": "anna", "pid": 95715, "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "SELECT status, count(*) FROM shop.orders GROUP BY status"}, "outcome": "ok", "rows": 4, "duration_ms": 12.6}
+{"time": "2026-10-22T13:54:20.571Z", "os_user": "anna", "pid": 95715, "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "DELETE FROM shop.orders WHERE status = 'cancelled'"}, "outcome": "refused", "message": "DELETE is not allowed. Only read-only statements are: SELECT, WITH ... SELECT, VALUES, TABLE, EXPLAIN and SHOW.", "duration_ms": 0.0}
+```
+
+- `outcome` is `ok`, `refused` (by the SQL check), `error` (bad arguments or a PostgreSQL error),
+  `unavailable` (no connection) or `failed` (a bug in the server);
+- `rows` is how many rows the agent's own statement returned (`sample_rows`, `run_select`, `explain_query`);
+- the rows themselves and the tools' answers are never written.
+
+The file is created readable by its owner only, since literals in SQL may carry personal data, and a
+symlink in its place is refused. It is opened anew for every line, so several agent sessions can share
+it and `logrotate` can move it away. If the file cannot be written, tool calls keep working and
+`status` says why.
+
+The file lives on the user's machine, so it is a journal, not a tamper-proof audit. To audit data access,
+log on the PostgreSQL server (`pgaudit` or `log_statement`); the server's connections carry
+`application_name = 'pg-mcp'`. The reasoning is in [ADR 0005](docs/adr/0005-query-log.md) (in Russian).
+
 ## Settings
 
 All settings are environment variables in the `env` block of the `pg` server in the agent settings.
@@ -358,6 +391,7 @@ All settings are environment variables in the `env` block of the `pg` server in 
 | `PG_MCP_MAX_RESPONSE_CHARS` | `8000` | budget of one answer in characters, at least 500 |
 | `PG_MCP_STATEMENT_TIMEOUT_MS` | `5000` | timeout of one query in milliseconds |
 | `PG_MCP_LOG_LEVEL` | `INFO` | detail of the stderr log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `PG_MCP_QUERY_LOG` | — (off) | absolute path of the [query log](#query-log) file |
 
 The budget counts characters. Russian text takes more tokens per character than English, so if the
 model's context is small, lower the budget rather than raise it.
@@ -408,6 +442,7 @@ says what is wrong.
 | `settings.json` "is not plain JSON" | the settings file has comments | add the printed snippet by hand |
 | An answer ends with "… answer cut to" | the answer budget kicked in | narrow the question, or raise `PG_MCP_MAX_RESPONSE_CHARS` with the model's context in mind |
 | `python3` not found | Python is missing or has another name | `python --version`, on Windows `py -3 --version`; install Python 3.9+ |
+| "query log: …, not written: …" | the folder does not exist, no permission, a relative path, or a symlink in place of the file | fix `PG_MCP_QUERY_LOG` |
 
 The server logs to stderr; `PG_MCP_LOG_LEVEL=DEBUG` adds detail. If the server does not answer the
 check, `install.py --check` prints that log.

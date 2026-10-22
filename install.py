@@ -48,6 +48,7 @@ COPIED_ENV = (
     "PG_MCP_STATEMENT_TIMEOUT_MS",
     "PG_MCP_MAX_RESPONSE_CHARS",
     "PG_MCP_PROFILE",
+    "PG_MCP_QUERY_LOG",
 )
 PROFILES = ("schema", "explore", "analyst")
 
