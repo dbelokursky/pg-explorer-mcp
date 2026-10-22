@@ -11,6 +11,8 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -26,6 +28,7 @@ from tests.helpers import ROOT
 pytestmark = pytest.mark.integration
 
 SCHEMA = "mcp_it"  # PostgreSQL reserves the pg_ prefix for system schemas
+SLOW_STATEMENT = "SELECT count(*) FROM generate_series(1, 1000000000)"  # minutes of work, no pg_sleep needed
 ARCHIVE = "mcp_it_archive"
 
 FIXTURES = (
@@ -385,6 +388,26 @@ class TestDefences:
         with pytest.raises(QueryFailedError, match="cannot insert multiple commands into a prepared statement"):
             db.query("SELECT 1; COMMIT; SELECT 2")
 
+    def test_a_slow_statement_is_cancelled_by_postgresql(self) -> None:
+        database = Database(env_with(PG_MCP_STATEMENT_TIMEOUT_MS="200"))
+        try:
+            with pytest.raises(QueryFailedError, match="statement timeout"):
+                database.read_only(SLOW_STATEMENT, 1, cursor=True)
+            assert database.server_info()["statement_timeout"] == "200ms"  # the session outlived the cancel
+        finally:
+            database.close()
+
+    def test_the_socket_outwaits_the_statement_timeout(self) -> None:
+        """A short socket timeout must not cut a running statement, or it would be run again."""
+        database = Database(env_with(PG_MCP_SOCKET_TIMEOUT_S="1", PG_MCP_STATEMENT_TIMEOUT_MS="2500"))
+        try:
+            started = time.monotonic()
+            with pytest.raises(QueryFailedError, match="statement timeout"):
+                database.read_only(SLOW_STATEMENT, 1, cursor=True)
+            assert time.monotonic() - started >= 2  # PostgreSQL's timeout spoke, not the socket's
+        finally:
+            database.close()
+
     def test_lost_connection_is_reopened(self, db: Database, admin: pg8000.native.Connection) -> None:
         db.server_info()
         admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-mcp'")
@@ -482,6 +505,17 @@ def connects(**env: str | None) -> bool:
     finally:
         database.close()
     return True
+
+
+def test_the_server_can_be_reached_through_its_unix_socket(admin: pg8000.native.Connection) -> None:
+    directories = str(admin.run("SHOW unix_socket_directories")[0][0])
+    directory = directories.split(",", maxsplit=1)[0].strip()
+    port = Settings.from_env(os.environ).port
+    if sys.platform == "win32" or not directory or not (Path(directory) / f".s.PGSQL.{port}").exists():
+        pytest.skip("the server's Unix socket is not on this machine")
+    text = status_with(PGHOST=directory)
+    assert f"target: {Settings.from_env(os.environ).user}@{directory}:{port}/" in text
+    assert "database: connected to" in text
 
 
 class TestConnectionHints:
