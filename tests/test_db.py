@@ -4,20 +4,26 @@ Run them with PG_MCP_IT=1 and the usual PG* variables pointing at a database
 where the tests may create and drop the schemas mcp_it, mcp_it_archive and
 mcp_it_role and the roles mcp_it_agent and mcp_it_login.
 """
+
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
-import unittest
+from collections.abc import Iterator
 
-import support
+import pg8000.exceptions
 import pg8000.native
-from pg_mcp.db import Database, DatabaseUnavailable, QueryFailed, Settings
-from pg_mcp.tools import ToolError, build_tools
+import pytest
+
+from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_mcp.tools import Tool, ToolError, build_tools
+from tests.helpers import ROOT
+
+pytestmark = pytest.mark.integration
 
 SCHEMA = "mcp_it"  # PostgreSQL reserves the pg_ prefix for system schemas
 ARCHIVE = "mcp_it_archive"
-INTEGRATION = os.environ.get("PG_MCP_IT") == "1"
-SKIP_REASON = "set PG_MCP_IT=1 and PG* variables to run"
 
 FIXTURES = (
     f"DROP SCHEMA IF EXISTS {SCHEMA}, {ARCHIVE} CASCADE",
@@ -41,12 +47,12 @@ FIXTURES = (
 )
 
 
-def admin_connection() -> pg8000.native.Connection:
-    s = Settings.from_env(os.environ)
+def connect(**overrides: str) -> pg8000.native.Connection:
+    s = Settings.from_env({**os.environ, **overrides})
     return pg8000.native.Connection(user=s.user, password=s.password, host=s.host, port=s.port, database=s.database)
 
 
-def env_with(**overrides) -> dict:
+def env_with(**overrides: str | None) -> dict[str, str]:
     env = dict(os.environ)
     for key, value in overrides.items():
         if value is None:
@@ -56,288 +62,331 @@ def env_with(**overrides) -> dict:
     return env
 
 
-@unittest.skipUnless(INTEGRATION, SKIP_REASON)
-class DatabaseIntegrationTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.admin = admin_connection()
-        for statement in FIXTURES:
-            cls.admin.run(statement)
-        cls.db = Database()
-        cls.tools = {tool.name: tool for tool in build_tools(cls.db, support.ROOT)}
-        cls.analyst = {tool.name: tool for tool in build_tools(cls.db, support.ROOT, profile="analyst")}
+def by_name(tools: list[Tool]) -> dict[str, Tool]:
+    return {tool.name: tool for tool in tools}
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.db.close()
-        cls.admin.run(f"DROP SCHEMA {SCHEMA}, {ARCHIVE} CASCADE")
-        cls.admin.close()
 
-    def describe(self, **arguments):
-        return self.tools["describe_table"].call(arguments).splitlines()
+@pytest.fixture(scope="module")
+def admin() -> Iterator[pg8000.native.Connection]:
+    connection = connect()
+    yield connection
+    connection.close()
 
-    def select(self, query):
-        return self.analyst["run_select"].call({"query": query}).splitlines()
 
-    def test_status_reports_a_read_only_session(self):
-        text = self.tools["status"].call({})
-        self.assertIn("database: connected", text)
-        self.assertIn("read only = on", text)
-        self.assertIn("profile: explore (status, list_tables, describe_table, sample_rows, explain_query)", text)
+@pytest.fixture(scope="module")
+def db(admin: pg8000.native.Connection) -> Iterator[Database]:
+    for statement in FIXTURES:
+        admin.run(statement)
+    database = Database()
+    yield database
+    database.close()
+    admin.run(f"DROP SCHEMA {SCHEMA}, {ARCHIVE} CASCADE")
 
-    def test_list_tables_shows_tables_views_estimates_and_comments(self):
-        lines = self.tools["list_tables"].call({"schema": SCHEMA}).splitlines()
-        self.assertEqual(
-            lines,
-            [
-                f"{SCHEMA}.big_orders | view",
-                f"{SCHEMA}.customers | table | ~10 rows",
-                f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов",
-            ],
-        )
 
-    def test_unknown_schema_points_to_the_schemas_that_exist(self):
-        with self.assertRaises(ToolError) as caught:
-            self.tools["list_tables"].call({"schema": "no_such_schema"})
-        self.assertIn(SCHEMA, str(caught.exception))
+@pytest.fixture(scope="module")
+def tools(db: Database) -> dict[str, Tool]:
+    return by_name(build_tools(db, str(ROOT)))
 
-    def test_describe_table_shows_columns_keys_and_indexes(self):
-        lines = self.describe(table=f"{SCHEMA}.orders")
-        self.assertEqual(lines[0], f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов")
-        self.assertEqual(lines[1], "columns:")
-        self.assertTrue(lines[2].startswith("  id integer NOT NULL DEFAULT nextval("), lines[2])
-        self.assertEqual(lines[3:6], ["  customer_id integer NOT NULL  -- Покупатель", "  total numeric(12,2) DEFAULT 0", "  note text"])
-        self.assertEqual(
-            lines[6:9],
-            [
-                "constraints:",
-                "  orders_pkey: PRIMARY KEY (id)",
-                f"  orders_customer_id_fkey: FOREIGN KEY (customer_id) REFERENCES {SCHEMA}.customers(id)",
-            ],
-        )
-        self.assertEqual(lines[9], "indexes:")
-        self.assertIn(f"  CREATE INDEX orders_customer_idx ON {SCHEMA}.orders USING btree (customer_id)", lines[10:])
 
-    def test_describe_table_lists_tables_that_reference_it(self):
-        lines = self.describe(table="customers", schema=SCHEMA)
-        self.assertIn("  customers_email_key: UNIQUE (email)", lines)
+@pytest.fixture(scope="module")
+def analyst(db: Database) -> dict[str, Tool]:
+    return by_name(build_tools(db, str(ROOT), profile="analyst"))
+
+
+def lines_of(tool: Tool, **arguments: object) -> list[str]:
+    return tool.call(arguments).splitlines()
+
+
+class TestStructure:
+    def test_status_reports_a_read_only_session(self, tools: dict[str, Tool]) -> None:
+        text = tools["status"].call({})
+        assert "database: connected" in text
+        assert "read only = on" in text
+        assert "profile: explore (status, list_tables, describe_table, sample_rows, explain_query)" in text
+
+    def test_list_tables_shows_tables_views_estimates_and_comments(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["list_tables"], schema=SCHEMA) == [
+            f"{SCHEMA}.big_orders | view",
+            f"{SCHEMA}.customers | table | ~10 rows",
+            f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов",
+        ]
+
+    def test_unknown_schema_points_to_the_schemas_that_exist(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=SCHEMA):
+            tools["list_tables"].call({"schema": "no_such_schema"})
+
+    def test_describe_table_shows_columns_keys_and_indexes(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["describe_table"], table=f"{SCHEMA}.orders")
+        assert lines[0] == f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов"
+        assert lines[1] == "columns:"
+        assert lines[2].startswith("  id integer NOT NULL DEFAULT nextval(")
+        assert lines[3:6] == [
+            "  customer_id integer NOT NULL  -- Покупатель",
+            "  total numeric(12,2) DEFAULT 0",
+            "  note text",
+        ]
+        assert lines[6:9] == [
+            "constraints:",
+            "  orders_pkey: PRIMARY KEY (id)",
+            f"  orders_customer_id_fkey: FOREIGN KEY (customer_id) REFERENCES {SCHEMA}.customers(id)",
+        ]
+        assert lines[9] == "indexes:"
+        assert f"  CREATE INDEX orders_customer_idx ON {SCHEMA}.orders USING btree (customer_id)" in lines[10:]
+
+    def test_describe_table_lists_tables_that_reference_it(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["describe_table"], table="customers", schema=SCHEMA)
+        assert "  customers_email_key: UNIQUE (email)" in lines
         position = lines.index("referenced by:")
-        self.assertEqual(
-            lines[position + 1], f"  {SCHEMA}.orders: FOREIGN KEY (customer_id) REFERENCES {SCHEMA}.customers(id)"
+        assert lines[position + 1] == f"  {SCHEMA}.orders: FOREIGN KEY (customer_id) REFERENCES {SCHEMA}.customers(id)"
+
+    def test_describe_view_has_columns_and_nothing_else(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["describe_table"], table=f"{SCHEMA}.big_orders")
+        assert lines[0] == f"{SCHEMA}.big_orders | view"
+        assert len(lines) == 2 + 4  # header, "columns:", four columns
+
+    def test_upper_case_name_finds_the_table(self, tools: dict[str, Tool]) -> None:
+        assert (
+            lines_of(tools["describe_table"], table="Customers", schema=SCHEMA)[0]
+            == f"{SCHEMA}.customers | table | ~10 rows"
         )
 
-    def test_describe_view_has_columns_and_nothing_else(self):
-        lines = self.describe(table=f"{SCHEMA}.big_orders")
-        self.assertEqual(lines[0], f"{SCHEMA}.big_orders | view")
-        self.assertEqual(len(lines), 2 + 4)  # header, "columns:", four columns
+    @pytest.mark.parametrize(
+        ("arguments", "message"),
+        [
+            ({"table": "orders"}, f"{SCHEMA}.orders, {ARCHIVE}.orders"),
+            (
+                {"table": "order", "schema": SCHEMA},
+                f"Similar names: {SCHEMA}.big_orders, {SCHEMA}.orders, {ARCHIVE}.orders",
+            ),
+            ({"table": "zzz"}, "Call list_tables"),
+        ],
+        ids=["ambiguous", "similar", "nothing-similar"],
+    )
+    def test_names_that_do_not_pick_one_table_get_a_hint(
+        self, tools: dict[str, Tool], arguments: dict[str, str], message: str
+    ) -> None:
+        with pytest.raises(ToolError, match=message):
+            tools["describe_table"].call(arguments)
 
-    def test_upper_case_name_finds_the_table(self):
-        self.assertEqual(self.describe(table="Customers", schema=SCHEMA)[0], f"{SCHEMA}.customers | table | ~10 rows")
 
-    def test_name_in_several_schemas_asks_to_pick_one(self):
-        with self.assertRaises(ToolError) as caught:
-            self.describe(table="orders")
-        self.assertIn(f"{SCHEMA}.orders, {ARCHIVE}.orders", str(caught.exception))
+class TestData:
+    def test_sample_rows_returns_a_few_rows_of_the_chosen_columns(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["sample_rows"], table=f"{SCHEMA}.orders", columns="id, TOTAL", limit=3)
+        assert lines[:2] == [f"{SCHEMA}.orders:", "id | total"]
+        assert len(lines) == 2 + 3 + 1
+        assert lines[-1].startswith("(3 rows shown, there are more")
 
-    def test_unknown_table_suggests_similar_names(self):
-        with self.assertRaises(ToolError) as caught:
-            self.describe(table="order", schema=SCHEMA)
-        self.assertIn(f"Similar names: {SCHEMA}.big_orders, {SCHEMA}.orders, {ARCHIVE}.orders", str(caught.exception))
+    @pytest.mark.parametrize(
+        ("arguments", "message"),
+        [
+            ({"columns": "id, amount"}, "No column 'amount'.*Columns: id, customer_id, total, note"),
+            ({"limit": 500}, "limit must be from 1 to 50"),
+            ({"limit": "lots"}, "limit must be a whole number"),
+            ({"columns": 7}, "columns must be a comma-separated string"),
+        ],
+    )
+    def test_sample_rows_explains_bad_arguments(
+        self, tools: dict[str, Tool], arguments: dict[str, object], message: str
+    ) -> None:
+        with pytest.raises(ToolError, match=message):
+            tools["sample_rows"].call({"table": f"{SCHEMA}.orders", **arguments})
 
-    def test_sample_rows_returns_a_few_rows_of_the_chosen_columns(self):
-        lines = self.tools["sample_rows"].call({"table": f"{SCHEMA}.orders", "columns": "id, TOTAL", "limit": 3}).splitlines()
-        self.assertEqual(lines[:2], [f"{SCHEMA}.orders:", "id | total"])
-        self.assertEqual(len(lines), 2 + 3 + 1)
-        self.assertTrue(lines[-1].startswith("(3 rows shown, there are more"), lines[-1])
+    def test_explain_query_shows_a_plan_without_running_the_query(self, tools: dict[str, Tool]) -> None:
+        text = tools["explain_query"].call({"query": f"SELECT * FROM {SCHEMA}.orders WHERE customer_id = 3"})
+        assert "Scan" in text
+        assert "actual time" not in text
 
-    def test_sample_rows_names_the_columns_when_one_is_wrong(self):
-        with self.assertRaises(ToolError) as caught:
-            self.tools["sample_rows"].call({"table": f"{SCHEMA}.orders", "columns": "id, amount"})
-        self.assertIn("No column 'amount'", str(caught.exception))
-        self.assertIn("Columns: id, customer_id, total, note", str(caught.exception))
+    def test_explain_query_takes_only_row_sources(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match="without EXPLAIN"):
+            tools["explain_query"].call({"query": "SHOW work_mem"})
 
-    def test_sample_rows_keeps_the_limit(self):
-        with self.assertRaises(ToolError) as caught:
-            self.tools["sample_rows"].call({"table": f"{SCHEMA}.orders", "limit": 500})
-        self.assertIn("limit must be from 1 to 50", str(caught.exception))
-
-    def test_explain_query_shows_a_plan_without_running_the_query(self):
-        text = self.tools["explain_query"].call({"query": f"SELECT * FROM {SCHEMA}.orders WHERE customer_id = 3"})
-        self.assertIn("Scan", text)
-        self.assertNotIn("actual time", text)
-
-    def test_explain_analyze_is_offered_only_to_analysts(self):
+    def test_explain_analyze_is_offered_only_to_analysts(
+        self, tools: dict[str, Tool], analyst: dict[str, Tool]
+    ) -> None:
         query = f"SELECT count(*) FROM {SCHEMA}.orders"
-        with self.assertRaises(ToolError) as caught:
-            self.tools["explain_query"].call({"query": query, "analyze": True})
-        self.assertIn("Unknown argument(s): analyze", str(caught.exception))
-        self.assertIn("actual time", self.analyst["explain_query"].call({"query": query, "analyze": True}))
+        with pytest.raises(ToolError, match=r"Unknown argument\(s\): analyze"):
+            tools["explain_query"].call({"query": query, "analyze": True})
+        assert "actual time" in analyst["explain_query"].call({"query": query, "analyze": "yes"})
+        with pytest.raises(ToolError, match="analyze must be true or false"):
+            analyst["explain_query"].call({"query": query, "analyze": "maybe"})
 
-    def test_run_select_returns_rows_with_a_count(self):
-        self.assertEqual(
-            self.select(f"SELECT id, total FROM {SCHEMA}.orders ORDER BY id LIMIT 2"),
-            ["id | total", "1 | 10.00", "2 | 20.00", "(2 rows)"],
-        )
+    def test_run_select_returns_rows_with_a_count(self, analyst: dict[str, Tool]) -> None:
+        assert lines_of(analyst["run_select"], query=f"SELECT id, total FROM {SCHEMA}.orders ORDER BY id LIMIT 2") == [
+            "id | total",
+            "1 | 10.00",
+            "2 | 20.00",
+            "(2 rows)",
+        ]
 
-    def test_run_select_returns_at_most_200_rows(self):
-        lines = self.select("SELECT g FROM generate_series(1, 1000) AS g")
-        self.assertEqual(len(lines), 1 + 200 + 1)
-        self.assertTrue(lines[-1].startswith("(200 rows shown, there are more"), lines[-1])
+    def test_run_select_shows_values_of_every_kind(self, analyst: dict[str, Tool]) -> None:
+        query = "SELECT NULL AS n, true AS b, '\\xdead'::bytea AS raw, '{\"a\": [1]}'::jsonb AS doc"
+        assert lines_of(analyst["run_select"], query=query)[1] == 'NULL | true | \\xdead | {"a": [1]}'
 
-    def test_run_select_answers_show_and_explain(self):
-        self.assertEqual(self.select("SHOW statement_timeout"), ["statement_timeout", "5s", "(1 row)"])
-        self.assertIn("Result", "\n".join(self.select("EXPLAIN SELECT 1")))
+    def test_run_select_returns_at_most_200_rows(self, analyst: dict[str, Tool]) -> None:
+        lines = lines_of(analyst["run_select"], query="SELECT g FROM generate_series(1, 1000) AS g")
+        assert len(lines) == 1 + 200 + 1
+        assert lines[-1].startswith("(200 rows shown, there are more")
 
-    def test_run_select_refuses_every_kind_of_write_and_the_data_survives(self):
-        for query in (
+    def test_run_select_answers_show_and_explain(self, analyst: dict[str, Tool]) -> None:
+        assert lines_of(analyst["run_select"], query="SHOW statement_timeout") == ["statement_timeout", "5s", "(1 row)"]
+        assert "Result" in analyst["run_select"].call({"query": "EXPLAIN SELECT 1"})
+
+    @pytest.mark.parametrize(
+        "query",
+        [
             f"DROP TABLE {SCHEMA}.orders",
             f"DELETE FROM {SCHEMA}.orders",
             f"WITH gone AS (DELETE FROM {SCHEMA}.orders RETURNING *) SELECT count(*) FROM gone",
             "SELECT set_config('default_transaction_read_only', 'off', false)",
             f"SELECT 1; DROP TABLE {SCHEMA}.orders",
             f"SELECT * FROM {SCHEMA}.orders FOR UPDATE",
-        ):
-            with self.subTest(query=query):
-                with self.assertRaises(ToolError):
-                    self.select(query)
-        self.assertEqual(self.select(f"SELECT count(*) FROM {SCHEMA}.orders")[1], "1000")
+        ],
+    )
+    def test_run_select_refuses_every_kind_of_write(self, analyst: dict[str, Tool], query: str) -> None:
+        with pytest.raises(ToolError):
+            analyst["run_select"].call({"query": query})
+        assert lines_of(analyst["run_select"], query=f"SELECT count(*) FROM {SCHEMA}.orders")[1] == "1000"
 
-    def test_rollback_undoes_setting_changes_that_slip_past_the_check(self):
-        self.db.read_only("SELECT set_config('statement_timeout', '1min', false)", 1, cursor=True)
-        self.assertEqual(self.db.server_info()["statement_timeout"], "5s")
+    def test_database_errors_reach_the_model_as_text(self, analyst: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match="SQLSTATE 42P01"):
+            analyst["run_select"].call({"query": "SELECT * FROM no_such_table"})
 
-    def test_cursor_refuses_a_data_modifying_cte_even_without_the_check(self):
-        with self.assertRaises(QueryFailed):
-            self.db.read_only(f"WITH gone AS (DELETE FROM {SCHEMA}.orders RETURNING *) SELECT * FROM gone", 5, cursor=True)
 
-    def test_session_refuses_to_write(self):
-        with self.assertRaises(QueryFailed) as caught:
-            self.db.query(f"CREATE TABLE {SCHEMA}.forbidden (id int)")
-        self.assertIn("read-only transaction", str(caught.exception))
+class TestDefences:
+    """The layers of ADR 0002 below the SQL check."""
 
-    def test_query_never_runs_a_second_statement(self):
+    def test_rollback_undoes_setting_changes_that_slip_past_the_check(self, db: Database) -> None:
+        db.read_only("SELECT set_config('statement_timeout', '1min', false)", 1, cursor=True)
+        assert db.server_info()["statement_timeout"] == "5s"
+
+    def test_cursor_refuses_a_data_modifying_cte_even_without_the_check(self, db: Database) -> None:
+        with pytest.raises(QueryFailedError):
+            db.read_only(f"WITH gone AS (DELETE FROM {SCHEMA}.orders RETURNING *) SELECT * FROM gone", 5, cursor=True)
+
+    def test_session_refuses_to_write(self, db: Database) -> None:
+        with pytest.raises(QueryFailedError, match="read-only transaction"):
+            db.query(f"CREATE TABLE {SCHEMA}.forbidden (id int)")
+
+    def test_query_never_runs_a_second_statement(self, db: Database) -> None:
         # The hole in the archived reference server: "SELECT 1; COMMIT; DROP ..." in one string.
-        with self.assertRaises(QueryFailed) as caught:
-            self.db.query("SELECT 1; COMMIT; SELECT 2")
-        self.assertIn("cannot insert multiple commands into a prepared statement", str(caught.exception))
+        with pytest.raises(QueryFailedError, match="cannot insert multiple commands into a prepared statement"):
+            db.query("SELECT 1; COMMIT; SELECT 2")
+
+    def test_lost_connection_is_reopened(self, db: Database, admin: pg8000.native.Connection) -> None:
+        db.server_info()
+        admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-mcp'")
+        assert db.server_info()["read_only"] == "on"
 
 
-@unittest.skipUnless(INTEGRATION and shutil.which("psql"), "needs PG_MCP_IT=1 and psql")
-class RoleScriptTests(unittest.TestCase):
+ROLE, PASSWORD, ROLE_SCHEMA = "mcp_it_agent", "agent-secret-1", "mcp_it_role"
+
+
+def drop_role(admin: pg8000.native.Connection, role: str) -> None:
+    if admin.run("SELECT 1 FROM pg_roles WHERE rolname = :name", name=role):
+        admin.run(f"DROP OWNED BY {role}")
+        admin.run(f"DROP ROLE {role}")
+
+
+@pytest.fixture(scope="module")
+def agent(admin: pg8000.native.Connection) -> Iterator[Database]:
+    """A role made by docs/role.sql, as a DBA would make it."""
+    admin.run(f"DROP SCHEMA IF EXISTS {ROLE_SCHEMA} CASCADE")
+    admin.run(f"CREATE SCHEMA {ROLE_SCHEMA}")
+    admin.run(f"CREATE TABLE {ROLE_SCHEMA}.items (id int PRIMARY KEY)")
+    admin.run(f"INSERT INTO {ROLE_SCHEMA}.items VALUES (1), (2)")
+    drop_role(admin, ROLE)
+    subprocess.run(
+        [
+            "psql", "-X", "-q",
+            "-v", f"role={ROLE}", "-v", f"password={PASSWORD}", "-v", f"schemas={ROLE_SCHEMA}",
+            "-v", f"owner={Settings.from_env(os.environ).user}",
+            "-f", str(ROOT / "docs" / "role.sql"),
+        ],
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
+    database = Database(env_with(PGUSER=ROLE, PGPASSWORD=PASSWORD))
+    yield database
+    database.close()
+    admin.run(f"DROP SCHEMA {ROLE_SCHEMA} CASCADE")
+    drop_role(admin, ROLE)
+
+
+@pytest.mark.skipif(shutil.which("psql") is None, reason="needs psql to run docs/role.sql")
+class TestRoleScript:
     """docs/role.sql gives a role that reads the granted schema and cannot write anywhere."""
 
-    ROLE, PASSWORD, ROLE_SCHEMA = "mcp_it_agent", "agent-secret-1", "mcp_it_role"
+    def test_the_role_reads_only_the_granted_schema(self, agent: Database) -> None:
+        tools = by_name(build_tools(agent, str(ROOT), profile="analyst"))
+        assert f"as {ROLE}" in tools["status"].call({})
+        assert lines_of(tools["list_tables"]) == [f"{ROLE_SCHEMA}.items | table | rows unknown (never analyzed)"]
+        assert lines_of(tools["run_select"], query=f"SELECT count(*) FROM {ROLE_SCHEMA}.items")[1] == "2"
 
-    @classmethod
-    def setUpClass(cls):
-        cls.admin = admin_connection()
-        cls.admin.run(f"DROP SCHEMA IF EXISTS {cls.ROLE_SCHEMA} CASCADE")
-        cls.admin.run(f"CREATE SCHEMA {cls.ROLE_SCHEMA}")
-        cls.admin.run(f"CREATE TABLE {cls.ROLE_SCHEMA}.items (id int PRIMARY KEY)")
-        cls.admin.run(f"INSERT INTO {cls.ROLE_SCHEMA}.items VALUES (1), (2)")
-        cls._drop_role()
-        owner = Settings.from_env(os.environ).user
-        subprocess.run(
-            ["psql", "-X", "-q", "-v", f"role={cls.ROLE}", "-v", f"password={cls.PASSWORD}",
-             "-v", f"schemas={cls.ROLE_SCHEMA}", "-v", f"owner={owner}", "-f", os.path.join(support.ROOT, "docs", "role.sql")],
-            check=True,
-            capture_output=True,
-        )
-        cls.db = Database(env_with(PGUSER=cls.ROLE, PGPASSWORD=cls.PASSWORD))
-        cls.tools = {tool.name: tool for tool in build_tools(cls.db, support.ROOT, profile="analyst")}
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.db.close()
-        cls.admin.run(f"DROP SCHEMA {cls.ROLE_SCHEMA} CASCADE")
-        cls._drop_role()
-        cls.admin.close()
-
-    @classmethod
-    def _drop_role(cls):
-        if cls.admin.run("SELECT 1 FROM pg_roles WHERE rolname = :name", name=cls.ROLE):
-            cls.admin.run(f"DROP OWNED BY {cls.ROLE}")
-            cls.admin.run(f"DROP ROLE {cls.ROLE}")
-
-    def test_the_role_reads_only_the_granted_schema(self):
-        self.assertIn(f"as {self.ROLE}", self.tools["status"].call({}))
-        self.assertEqual(self.tools["list_tables"].call({}).splitlines(), [f"{self.ROLE_SCHEMA}.items | table | rows unknown (never analyzed)"])
-        self.assertEqual(self.tools["run_select"].call({"query": f"SELECT count(*) FROM {self.ROLE_SCHEMA}.items"}).splitlines()[1], "2")
-
-    def test_the_role_cannot_write_even_with_read_only_mode_switched_off(self):
-        agent = pg8000.native.Connection(
-            user=self.ROLE, password=self.PASSWORD, host=self.db.settings.host, port=self.db.settings.port,
-            database=self.db.settings.database,
-        )
+    @pytest.mark.usefixtures("agent")
+    def test_the_role_cannot_write_even_with_read_only_mode_switched_off(self) -> None:
+        connection = connect(PGUSER=ROLE, PGPASSWORD=PASSWORD)
         try:
-            agent.run("SET default_transaction_read_only = off")
-            for statement in (f"INSERT INTO {self.ROLE_SCHEMA}.items VALUES (3)", f"CREATE TABLE {self.ROLE_SCHEMA}.x (id int)"):
-                with self.subTest(statement=statement):
-                    with self.assertRaises(pg8000.exceptions.DatabaseError) as caught:
-                        agent.run(statement)
-                    self.assertIn("permission denied", str(caught.exception))
+            connection.run("SET default_transaction_read_only = off")
+            for statement in (f"INSERT INTO {ROLE_SCHEMA}.items VALUES (3)", f"CREATE TABLE {ROLE_SCHEMA}.x (id int)"):
+                with pytest.raises(pg8000.exceptions.DatabaseError, match="permission denied"):
+                    connection.run(statement)
         finally:
-            agent.close()
+            connection.close()
 
 
-@unittest.skipUnless(INTEGRATION, SKIP_REASON)
-class ConnectionHintTests(unittest.TestCase):
+LOGIN = "mcp_it_login"
+
+
+@pytest.fixture(scope="module")
+def login(admin: pg8000.native.Connection) -> Iterator[str]:
+    admin.run(f"DROP ROLE IF EXISTS {LOGIN}")
+    admin.run(f"CREATE ROLE {LOGIN} LOGIN PASSWORD 'right-password'")
+    yield LOGIN
+    admin.run(f"DROP ROLE IF EXISTS {LOGIN}")
+
+
+def status_with(**env: str | None) -> str:
+    database = Database(env_with(**env))
+    try:
+        return build_tools(database, str(ROOT))[0].call({})
+    finally:
+        database.close()
+
+
+def connects(**env: str | None) -> bool:
+    database = Database(env_with(**env))
+    try:
+        database.server_info()
+    except DatabaseUnavailableError:
+        return False
+    finally:
+        database.close()
+    return True
+
+
+class TestConnectionHints:
     """Connection failures come back as hints that say what to fix."""
 
-    LOGIN = "mcp_it_login"
+    def test_missing_database(self) -> None:
+        assert "Database 'mcp_it_no_such_db' does not exist" in status_with(PGDATABASE="mcp_it_no_such_db")
 
-    @classmethod
-    def setUpClass(cls):
-        cls.admin = admin_connection()
-        cls.admin.run(f"DROP ROLE IF EXISTS {cls.LOGIN}")
-        cls.admin.run(f"CREATE ROLE {cls.LOGIN} LOGIN PASSWORD 'right-password'")
+    def test_wrong_password(self, login: str) -> None:
+        env: dict[str, str | None] = {"PGUSER": login, "PGPASSWORD": "wrong-password"}
+        if connects(**env):
+            pytest.skip("the server trusts these connections, passwords are not checked")
+        text = status_with(**env)
+        assert f"Login as '{login}' failed" in text
+        assert "Never paste it into the chat" in text
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.admin.run(f"DROP ROLE IF EXISTS {cls.LOGIN}")
-        cls.admin.close()
+    def test_missing_password_points_to_the_password_file(self, login: str) -> None:
+        env: dict[str, str | None] = {"PGUSER": login, "PGPASSWORD": None, "PGPASSFILE": str(ROOT / "no-such-pgpass")}
+        if connects(**env):
+            pytest.skip("the server trusts these connections, passwords are not checked")
+        assert "Put the password into" in status_with(**env)
 
-    def status_with(self, **env):
-        db = Database(env_with(**env))
-        try:
-            return build_tools(db, support.ROOT)[0].call({})
-        finally:
-            db.close()
-
-    def connects(self, **env) -> bool:
-        db = Database(env_with(**env))
-        try:
-            db.server_info()
-            return True
-        except DatabaseUnavailable:
-            return False
-        finally:
-            db.close()
-
-    def test_missing_database(self):
-        self.assertIn("Database 'mcp_it_no_such_db' does not exist", self.status_with(PGDATABASE="mcp_it_no_such_db"))
-
-    def test_wrong_password(self):
-        env = dict(PGUSER=self.LOGIN, PGPASSWORD="wrong-password")
-        if self.connects(**env):
-            self.skipTest("the server trusts these connections, passwords are not checked")
-        text = self.status_with(**env)
-        self.assertIn(f"Login as '{self.LOGIN}' failed", text)
-        self.assertIn("Never paste it into the chat", text)
-
-    def test_missing_password_points_to_the_password_file(self):
-        env = dict(PGUSER=self.LOGIN, PGPASSWORD=None, PGPASSFILE=os.path.join(support.ROOT, "no-such-pgpass"))
-        if self.connects(**env):
-            self.skipTest("the server trusts these connections, passwords are not checked")
-        self.assertIn("Put the password into", self.status_with(**env))
-
-    def test_tls_required_but_not_offered(self):
-        if self.connects(PGSSLMODE="require"):
-            self.skipTest("the server offers TLS")
-        text = self.status_with(PGSSLMODE="require")
-        self.assertIn("TLS with", text)
-        self.assertIn("PGSSLMODE", text)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_tls_required_but_not_offered(self) -> None:
+        if connects(PGSSLMODE="require"):
+            pytest.skip("the server offers TLS")
+        text = status_with(PGSSLMODE="require")
+        assert "TLS with" in text
+        assert "PGSSLMODE" in text

@@ -1,61 +1,59 @@
+"""The server as an MCP client runs it: a separate `python -I run.py` speaking over stdin/stdout."""
+
+from __future__ import annotations
+
 import json
-import unittest
 
-from support import request, run_stdio_session, unreachable_database_env
-
-
-class StdioSessionTests(unittest.TestCase):
-    """The server as an MCP client runs it: a separate process speaking over stdin/stdout."""
-
-    def test_session_without_a_reachable_database(self):
-        lines, proc = run_stdio_session(
-            [
-                request(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "tests"}}),
-                {"jsonrpc": "2.0", "method": "notifications/initialized"},
-                request(2, "tools/list"),
-                request(3, "tools/call", {"name": "status", "arguments": {}}),
-                request(4, "tools/call", {"name": "list_tables", "arguments": {"schema": "заказы"}}),
-            ],
-            env=unreachable_database_env(),
-        )
-        stderr = proc.stderr.decode("utf-8", "replace")
-        self.assertEqual(proc.returncode, 0, stderr)
-        self.assertEqual(len(lines), 4, stderr)
-        self.assertTrue(all(line.isascii() for line in lines))
-
-        initialize, tools, status, tables = (json.loads(line) for line in lines)
-        self.assertEqual(initialize["result"]["protocolVersion"], "2025-06-18", stderr)
-        self.assertEqual(
-            [tool["name"] for tool in tools["result"]["tools"]],
-            ["status", "list_tables", "describe_table", "sample_rows", "explain_query"],
-        )
-
-        status_text = status["result"]["content"][0]["text"]
-        self.assertFalse(status["result"]["isError"])
-        self.assertIn("database: unavailable", status_text)
-        self.assertIn("Check PGHOST and PGPORT", status_text)
-
-        self.assertTrue(tables["result"]["isError"])
-        self.assertIn("Nothing accepts connections", tables["result"]["content"][0]["text"])
-
-    def test_modern_session_needs_no_initialize(self):
-        meta = {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}}}
-        lines, proc = run_stdio_session(
-            [
-                request(1, "server/discover", meta),
-                request(2, "tools/list", meta),
-                request(3, "tools/call", dict(meta, name="status", arguments={})),
-            ],
-            env=unreachable_database_env(),
-        )
-        stderr = proc.stderr.decode("utf-8", "replace")
-        self.assertEqual(len(lines), 3, stderr)
-        discover, tools, status = (json.loads(line) for line in lines)
-        self.assertEqual(discover["result"]["supportedVersions"], ["2026-07-28"])
-        self.assertEqual(len(tools["result"]["tools"]), 5)
-        self.assertEqual(status["result"]["resultType"], "complete")
-        self.assertIn("database: unavailable", status["result"]["content"][0]["text"])
+from tests.helpers import MODERN_META, rpc, run_stdio_session
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_legacy_session_without_a_reachable_database(unreachable_env: dict[str, str]) -> None:
+    lines, proc = run_stdio_session(
+        [
+            rpc(
+                1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "tests"}}
+            ),
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            rpc(2, "tools/list"),
+            rpc(3, "tools/call", {"name": "status", "arguments": {}}),
+            rpc(4, "tools/call", {"name": "list_tables", "arguments": {"schema": "заказы"}}),
+        ],
+        env=unreachable_env,
+    )
+    stderr = proc.stderr.decode("utf-8", "replace")
+    assert proc.returncode == 0, stderr
+    assert len(lines) == 4, stderr
+    assert all(line.isascii() for line in lines)
+
+    initialize, tools, status, tables = (json.loads(line) for line in lines)
+    assert initialize["result"]["protocolVersion"] == "2025-06-18"
+    assert [tool["name"] for tool in tools["result"]["tools"]] == [
+        "status",
+        "list_tables",
+        "describe_table",
+        "sample_rows",
+        "explain_query",
+    ]
+    status_text = status["result"]["content"][0]["text"]
+    assert status["result"]["isError"] is False
+    assert "database: unavailable" in status_text
+    assert "Check PGHOST and PGPORT" in status_text
+    assert tables["result"]["isError"] is True
+    assert "Nothing accepts connections" in tables["result"]["content"][0]["text"]
+
+
+def test_modern_session_needs_no_initialize(unreachable_env: dict[str, str]) -> None:
+    lines, proc = run_stdio_session(
+        [
+            rpc(1, "server/discover", MODERN_META),
+            rpc(2, "tools/list", MODERN_META),
+            rpc(3, "tools/call", dict(MODERN_META, name="status", arguments={})),
+        ],
+        env=unreachable_env,
+    )
+    assert len(lines) == 3, proc.stderr.decode("utf-8", "replace")
+    discover, tools, status = (json.loads(line) for line in lines)
+    assert discover["result"]["supportedVersions"] == ["2026-07-28"]
+    assert len(tools["result"]["tools"]) == 5
+    assert status["result"]["resultType"] == "complete"
+    assert "database: unavailable" in status["result"]["content"][0]["text"]
