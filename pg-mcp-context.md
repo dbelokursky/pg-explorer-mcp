@@ -14,6 +14,8 @@ reaches dozens of stands through the same tools.
 - To ask several stands the same thing, `search_schema` and `run_select` take `stands` instead of `stand`:
   names separated by commas or a pattern (`dev1,dev2`, `dev*`), at most 10 per call. The answer has a
   section per stand, and a stand that did not answer says why under its line.
+- To learn how a schema differs between two stands (tables, columns, constraints, indexes), call
+  `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.
 - Never ask the user to paste a database password into the chat; it belongs in ~/.pgpass.
 - The server speaks English or Russian (`PG_MCP_LANG`). Whichever it speaks, reply to the user

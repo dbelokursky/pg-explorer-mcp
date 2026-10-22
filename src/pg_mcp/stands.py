@@ -102,10 +102,10 @@ class Registry:
     def of_stand(self, stand: str) -> list[Target]:
         return [target for target in self.targets if target.stand == stand]
 
-    def stand(self, name: Any) -> str:
-        """The registry's stand that name means, or StandError with similar names."""
+    def stand(self, name: Any, argument: str = "stand") -> str:
+        """The registry's stand that name means, or StandError with similar names; argument names the parameter."""
         if not isinstance(name, str) or not name.strip():
-            raise StandError(t("stands.no_stand_argument", stands=summarize(self.stands())))
+            raise StandError(t("stands.no_stand_argument", argument=argument, stands=summarize(self.stands())))
         wanted = name.strip().lower()
         if wanted in self.stands():
             return wanted

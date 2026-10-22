@@ -38,6 +38,7 @@ English or Russian.
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
+| `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, columns, constraints, indexes | all |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
 | `run_select` | one read-only statement: `SELECT`, `WITH … SELECT`, `VALUES`, `TABLE`, `EXPLAIN`, `SHOW` | `analyst` |
@@ -361,6 +362,7 @@ exists in several databases of the stand.
 | "How many orders per status are in shop on dev7?" | `run_select` with `stand` and `schema` (profile `analyst`) |
 | "On which dev stand is there an order 123?" | `run_select` with `stands` and `schema` |
 | "Which stands have a discount column in shop?" | `search_schema` with `stands` and `text` |
+| "How does shop on dev7 differ from dev12?" | `compare_schema` with `stand_a`, `stand_b` and `schema` |
 
 Every answer starts with where it came from. Real answers on the demo database:
 
@@ -381,6 +383,25 @@ cancelled | 90
 new | 74
 (4 rows)
 ```
+
+`compare_schema` with `stand_a: dev7`, `stand_b: dev12` and `schema: shop`, where dev12 is a copy of the demo
+database in which the price gained two digits, orders gained a note and a table of returns, and an index
+was dropped:
+
+```text
+dev7 / demo / shop  vs  dev12 / demo / shop
+only on dev12:
+  returns | table
+differ:
+  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  orders.note only on dev12: text
+  orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+```
+
+The structure comes from the system catalog of each stand, read with the schema's own login in three
+queries however many tables there are; the data is not read. A schema with no differences gets a single
+line, such as `identical: 1 table, 3 columns`, and a schema the registry lists but one stand's database
+lacks is an error, not a stand full of differences.
 
 Without `schema`, `list_tables`, `search_schema` and `describe_table` cover the whole stand: the names
 come from the system catalog, which every login can see, through one login per database, and only the

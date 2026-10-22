@@ -6,6 +6,7 @@ from the catalog, one query per database, kept to the schemas the registry has
 logins for. Every answer starts with where it came from: stand / database / schema.
 search_schema and run_select also take stands, several stands for the same request:
 they are asked one after another, and the answer has a section per stand.
+compare_schema reads one schema on two stands with its login on each.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Any
 
 from . import __version__
 from .budget import DEFAULT_BUDGET
+from .compare import compare_schema
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
@@ -46,16 +48,26 @@ from .tools import (
     split_name,
 )
 
-# The single-database profiles, with list_schemas right after status.
-STAND_PROFILES: dict[str, tuple[str, ...]] = {
-    profile: ("status", "list_schemas", *names[1:]) for profile, names in PROFILES.items()
-}
+# The tools only a server with stands has, and the single-database tool each one follows.
+STAND_ONLY_TOOLS = {"list_schemas": "status", "compare_schema": "describe_table"}
 # A call over several stands asks them one after another and must answer within the client's
 # timeout (install.py registers the entry with "timeout": 30000): another stand is started only
 # while the call has time for that stand's connect timeout, and the rows are shared among the stands.
 CALL_TIME_BUDGET_S = 25
 ROWS_PER_STAND_MIN = 10
 CATALOG_ATTEMPTS = 2  # logins tried per database for the catalog before giving up on it
+
+
+def _stand_names(names: Sequence[str]) -> tuple[str, ...]:
+    """A profile's tools with the stand-only ones in place."""
+    result: list[str] = []
+    for name in names:
+        result.append(name)
+        result.extend(tool for tool, after in STAND_ONLY_TOOLS.items() if after == name)
+    return tuple(result)
+
+
+STAND_PROFILES: dict[str, tuple[str, ...]] = {profile: _stand_names(names) for profile, names in PROFILES.items()}
 
 Arguments = Mapping[str, Any]
 Down = dict[str, str]  # host:port -> why it did not answer, remembered for the rest of one call
@@ -142,6 +154,19 @@ def build_stand_tools(
             properties={"stand": stand, "table": table, "schema": any_schema, "database": database},
             required=("stand", "table"),
             handler=lambda args: stand_describe(pool, args),
+        ),
+        Tool(
+            name="compare_schema",
+            title=t("tool.compare_schema.title"),
+            description=t("tool.compare_schema.description"),
+            properties={
+                "stand_a": {"type": "string", "description": t("argument.stand_a")},
+                "stand_b": {"type": "string", "description": t("argument.stand_b")},
+                "schema": {"type": "string", "description": t("argument.schema_compare")},
+                "database": database,
+            },
+            required=("stand_a", "stand_b", "schema"),
+            handler=lambda args: stand_compare(pool, args),
         ),
         Tool(
             name="sample_rows",
@@ -315,6 +340,17 @@ def _search_stands(pool: Pool, stands: Sequence[str], args: Arguments, text: str
 def stand_describe(pool: Pool, args: Arguments) -> list[str]:
     target, table = _table_target(pool, args)
     return [target.label, *describe_table(pool.database(target), table, target.schema)]
+
+
+def stand_compare(pool: Pool, args: Arguments) -> list[str]:
+    """One schema on two stands; database picks the login the same way on both."""
+    registry = pool.registry
+    first = registry.stand(args.get("stand_a"), "stand_a")
+    second = registry.stand(args.get("stand_b"), "stand_b")
+    if first == second:
+        raise StandError(t("compare.same_stand", stand=first))
+    schema, database = args.get("schema"), args.get("database")
+    return compare_schema(pool, registry.target(first, schema, database), registry.target(second, schema, database))
 
 
 def stand_sample(pool: Pool, args: Arguments) -> list[str]:
