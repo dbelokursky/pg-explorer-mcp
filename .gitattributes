@@ -1,3 +1,5 @@
 # Vendored files must stay byte for byte as their wheels shipped them:
 # scripts/check_vendor.py compares them with the hashes in each RECORD.
 src/pg_mcp/_vendor/** -text
+# The release archive (git archive in .github/workflows/release.yml) is for users: CI stays out of it.
+/.github export-ignore
