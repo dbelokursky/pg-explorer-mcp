@@ -98,18 +98,5 @@ MCP-сервер для PostgreSQL с доступом только на чте�
 
 ## Разработка
 
-Тесты используют только стандартную библиотеку:
-
-```bash
-python3 -I -m unittest discover -s tests
-```
-
-Интеграционные тесты ходят в настоящий PostgreSQL. Они создают и удаляют схемы `mcp_it`,
-`mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`; тестам роли нужен `psql`:
-
-```bash
-PG_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test python3 -I -m unittest discover -s tests
-```
-
-Почему всё устроено именно так — в [docs/adr/](docs/adr/). Что лежит в `server/vendor/` и как
-это обновлять — в [server/vendor/README.md](server/vendor/README.md).
+Окружение, проверки, раскладка кода и правила — в [CONTRIBUTING.md](CONTRIBUTING.md). Почему всё
+устроено именно так — в [docs/adr/](docs/adr/).

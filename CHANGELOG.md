@@ -1,5 +1,13 @@
 # Изменения
 
+## Не выпущено
+
+- Раскладка по рекомендациям PyPA: пакет в `src/pg_mcp/`, сторонние пакеты в `src/pg_mcp/_vendor/`,
+  запуск из клона — `python -I run.py`, после установки — `pg-mcp` или `python -m pg_mcp`.
+- `pyproject.toml` с метаданными и настройками инструментов, окружение разработки на uv с `uv.lock`.
+- ruff вместо flake8, mypy в режиме strict, тесты на pytest с покрытием по веткам (порог 95%), pre-commit.
+- CI на uv: Linux, Windows и macOS под Python 3.9 и 3.14; dependabot для Actions и инструментов.
+
 ## 0.2.0 — 2026-10-22
 
 - Инструменты `describe_table`, `sample_rows`, `explain_query` и `run_select`.

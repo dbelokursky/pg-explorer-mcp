@@ -22,7 +22,7 @@
   только инструменты: `initialize`, `ping`, `tools/list`, `tools/call`; ревизии с 2024-11-05
   по 2025-11-25.
 - Драйвер PostgreSQL — pg8000 (чистый Python, BSD-3-Clause) с зависимостями scramp, asn1crypto,
-  python-dateutil и six. Их исходники лежат в `server/vendor/` вместе с лицензиями.
+  python-dateutil и six. Их исходники лежат в `src/pg_mcp/_vendor/` вместе с лицензиями.
 - Регистрация — `install.py`: прописывает сервер в `~/.gigacode/settings.json` с абсолютным
   путём к интерпретатору, на котором запущен, и проверяет запуск. Расширение
   (`gigacode-extension.json`) даёт агенту короткий контекст и команду `/pg:setup` для починки.
@@ -48,4 +48,4 @@
 - `Database.query` выполняет ровно одну команду через extended protocol, и строку
   `SELECT 1; COMMIT; DROP ...` PostgreSQL отвергнет. Это закрывает класс дыр, найденный
   в архивном эталонном сервере `server-postgres`.
-- Зависимости в `server/vendor/` обновляем вручную, по инструкции в `server/vendor/README.md`.
+- Зависимости в `src/pg_mcp/_vendor/` обновляем вручную, по инструкции в `src/pg_mcp/_vendor/README.md`.

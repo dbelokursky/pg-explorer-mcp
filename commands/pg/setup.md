@@ -5,7 +5,7 @@ Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-mcp extens
 
 1. Find the pg-mcp folder. If the `status` tool of the `pg` server works, its first line says where
    pg-mcp is installed. Otherwise read `mcpServers.pg.args` in `~/.gigacode/settings.json` (the path
-   before `server/run.py`), or ask the user where they cloned pg-mcp.
+   before `run.py`), or ask the user where they cloned pg-mcp.
 2. Find Python 3.9 or newer: try `python3 --version`, then `python --version`, and on Windows
    `py -3 --version`. If none works, tell the user to install Python 3.9+ (from the corporate
    software catalog, or the "embeddable package" zip from python.org, which needs no admin rights)
