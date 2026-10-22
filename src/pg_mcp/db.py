@@ -277,7 +277,23 @@ def socket_timeout(settings: Settings) -> int:
 def _host_down(exc: Exception) -> bool:
     """Whether the host did not answer at all, so that no login on it can succeed right now."""
     cause = exc.__cause__ if exc.__cause__ is not None else exc
-    return isinstance(cause, OSError) and not isinstance(cause, ssl.SSLError)
+    if isinstance(cause, ssl.SSLError) or _dropped(exc):
+        return False  # the host accepted the connection: it answered
+    return isinstance(cause, OSError)
+
+
+def _dropped(exc: Exception) -> bool:
+    """Whether the server accepted the connection and then closed it before the login was through.
+
+    pg8000 reports that as "network error", with or without the reset underneath. Windows
+    discards what the server sent before a reset, so the server's own refusal, usually of a
+    password, may arrive this way instead of as an error message.
+    """
+    cause = exc.__cause__ if exc.__cause__ is not None else exc
+    return (
+        isinstance(cause, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError))
+        or str(exc) == "network error"
+    )
 
 
 def pgpass_path(env: Mapping[str, str]) -> str:
@@ -377,6 +393,8 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
         return t("db.timeout", where=where)
     if isinstance(cause, OSError) and cause.errno in _NO_ROUTE:
         return t("db.unreachable", where=where, error=cause.strerror or cause)
+    if _dropped(exc):
+        return t("db.dropped", where=where, user=settings.user)
     if code == "28P01" or (not settings.password and "password" in detail.lower()):
         return _password_hint(settings, detail)
     if code == "3D000":

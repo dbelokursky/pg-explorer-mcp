@@ -250,6 +250,10 @@ EN: dict[str, str] = {
     "db.unresolved": "Host {host!r} cannot be resolved. Check PGHOST.",
     "db.timeout": "Connecting to {where} timed out. The host may be behind a firewall or a VPN.",
     "db.unreachable": "{where} is unreachable from this machine: {error}. Connect the VPN and check PGHOST.",
+    "db.dropped": (
+        "{where} accepted the connection, then closed it during the login of {user!r} without saying why. "
+        "Usually a wrong password or pg_hba.conf: check the password file, then ask the DBA."
+    ),
     "db.no_database": "Database {database!r} does not exist at {where}. Check PGDATABASE.",
     "db.login_refused": (
         "The server refused the login for {user!r}: {detail}. Check the role and pg_hba.conf with the DBA."
@@ -546,6 +550,10 @@ RU: dict[str, str] = {
     "db.unresolved": "Имя хоста {host!r} не находится в DNS. Проверьте PGHOST.",
     "db.timeout": "Подключение к {where} не дождалось ответа. Возможно, хост закрыт файрволом или нужен VPN.",
     "db.unreachable": "{where} недоступен с этой машины: {error}. Подключите VPN и проверьте PGHOST.",
+    "db.dropped": (
+        "{where} принял подключение, но закрыл его при входе под ролью {user!r}, не объяснив причину. "
+        "Обычно это неверный пароль или pg_hba.conf: проверьте файл паролей, потом спросите DBA."
+    ),
     "db.no_database": "На {where} нет базы {database!r}. Проверьте PGDATABASE.",
     "db.login_refused": "Сервер не пустил роль {user!r}: {detail}. Проверьте роль и pg_hba.conf вместе с DBA.",
     "db.tls": "TLS-соединение с {where} не установилось: {detail}. Проверьте PGSSLMODE и PGSSLROOTCERT.",

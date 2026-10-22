@@ -121,6 +121,13 @@ def test_connection_failures_become_hints(error: pg8000.exceptions.Error, hint: 
     assert hint in db._explain_connect_failure(error, settings(PGPASSWORD="x"))
 
 
+@pytest.mark.parametrize("error", [failure("network error", ConnectionResetError()), failure("network error")])
+def test_a_login_the_server_dropped_points_at_the_password_and_pg_hba(error: Exception) -> None:
+    text = db._explain_connect_failure(error, settings(PGPASSWORD="x"))
+    assert "localhost:5432 accepted the connection, then closed it during the login of 'app'" in text
+    assert "check the password file, then ask the DBA" in text
+
+
 def test_no_route_to_the_host_points_at_the_vpn() -> None:
     # pg8000 does not wrap the errors of its TLS request, so a bare OSError is explained too.
     error = OSError(errno.EHOSTUNREACH, "No route to host")
@@ -140,6 +147,8 @@ def test_no_route_to_the_host_points_at_the_vpn() -> None:
         (failure("x", ssl.SSLError("wrong version number")), False),
         (failure({"C": "28P01", "M": "password authentication failed"}), False),
         (failure("Server refuses SSL"), False),
+        (failure("network error", ConnectionResetError()), False),  # accepted, then dropped: the host is up
+        (failure("network error"), False),  # closed without a word, likewise
     ],
 )
 def test_only_a_silent_host_counts_as_down(error: Exception, down: bool) -> None:  # noqa: FBT001

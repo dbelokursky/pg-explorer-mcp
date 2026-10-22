@@ -545,6 +545,7 @@ says what is wrong.
 | "Host … cannot be resolved" | a typo in `PGHOST`, or a VPN is needed | fix `PGHOST` |
 | "Connecting to … timed out" | a firewall or a VPN | check that the port is reachable from this machine |
 | "… is unreachable from this machine" | no route to the host: the VPN is down | connect the VPN |
+| "… accepted the connection, then closed it during the login" | the server refused the login, but its message was lost (Windows drops it on a reset); usually the password or `pg_hba.conf` | check the password file, then ask the DBA |
 | "Login as … failed" or "the server asks for a password" | no password in the password file, a wrong line, or file permissions | check the path, the line format and `chmod 600` |
 | "Database … does not exist" | wrong database name | fix `PGDATABASE` |
 | "The server refused the login for …" | `pg_hba.conf`, or the role lacks `LOGIN`/`CONNECT` | ask the DBA |
