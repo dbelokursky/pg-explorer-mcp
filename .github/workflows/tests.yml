@@ -71,6 +71,39 @@ jobs:
       - run: npm install --global --no-audit --no-fund "@qwen-code/qwen-code@${QWEN_CODE_VERSION}"
       - run: python3 scripts/client_smoke.py --qwen "$(command -v qwen)"
 
+  windows-integration:
+    # Most users run Windows: the password file under %APPDATA%, the system code page of pipes and
+    # the runner's own PostgreSQL 17, which the image ships stopped, with the password "root".
+    name: integration (Windows, PostgreSQL 17)
+    runs-on: windows-latest
+    env:
+      PG_MCP_IT: "1"
+      PGHOST: localhost
+      PGUSER: postgres
+      PGDATABASE: pg_mcp_it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        with:
+          enable-cache: true
+      - name: start PostgreSQL, keep its password where libpq looks on Windows
+        shell: pwsh
+        run: |
+          Set-Service -Name postgresql-x64-17 -StartupType Manual
+          Start-Service -Name postgresql-x64-17
+          New-Item -ItemType Directory -Force "$env:APPDATA\postgresql" | Out-Null
+          Set-Content -Encoding ascii -Path "$env:APPDATA\postgresql\pgpass.conf" -Value "localhost:5432:*:postgres:root"
+          Add-Content -Path $env:GITHUB_PATH -Value $env:PGBIN
+          # The cluster's default encoding may be WIN1252; the tests need UTF-8 for their Cyrillic names.
+          & "$env:PGBIN\psql.exe" -X -d postgres -c "CREATE DATABASE pg_mcp_it TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'"
+      - run: uv sync --locked
+      - run: uv run pytest -m integration
+      - name: install.py through a pipe, the way an agent runs it
+        shell: pwsh
+        run: |
+          uv run python install.py --check --lang ru | Out-String
+          exit $LASTEXITCODE
+
   integration:
     name: integration (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest

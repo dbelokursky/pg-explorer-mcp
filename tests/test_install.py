@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 import install
+from tests.helpers import ROOT
 
 ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-mcp/run.py"]}
 
@@ -145,6 +147,26 @@ def test_a_connection_is_recognised_in_either_language(line: str) -> None:
 
 def test_an_unavailable_database_is_not_a_connection() -> None:
     assert not install.connected("database: unavailable. Nothing accepts connections at db:5432.")
+
+
+@pytest.mark.parametrize("codepage", ["cp1252", "cp866"])
+def test_a_code_page_without_cyrillic_or_dashes_does_not_crash_the_output(
+    codepage: str, unreachable_env: dict[str, str]
+) -> None:
+    # An agent reads install.py through a pipe, where Python uses the system code page: cp1252 on
+    # English Windows has no Cyrillic, and cp866 has no dash, which the profile warning contains.
+    env = dict(unreachable_env, PYTHONIOENCODING=codepage, PG_MCP_PROFILE="admin")
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "install.py"), "--check", "--lang", "ru"],
+        capture_output=True,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    output = proc.stdout.decode(codepage) + proc.stderr.decode(codepage, "replace")
+    assert "Traceback" not in output
+    assert proc.returncode == 1  # the database is unreachable, and the script says so
+    assert "PG_MCP_PROFILE='admin'" in output
 
 
 def test_old_python_is_refused_in_the_chosen_language(monkeypatch: pytest.MonkeyPatch) -> None:
