@@ -20,10 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from .db import Counters, Database, Settings
-from .i18n import t
+from .i18n import plural, t
 
 DEFAULT_MAX_CONNECTIONS = 8
 DEFAULT_SOCKET_TIMEOUT_S = 10  # a dropped VPN should not hold the agent for long
+MAX_STANDS_PER_CALL = 10  # stands one call may ask in turn: the client waits 30 seconds for an answer
+_WILDCARDS = "*?["  # what makes an item of stands a pattern rather than a name
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")
 _STAND_NUMBER = re.compile(r"(\D*)(\d*)(.*)")
 _RANGE = "\u2013"  # an en dash between the first and the last stand of a run
@@ -111,6 +113,39 @@ class Registry:
         if similar:
             raise StandError(t("stands.unknown_similar", stand=name, similar=", ".join(similar)))
         raise StandError(t("stands.unknown", stand=name, stands=summarize(self.stands())))
+
+    def matching(self, raw: Any) -> list[str]:
+        """The stands of names separated by commas or fnmatch patterns ("dev1,dev2", "dev*"), in stands() order.
+
+        Names fold to lower case, as in stand(). More than MAX_STANDS_PER_CALL stands is an error
+        that shows what matched: a call asks them one after another, and the client waits only so long.
+        """
+        items = raw if isinstance(raw, list) else raw.split(",") if isinstance(raw, str) else []
+        wanted = [item.strip().lower() for item in items if isinstance(item, str) and item.strip()]
+        if not wanted:
+            raise StandError(t("stands.bad_stands_argument", stands=summarize(self.stands())))
+        chosen: set[str] = set()
+        for item in wanted:
+            if any(char in item for char in _WILDCARDS):
+                found = [stand for stand in self.stands() if fnmatch.fnmatchcase(stand, item)]
+                if not found:
+                    raise StandError(t("stands.no_match", pattern=item, stands=summarize(self.stands())))
+                chosen.update(found)
+            else:
+                chosen.add(self.stand(item))
+        stands = [stand for stand in self.stands() if stand in chosen]
+        if len(stands) > MAX_STANDS_PER_CALL:
+            patterns = ", ".join(wanted)
+            raise StandError(
+                plural(
+                    "stands.too_many",
+                    len(stands),
+                    patterns=patterns,
+                    stands=summarize(stands),
+                    limit=MAX_STANDS_PER_CALL,
+                )
+            )
+        return stands
 
     def target(self, stand: str, schema: Any, database: Any = None) -> Target:
         """The connection for a schema of a stand; database only matters when the schema repeats."""
@@ -220,6 +255,7 @@ class Pool:
         self._open: OrderedDict[str, Database] = OrderedDict()
         self._counters = Counters()
         self.current: Target | None = None
+        self.outcomes: dict[str, str] = {}  # stand -> how a call over several stands ended there
 
     def database(self, target: Target) -> Database:
         self.current = target
@@ -256,10 +292,22 @@ class Pool:
         database = self._open.get(self.current.name) if self.current else None
         return database.settings if database else None
 
-    def log_context(self) -> dict[str, str]:
+    def log_context(self) -> dict[str, Any]:
+        if self.outcomes:
+            return {"stands": dict(self.outcomes)}  # a call over several stands: how it ended on each
         if self.current is None:
             return {}
         return {"stand": self.current.stand, "schema": self.current.schema}
+
+    def forget(self) -> None:
+        """Forget the previous call, so that the query log describes this one only."""
+        self.current = None
+        self.outcomes.clear()
+
+    def connect_timeout(self, target: Target) -> int:
+        """Seconds a connection to the target may wait for an answer: the section's, else the entry's."""
+        raw = target.env(self._env)["PG_MCP_SOCKET_TIMEOUT_S"]
+        return int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_SOCKET_TIMEOUT_S
 
 
 def summarize(stands: Sequence[str]) -> str:

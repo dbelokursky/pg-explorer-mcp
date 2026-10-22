@@ -413,7 +413,10 @@ def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None 
     return lines
 
 
-def search_schema(db: Database, text: Any, schema: Any, schemas: Sequence[str] | None = None) -> list[str]:
+def search_schema(
+    db: Database, text: Any, schema: Any, schemas: Sequence[str] | None = None, limit: int = SEARCH_LIMIT
+) -> list[str]:
+    """Matches of text; on a stand, schemas keeps to the registry's, and limit shares the matches among stands."""
     if not isinstance(text, str) or not text.strip():
         raise ToolError(t("error.text"))
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
@@ -422,7 +425,7 @@ def search_schema(db: Database, text: Any, schema: Any, schemas: Sequence[str] |
     params: dict[str, Any] = {
         "patterns": _like_patterns(fragment),
         "schema": schema.strip().strip('"') if schema else None,
-        "limit": SEARCH_LIMIT + 1,
+        "limit": limit + 1,
     }
     if schemas is None:
         rows = db.query(SEARCH_SQL, **params)
@@ -431,15 +434,15 @@ def search_schema(db: Database, text: Any, schema: Any, schemas: Sequence[str] |
     if not rows:
         return [t("search.nothing", text=fragment)]
     lines = []
-    for row in rows[:SEARCH_LIMIT]:
+    for row in rows[:limit]:
         schema_name, relation, kind, estimate, comment, column, data_type, not_null, column_comment = row
         if column is None:
             lines.append(_describe_relation(schema_name, relation, kind, estimate, comment))
         else:
             name = f"{schema_name}.{relation}.{column}"
             lines.append(_column_line(name, data_type, not_null=not_null, comment=column_comment))
-    if len(rows) > SEARCH_LIMIT:
-        lines.append(t("search.more", limit=SEARCH_LIMIT))
+    if len(rows) > limit:
+        lines.append(t("search.more", limit=limit))
     return lines
 
 
@@ -482,10 +485,11 @@ def explain_query(db: Database, query: Any, analyze: Any) -> list[str]:
     return _plan_lines(rows, more=more)
 
 
-def run_select(db: Database, query: Any) -> list[str]:
+def run_select(db: Database, query: Any, limit: int = RUN_SELECT_LIMIT) -> list[str]:
+    """Rows of one read-only statement; limit is smaller when a call shares the rows among several stands."""
     kind = check_read_only(query)
     if kind in ROW_SOURCES:
-        names, rows, more = db.read_only(query, RUN_SELECT_LIMIT, cursor=True)
+        names, rows, more = db.read_only(query, limit, cursor=True)
         return _format_rows(names, rows, more=more)
     names, rows, more = db.read_only(query, PLAN_LINES_LIMIT, cursor=False)
     return _plan_lines(rows, more=more) if kind == "explain" else _format_rows(names, rows, more=more)

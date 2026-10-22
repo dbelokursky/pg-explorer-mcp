@@ -4,11 +4,14 @@ Every tool takes stand. Reading data needs schema too, and the server connects
 with that schema's own login (ADR 0006). Structure across a whole stand comes
 from the catalog, one query per database, kept to the schemas the registry has
 logins for. Every answer starts with where it came from: stand / database / schema.
+search_schema and run_select also take stands, several stands for the same request:
+they are asked one after another, and the answer has a section per stand.
 """
 
 from __future__ import annotations
 
 import platform
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from itertools import groupby
@@ -18,8 +21,9 @@ from . import __version__
 from .budget import DEFAULT_BUDGET
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, t
-from .querylog import QueryLog
-from .stands import Pool, StandError, Target, summarize
+from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
+from .sqlguard import check_read_only
+from .stands import MAX_STANDS_PER_CALL, Pool, StandError, Target, summarize
 from .tools import (
     DEFAULT_NAME,
     DEFAULT_PROFILE,
@@ -46,6 +50,11 @@ from .tools import (
 STAND_PROFILES: dict[str, tuple[str, ...]] = {
     profile: ("status", "list_schemas", *names[1:]) for profile, names in PROFILES.items()
 }
+# A call over several stands asks them one after another and must answer within the client's
+# timeout (install.py registers the entry with "timeout": 30000): another stand is started only
+# while the call has time for that stand's connect timeout, and the rows are shared among the stands.
+CALL_TIME_BUDGET_S = 25
+ROWS_PER_STAND_MIN = 10
 CATALOG_ATTEMPTS = 2  # logins tried per database for the catalog before giving up on it
 
 Arguments = Mapping[str, Any]
@@ -67,7 +76,9 @@ def build_stand_tools(
     analyze = profile == "analyst"
     query_log = query_log or QueryLog(None)
     note = " " + t("stands.tool_note")
+    note_many = " " + t("stands.tool_note_many")
     stand = {"type": "string", "description": t("argument.stand")}
+    stands = {"type": "string", "description": t("argument.stands", limit=MAX_STANDS_PER_CALL)}
     database = {"type": "string", "description": t("argument.database")}
     data_schema = {"type": "string", "description": t("argument.schema_data")}
     any_schema = {"type": "string", "description": t("argument.schema_stand")}
@@ -113,14 +124,15 @@ def build_stand_tools(
         Tool(
             name="search_schema",
             title=t("tool.search_schema.title"),
-            description=t("tool.search_schema.description", limit=SEARCH_LIMIT) + note,
+            description=t("tool.search_schema.description", limit=SEARCH_LIMIT) + note_many,
             properties={
                 "stand": stand,
+                "stands": stands,
                 "text": {"type": "string", "description": t("argument.text")},
                 "schema": any_schema,
                 "database": database,
             },
-            required=("stand", "text"),
+            required=("text",),
             handler=lambda args: stand_search(pool, args),
         ),
         Tool(
@@ -163,9 +175,9 @@ def build_stand_tools(
         Tool(
             name="run_select",
             title=t("tool.run_select.title"),
-            description=t("tool.run_select.description", limit=RUN_SELECT_LIMIT) + note,
-            properties={"stand": stand, "schema": data_schema, "database": database, "query": query},
-            required=("stand", "schema", "query"),
+            description=t("tool.run_select.description", limit=RUN_SELECT_LIMIT) + note_many,
+            properties={"stand": stand, "stands": stands, "schema": data_schema, "database": database, "query": query},
+            required=("schema", "query"),
             handler=lambda args: stand_run(pool, args),
         ),
     ]
@@ -177,7 +189,7 @@ def _fresh(pool: Pool, handler: Callable[[dict[str, Any]], Answer]) -> Callable[
     """The handler, run with the pool forgetting the previous call's login: the query log names this call's."""
 
     def run(args: dict[str, Any]) -> Answer:
-        pool.current = None
+        pool.forget()
         return handler(args)
 
     return run
@@ -208,7 +220,15 @@ def stand_status(
     ]
     lines.extend(t("status.warning", warning=warning) for warning in warnings)
     if not isinstance(stand, str) or not stand.strip():
-        lines.append(t("status.limits_stands", tables=LIST_TABLES_LIMIT, budget=budget, connections=pool.limit))
+        lines.append(
+            t(
+                "status.limits_stands",
+                tables=LIST_TABLES_LIMIT,
+                budget=budget,
+                connections=pool.limit,
+                many=MAX_STANDS_PER_CALL,
+            )
+        )
         lines.append(t("status.stand_hint"))
         return lines
     chosen = registry.stand(stand)
@@ -265,11 +285,31 @@ def stand_search(pool: Pool, args: Arguments) -> list[str]:
     text = args.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ToolError(t("error.text"))
+    stands = _many_stands(pool, args)
+    if stands is not None:
+        return _search_stands(pool, stands, args, text)
     target = _optional_target(pool, args)
     if target is not None:
         return [target.label, *search_schema(pool.database(target), text, target.schema)]
     stand = pool.registry.stand(args.get("stand"))
     return _each_database(pool, stand, args.get("database"), lambda db, schemas: search_schema(db, text, None, schemas))
+
+
+def _search_stands(pool: Pool, stands: Sequence[str], args: Arguments, text: str) -> list[str]:
+    """search_schema on each stand in turn: one schema with its login, or every schema from the catalog."""
+    limit = _share(SEARCH_LIMIT, len(stands))
+    if args.get("schema") in (None, ""):
+
+        def catalog(db: Database, schemas: list[str]) -> list[str]:
+            return search_schema(db, text, None, schemas, limit)
+
+        return _each_stand(pool, stands, lambda stand: _whole_stand(pool, stand, args.get("database"), catalog))
+    _schema_on_some(pool, stands, args)
+
+    def with_login(target: Target) -> list[str]:
+        return search_schema(pool.database(target), text, target.schema, limit=limit)
+
+    return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
 
 
 def stand_describe(pool: Pool, args: Arguments) -> list[str]:
@@ -290,8 +330,117 @@ def stand_explain(pool: Pool, args: Arguments, *, analyze: bool) -> list[str]:
 
 
 def stand_run(pool: Pool, args: Arguments) -> list[str]:
-    target = _required_target(pool, args)
-    return [target.label, *run_select(pool.database(target), args.get("query"))]
+    stands = _many_stands(pool, args)
+    if stands is None:
+        target = _required_target(pool, args)
+        return [target.label, *run_select(pool.database(target), args.get("query"))]
+    query = args.get("query")
+    check_read_only(query)  # a statement the policy refuses is refused once, before any stand is asked
+    _schema_on_some(pool, stands, args)
+    limit = _share(RUN_SELECT_LIMIT, len(stands))
+
+    def with_login(target: Target) -> list[str]:
+        return run_select(pool.database(target), query, limit)
+
+    return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+
+
+def _many_stands(pool: Pool, args: Arguments) -> list[str] | None:
+    """The stands of a call over several of them (stands), or None when stand names one."""
+    one, many = args.get("stand"), args.get("stands")
+    if many in (None, ""):
+        if one in (None, ""):
+            raise StandError(t("stands.no_stand_or_stands", stands=summarize(pool.registry.stands())))
+        return None
+    if one not in (None, ""):
+        raise StandError(t("stands.one_or_many"))
+    return pool.registry.matching(many)
+
+
+def _share(limit: int, stands: int) -> int:
+    """Rows or matches per stand of a call over several: the limit shared out, at least ROWS_PER_STAND_MIN each."""
+    return max(ROWS_PER_STAND_MIN, limit // stands)
+
+
+def _schema_on_some(pool: Pool, stands: Sequence[str], args: Arguments) -> None:
+    """Fail as one stand would when no stand of the call has the schema; stands that lack it get a line each."""
+    complaints = [_complaint(pool, stand, args) for stand in stands]
+    first = complaints[0]
+    if first is not None and all(complaints):
+        raise first
+
+
+def _complaint(pool: Pool, stand: str, args: Arguments) -> StandError | None:
+    """What the registry holds against the schema on this stand, if anything."""
+    try:
+        pool.registry.target(stand, args.get("schema"), args.get("database"))
+    except StandError as exc:
+        return exc
+    return None
+
+
+def _each_stand(pool: Pool, stands: Sequence[str], run: Callable[[str], list[str]]) -> list[str]:
+    """The lines of run on the stands in turn while the call has time for another; the rest are named as not tried."""
+    lines: list[str] = []
+    started = time.monotonic()
+    for index, stand in enumerate(stands):
+        if index and time.monotonic() - started + _reserve(pool, stand) > CALL_TIME_BUDGET_S:
+            rest = stands[index:]
+            lines.append(t("stands.out_of_time", stands=summarize(rest), budget=CALL_TIME_BUDGET_S))
+            pool.outcomes.update(dict.fromkeys(rest, SKIPPED))
+            break
+        lines.extend(run(stand))
+    pool.current = None  # the query log names the call's stands and their outcomes, not the last login
+    return lines
+
+
+def _reserve(pool: Pool, stand: str) -> int:
+    """Seconds the stand may take to answer at all: the longest connect timeout among its logins."""
+    return max(pool.connect_timeout(target) for target in pool.registry.of_stand(stand))
+
+
+def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target], list[str]]) -> list[str]:
+    """run with the schema's login on the stand, under its label; whatever stops it is one line under the label."""
+    try:
+        target = pool.registry.target(stand, args.get("schema"), args.get("database"))
+    except StandError as exc:
+        pool.outcomes[stand] = ERROR
+        return [stand, f"  {exc}"]
+    try:
+        answer = run(target)
+    except DatabaseUnavailableError as exc:
+        pool.outcomes[stand] = UNAVAILABLE
+        return [target.label, f"  {exc}"]
+    except (QueryFailedError, ToolError) as exc:
+        pool.outcomes[stand] = ERROR
+        return [target.label, f"  {exc}"]
+    pool.outcomes[stand] = OK
+    return [target.label, *answer]
+
+
+def _whole_stand(pool: Pool, stand: str, database: Any, run: Callable[[Database, list[str]], list[str]]) -> list[str]:
+    """The catalog of the stand's databases, as for one stand; the outcome is the best any of its databases had."""
+    seen: list[str] = []
+
+    def noted(db: Database, schemas: list[str]) -> list[str]:
+        try:
+            answer = run(db, schemas)
+        except DatabaseUnavailableError:
+            seen.append(UNAVAILABLE)
+            raise
+        except (QueryFailedError, ToolError):
+            seen.append(ERROR)
+            raise
+        seen.append(OK)
+        return answer
+
+    try:
+        lines = _each_database(pool, stand, database, noted)
+    except StandError as exc:
+        pool.outcomes[stand] = ERROR
+        return [stand, f"  {exc}"]
+    pool.outcomes[stand] = next((outcome for outcome in (OK, ERROR, UNAVAILABLE) if outcome in seen), UNAVAILABLE)
+    return lines
 
 
 def by_database(targets: Sequence[Target]) -> list[tuple[str, list[Target]]]:
