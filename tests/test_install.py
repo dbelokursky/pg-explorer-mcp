@@ -142,11 +142,22 @@ def test_language_comes_from_the_locale_and_is_written_into_the_entry(
     ],
 )
 def test_a_connection_is_recognised_in_either_language(line: str) -> None:
-    assert install.connected(f"pg-mcp 0.3.0 on Python 3.9.6\n{line}\nlimits: read only = on")
+    assert install.ready(f"pg-mcp 0.3.0 on Python 3.9.6\n{line}\nlimits: read only = on")
 
 
 def test_an_unavailable_database_is_not_a_connection() -> None:
-    assert not install.connected("database: unavailable. Nothing accepts connections at db:5432.")
+    assert not install.ready("database: unavailable. Nothing accepts connections at db:5432.")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "stands: 53 (dev1–dev50, ift1–ift3), connections in the registry: 2100",
+        "стенды: 2 (dev1–dev2), подключений в реестре: 3",
+    ],
+)
+def test_an_entry_for_stands_is_ready_once_it_finds_them(line: str) -> None:
+    assert install.ready(f"pg-mcp 0.3.0 on Python 3.9.6\nserver name: pg-stands\n{line}")
 
 
 @pytest.mark.parametrize("codepage", ["cp1252", "cp866"])
@@ -197,6 +208,23 @@ def test_a_further_database_registers_next_to_pg(
         "pg-sales",
     )
     assert "registered MCP server 'pg-sales'" in capsys.readouterr().out
+
+
+def test_an_entry_for_many_stands_is_ready_without_reaching_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    stands = tmp_path / "stands.conf"
+    stands.write_text(f"[dev1.orders.billing]\nhost=127.0.0.1\nport={unreachable_env['PGPORT']}\n", encoding="utf-8")
+    monkeypatch.setenv("PG_MCP_STANDS", "*")
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(stands))
+    monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "absent.conf"))
+    assert install.main(["--client", "qwen", "--name", "stands"]) == 0
+    settings = read(tmp_path / ".qwen" / "settings.json")
+    assert isinstance(settings, dict)
+    env = settings["mcpServers"]["pg-stands"]["env"]
+    assert (env["PG_MCP_STANDS"], env["PG_MCP_STANDS_FILE"], env["PG_MCP_NAME"]) == ("*", str(stands), "pg-stands")
+    assert "stands: 1 (dev1), connections in the registry: 1" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("name", ["Sales", "sales_db", "-sales", "", "x" * 31])

@@ -52,6 +52,12 @@ COPIED_ENV = (
     "PG_MCP_MAX_RESPONSE_CHARS",
     "PG_MCP_PROFILE",
     "PG_MCP_QUERY_LOG",
+    "PG_MCP_SOCKET_TIMEOUT_S",
+    # many stands in one entry (ADR 0006)
+    "PG_MCP_STANDS",
+    "PG_MCP_STANDS_FILE",
+    "PGSERVICEFILE",
+    "PG_MCP_MAX_CONNECTIONS",
 )
 PROFILES = ("schema", "explore", "analyst")
 
@@ -136,12 +142,17 @@ def check(entry: dict[str, Any]) -> bool:
     text: str = status["result"]["content"][0]["text"]
     print(t("install.protocol", version=initialize["result"]["protocolVersion"]))
     print(text)
-    return connected(text)
+    return ready(text)
 
 
-def connected(status: str) -> bool:
-    """Whether the status text reports a connection, in whichever language the server speaks."""
-    markers = tuple(i18n.CATALOG[language]["status.connected"].partition("{")[0] for language in i18n.LANGUAGES)
+def ready(status: str) -> bool:
+    """Whether the status text reports a connection, in whichever language the server speaks.
+
+    An entry for many stands connects to none until asked about one, and the stands may be out of
+    reach (behind a VPN, say): for it, finding stands in the registry is enough.
+    """
+    keys = ("status.connected", "status.stands")
+    markers = tuple(i18n.CATALOG[language][key].partition("{")[0] for language in i18n.LANGUAGES for key in keys)
     return any(line.startswith(markers) for line in status.splitlines())
 
 

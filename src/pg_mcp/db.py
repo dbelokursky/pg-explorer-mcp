@@ -28,6 +28,7 @@ from .i18n import t
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
+STATEMENT_GRACE_S = 5  # a socket outwaits the statement timeout, so PostgreSQL's own error comes first
 CURSOR_NAME = "pg_mcp_rows"
 
 
@@ -37,6 +38,14 @@ class DatabaseUnavailableError(Exception):
 
 class QueryFailedError(Exception):
     """PostgreSQL rejected a statement."""
+
+
+@dataclass
+class Counters:
+    """Statements run through read_only and the rows they returned, for the query log."""
+
+    statements: int = 0
+    rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -50,6 +59,8 @@ class Settings:
     sslrootcert: str | None
     statement_timeout_ms: int
     passfile: str
+    socket_timeout_s: int = SOCKET_TIMEOUT_S
+    search_path: str | None = None  # a schema to look in first, for one of many stands
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -72,6 +83,8 @@ class Settings:
             sslrootcert=env.get("PGSSLROOTCERT") or None,
             statement_timeout_ms=_int_setting(env, "PG_MCP_STATEMENT_TIMEOUT_MS", DEFAULT_STATEMENT_TIMEOUT_MS),
             passfile=passfile,
+            socket_timeout_s=_int_setting(env, "PG_MCP_SOCKET_TIMEOUT_S", SOCKET_TIMEOUT_S),
+            search_path=env.get("PG_MCP_SEARCH_PATH") or None,
         )
 
     def describe(self) -> str:
@@ -81,17 +94,23 @@ class Settings:
 class Database:
     """One lazily opened, read-only session that reconnects once if it drops."""
 
-    def __init__(self, env: Mapping[str, str] | None = None) -> None:
+    def __init__(self, env: Mapping[str, str] | None = None, counters: Counters | None = None) -> None:
         self._conn: pg8000.native.Connection | None = None
         self.settings: Settings | None = None
         self._config_error: str | None = None
-        # Statements run through read_only and the rows they returned, for the query log.
-        self.statements_run = 0
-        self.rows_read = 0
+        self._counters = counters or Counters()  # shared by all connections of a stands pool
         try:
             self.settings = Settings.from_env(os.environ if env is None else env)
         except ValueError as exc:
             self._config_error = str(exc)
+
+    @property
+    def statements_run(self) -> int:
+        return self._counters.statements
+
+    @property
+    def rows_read(self) -> int:
+        return self._counters.rows
 
     def describe_target(self) -> str:
         if self.settings is None:
@@ -142,8 +161,8 @@ class Database:
             columns = [str(column["name"]) for column in context.columns or []]
             rows = list(context.rows or [])
             returned = rows[:max_rows]
-            self.statements_run += 1
-            self.rows_read += len(returned)
+            self._counters.statements += 1
+            self._counters.rows += len(returned)
             return columns, returned, len(rows) > max_rows
         raise AssertionError("unreachable")
 
@@ -182,7 +201,7 @@ class Database:
                     database=settings.database,
                     unix_sock=str(Path(socket_dir) / f".s.PGSQL.{settings.port}") if socket_dir else None,
                     ssl_context=ssl_context,
-                    timeout=SOCKET_TIMEOUT_S,
+                    timeout=socket_timeout(settings),
                     application_name="pg-mcp",
                 )
                 break
@@ -199,6 +218,9 @@ class Database:
             # Guardrails, not the security boundary: the role's privileges are.
             conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
             conn.run(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
+            if settings.search_path:
+                quoted = '"' + settings.search_path.replace('"', '""') + '"'
+                conn.run(f"SET search_path = {quoted}, public")
         except pg8000.exceptions.Error as exc:
             conn.close()
             raise DatabaseUnavailableError(t("db.session_setup", error=exc)) from exc
@@ -215,6 +237,15 @@ def _run_one_statement(conn: pg8000.native.Connection, sql: str, params: dict[st
     finally:
         statement.close()
     return rows
+
+
+def socket_timeout(settings: Settings) -> int:
+    """Seconds a socket may wait: past the statement timeout, so a slow statement fails with its own error.
+
+    A socket that gave up first would drop the session, and query() would run the statement again.
+    """
+    configured = settings.socket_timeout_s if settings.socket_timeout_s > 0 else SOCKET_TIMEOUT_S
+    return max(configured, settings.statement_timeout_ms // 1000 + STATEMENT_GRACE_S)
 
 
 def pgpass_path(env: Mapping[str, str]) -> str:

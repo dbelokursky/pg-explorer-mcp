@@ -298,6 +298,64 @@ EN: dict[str, str] = {
     "sql.reason.replication": "it controls replication",
     "sql.reason.advisory": "advisory locks outlive the query and block other sessions",
     "sql.reason.slots": "it changes replication slots",
+    # Many stands in one server entry (ADR 0006).
+    "stands.instructions": (
+        "This server reaches many stands. status lists them and list_schemas shows the schemas of one; every "
+        "tool takes stand, and reading data takes schema as well."
+    ),
+    "stands.tool_note": "Pass stand, and schema to read data with that schema's login.",
+    "stands.status_note": "Without stand it lists the stands; with stand it also checks that stand's connection.",
+    "tool.list_schemas.title": "List schemas",
+    "tool.list_schemas.description": (
+        "List the databases of a stand and their schemas that this server has logins for. "
+        "Call it before working on a stand you have not used yet."
+    ),
+    "argument.stand": 'Stand name, e.g. "dev7"; status lists the stands.',
+    "argument.stand_status": 'A stand to check, e.g. "dev7". Omit it for the list of stands.',
+    "argument.database": "Database on the stand. Needed only when the schema exists in several of its databases.",
+    "argument.schema_data": "Schema to work in: the server uses its login, and unqualified names resolve in it.",
+    "argument.schema_stand": "Only this schema, read with its login. Omit it to cover every schema of the stand.",
+    "status.stands": "stands: {count} ({stands}), connections in the registry: {connections}",
+    "status.registry": "registry: {files}",
+    "status.limits_stands": (
+        "limits: list_tables returns at most {tables} entries per database, answers are cut at {budget} "
+        "characters, at most {connections} connections stay open"
+    ),
+    "status.stand_hint": "pass stand to status to check that stand's connection",
+    "status.checked_with": "checked with {label}",
+    "stands.no_stand_argument": "Pass stand, one of: {stands}.",
+    "stands.unknown": "No stand {stand!r} in the registry. Stands: {stands}.",
+    "stands.unknown_similar": "No stand {stand!r} in the registry. Similar: {similar}.",
+    "stands.no_schema_argument": (
+        "Pass schema: on stand {stand} the server reads data with the login of the schema you name. "
+        "list_schemas shows them."
+    ),
+    "stands.unknown_schema": (
+        "Stand {stand} has no schema {schema!r} that the server has a login for. Call list_schemas to see them."
+    ),
+    "stands.unknown_schema_similar": (
+        "Stand {stand} has no schema {schema!r} that the server has a login for. Similar: {similar}."
+    ),
+    "stands.schema_in_databases": (
+        "Schema {schema!r} exists in several databases of {stand}: {databases}. Pass database to pick one."
+    ),
+    "stands.schema_elsewhere": (
+        "Schema {schema!r} of {stand} is in {databases}, not in {database!r}. Pass one of those as database."
+    ),
+    "stands.unknown_database": "Stand {stand} has no database {database!r} in the registry. Databases: {databases}.",
+    "stands.table_in_several": "{name!r} exists in several schemas of {stand}: {options}. Pass schema to pick one.",
+    "stands.no_tables": "No tables or views in {schemas}: these schemas are empty or missing in this database.",
+    "stands.table_not_found": (
+        "No table or view {name!r} in the schemas of {stand} that the server has logins for. "
+        "Call search_schema or list_schemas."
+    ),
+    "stands.unreadable": "cannot read the stands registry {path}: {error}",
+    "stands.bad_line": "{path}: {problem}",
+    "stands.line": "line {number} is neither [section] nor key=value",
+    "stands.no_host": "stand connection {name} in {path} has no host, skipped",
+    "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
+    "stands.none_found": "PG_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings",
+    "stands.more_warnings": "... and {count} more problems in the stands registry",
     # install.py
     "install.description": "Register the pg-mcp server in the agent's settings and check it.",
     "install.help.client": "whose settings.json to edit",
@@ -532,6 +590,66 @@ RU: dict[str, str] = {
     "sql.reason.replication": "она управляет репликацией",
     "sql.reason.advisory": "advisory-блокировки переживают запрос и мешают другим сессиям",
     "sql.reason.slots": "она меняет слоты репликации",
+    "stands.instructions": (
+        "Этот сервер работает со многими стендами. status перечисляет их, list_schemas показывает схемы стенда; "
+        "каждый инструмент принимает stand, а для чтения данных нужна ещё и schema."
+    ),
+    "stands.tool_note": "Передайте stand, а для чтения данных — schema: данные читаются под учёткой этой схемы.",
+    "stands.status_note": "Без stand перечисляет стенды; со stand ещё и проверяет подключение к этому стенду.",
+    "tool.list_schemas.title": "Список схем",
+    "tool.list_schemas.description": (
+        "Показывает базы стенда и их схемы, для которых у сервера есть учётки. "
+        "Вызывайте перед работой со стендом, на котором ещё не были."
+    ),
+    "argument.stand": 'Имя стенда, например "dev7"; status перечисляет стенды.',
+    "argument.stand_status": 'Стенд, который нужно проверить, например "dev7". Без него — список стендов.',
+    "argument.database": "База на стенде. Нужна, только если схема есть в нескольких его базах.",
+    "argument.schema_data": "Схема, в которой работать: сервер берёт её учётку, а имена без схемы ищутся в ней.",
+    "argument.schema_stand": "Только эта схема, под её учёткой. Без неё — все схемы стенда.",
+    "status.stands": "стенды: {count} ({stands}), подключений в реестре: {connections}",
+    "status.registry": "реестр: {files}",
+    "status.limits_stands": (
+        "лимиты: list_tables возвращает не больше {tables} записей на базу, ответы обрезаются до {budget} "
+        "символов, открытыми держатся не больше {connections} подключений"
+    ),
+    "status.stand_hint": "передайте status стенд, чтобы проверить подключение к нему",
+    "status.checked_with": "проверено через {label}",
+    "stands.no_stand_argument": "Передайте stand, один из: {stands}.",
+    "stands.unknown": "В реестре нет стенда {stand!r}. Стенды: {stands}.",
+    "stands.unknown_similar": "В реестре нет стенда {stand!r}. Похожие: {similar}.",
+    "stands.no_schema_argument": (
+        "Передайте schema: на стенде {stand} сервер читает данные под учёткой схемы, которую вы назовёте. "
+        "list_schemas покажет схемы."
+    ),
+    "stands.unknown_schema": (
+        "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. "
+        "Вызовите list_schemas, чтобы увидеть схемы."
+    ),
+    "stands.unknown_schema_similar": (
+        "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Похожие: {similar}."
+    ),
+    "stands.schema_in_databases": (
+        "Схема {schema!r} есть в нескольких базах стенда {stand}: {databases}. Передайте database, чтобы выбрать."
+    ),
+    "stands.schema_elsewhere": (
+        "Схема {schema!r} стенда {stand} есть в {databases}, а не в {database!r}. Передайте одну из них в database."
+    ),
+    "stands.unknown_database": "На стенде {stand} в реестре нет базы {database!r}. Базы: {databases}.",
+    "stands.table_in_several": (
+        "{name!r} есть в нескольких схемах стенда {stand}: {options}. Передайте schema, чтобы выбрать одну."
+    ),
+    "stands.no_tables": "В схемах {schemas} нет таблиц и представлений: схемы пустые или их нет в этой базе.",
+    "stands.table_not_found": (
+        "В схемах стенда {stand}, для которых у сервера есть учётки, нет таблицы или представления {name!r}. "
+        "Вызовите search_schema или list_schemas."
+    ),
+    "stands.unreadable": "не удалось прочитать реестр стендов {path}: {error}",
+    "stands.bad_line": "{path}: {problem}",
+    "stands.line": "строка {number} — не [секция] и не ключ=значение",
+    "stands.no_host": "у подключения {name} в {path} нет host, пропущено",
+    "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
+    "stands.none_found": "PG_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*",
+    "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
     "install.help.client": "чей settings.json править",
     "install.help.check": "только запустить сервер и вызвать status, ничего не меняя",
