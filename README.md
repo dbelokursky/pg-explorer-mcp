@@ -168,6 +168,18 @@ This is the entry in `~/.gigacode/settings.json` after `install.py --profile ana
 
 If `settings.json` contains comments, the script leaves it alone and prints the snippet to add by hand.
 
+#### Several databases
+
+One clone serves any number of databases: register each further one under its own name. Its entry becomes
+`pg-<name>` next to `pg`, with its own connection, profile, language and query log:
+
+```bash
+PGDATABASE=sales python3 install.py --name sales
+PGDATABASE=hr PGUSER=mcp_hr python3 install.py --name hr --profile schema
+```
+
+The agent then gets the tools of every entry, and the `status` of each names its server and database.
+
 ### 6. The extension
 
 ```bash
@@ -203,6 +215,7 @@ agent's interface.
 
 ```text
 pg-mcp 0.3.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+server name: pg
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 language: en
@@ -392,6 +405,7 @@ All settings are environment variables in the `env` block of the `pg` server in 
 | `PG_MCP_STATEMENT_TIMEOUT_MS` | `5000` | timeout of one query in milliseconds |
 | `PG_MCP_LOG_LEVEL` | `INFO` | detail of the stderr log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `PG_MCP_QUERY_LOG` | — (off) | absolute path of the [query log](#query-log) file |
+| `PG_MCP_NAME` | `pg` | the entry's name that `status` shows; `install.py --name` writes it |
 
 The budget counts characters. Russian text takes more tokens per character than English, so if the
 model's context is small, lower the budget rather than raise it.
@@ -452,7 +466,7 @@ check, `install.py --check` prints that log.
 To update, run `git pull` in the pg-mcp folder and restart the agent. Run `install.py` again only if
 you moved the folder or changed Python, the profile or the language.
 
-To remove, delete `pg` from `mcpServers` in the agent settings (backups of earlier settings sit next to
+To remove, delete `pg` (and any `pg-<name>` entries) from `mcpServers` in the agent settings (backups of earlier settings sit next to
 the file), run `gigacode extensions uninstall pg-mcp` and delete the folder.
 
 ## FAQ

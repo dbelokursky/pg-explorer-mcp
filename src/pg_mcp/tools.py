@@ -45,6 +45,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
     ),
 }
 DEFAULT_PROFILE = "explore"
+DEFAULT_NAME = "pg"  # the entry install.py writes; further databases are pg-<name>
 STRICTEST_PROFILE = "schema"
 
 # MCP tool annotations: clients may run read-only tools without asking the user.
@@ -251,6 +252,7 @@ def build_tools(
     profile: str = DEFAULT_PROFILE,
     warnings: Sequence[str] = (),
     query_log: QueryLog | None = None,
+    name: str = DEFAULT_NAME,
 ) -> list[Tool]:
     """The tools of this profile, described in the current language, all writing to one query log."""
     query_log = query_log or QueryLog(None)
@@ -269,7 +271,14 @@ def build_tools(
             description=t("tool.status.description"),
             properties={},
             handler=lambda _args: status(
-                db, install_dir, budget=budget, profile=profile, names=names, warnings=warnings, query_log=query_log
+                db,
+                install_dir,
+                budget=budget,
+                profile=profile,
+                names=names,
+                warnings=warnings,
+                query_log=query_log,
+                name=name,
             ),
         ),
         Tool(
@@ -345,9 +354,11 @@ def status(
     names: Sequence[str],
     warnings: Sequence[str],
     query_log: QueryLog,
+    name: str = DEFAULT_NAME,
 ) -> list[str]:
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
+        t("status.name", name=name),
         t("status.target", target=db.describe_target()),
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),

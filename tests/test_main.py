@@ -45,3 +45,8 @@ def test_unknown_language_falls_back_to_english_with_a_warning(unreachable_env: 
     assert "language: en" in text
     assert "warning: PG_MCP_LANG='de' is not one of en, ru; using 'en'" in text
     assert "warning: PG_MCP_PROFILE='admin'" in text
+
+
+def test_status_names_the_server_entry(unreachable_env: dict[str, str]) -> None:
+    assert "server name: pg" in status_from_main(unreachable_env).splitlines()
+    assert "server name: pg-sales" in status_from_main(dict(unreachable_env, PG_MCP_NAME="pg-sales")).splitlines()
