@@ -8,12 +8,14 @@ import socket
 import sys
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from pg_mcp import __main__ as entry
+from pg_mcp import stand_tools
 from pg_mcp.db import Database, DatabaseUnavailableError, Settings
 from pg_mcp.querylog import QueryLog
 from pg_mcp.stand_tools import STAND_PROFILES, build_stand_tools
@@ -335,6 +337,14 @@ class TestPool:
         assert pool.settings is not None
         assert (pool.settings.user, pool.settings.database) == ("shipping", "orders")
 
+    def test_the_connect_timeout_is_the_sections_else_the_entrys(self, registry: Registry) -> None:
+        target = registry.targets[0]
+        assert Pool(registry, {}).connect_timeout(target) == 10
+        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(target) == 20
+        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "ten"}).connect_timeout(target) == 10
+        slow = replace(target, options={**target.options, "connect_timeout": "3"})
+        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(slow) == 3
+
 
 class TestOfflineTools:
     """The stand tools with every stand unreachable: routing and messages, no database needed."""
@@ -358,15 +368,16 @@ class TestOfflineTools:
             tool.name: tool.describe()["inputSchema"].get("required", [])
             for tool in build_stand_tools(pool, str(ROOT), profile="analyst")
         }
+        # search_schema and run_select take stand or stands; the handler insists on one of them.
         assert required == {
             "status": [],
             "list_schemas": ["stand"],
             "list_tables": ["stand"],
-            "search_schema": ["stand", "text"],
+            "search_schema": ["text"],
             "describe_table": ["stand", "table"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
-            "run_select": ["stand", "schema", "query"],
+            "run_select": ["schema", "query"],
         }
 
     def test_only_the_analyst_can_ask_explain_to_run_the_query(self, pool: Pool, tools: dict[str, Tool]) -> None:
@@ -380,6 +391,7 @@ class TestOfflineTools:
     ) -> None:
         lines = tools["status"].call({}).splitlines()
         assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in lines
+        assert any(line.endswith("stands covers at most 10 stands per call") for line in lines)
         assert "pass stand to status to check that stand's connection" in lines
         assert pool.open_count() == 0
 
@@ -538,6 +550,149 @@ class TestSilentHost:
             tools["describe_table"].call({"stand": "dev1", "table": "parcels"})
         assert time.monotonic() - started < 5
         assert pool.open_count() == 1
+
+
+class TestManyStands:
+    """stands: the same request on several stands in turn, each answering under its own label."""
+
+    @pytest.fixture
+    def pool(self, tmp_path: Path, unreachable_env: dict[str, str]) -> Pool:
+        own = write(tmp_path / "stands.conf", sections(host="127.0.0.1", port=unreachable_env["PGPORT"]))
+        return Pool(loaded(STANDS_ON, [own]), unreachable_env)
+
+    @pytest.fixture
+    def tools(self, pool: Pool) -> dict[str, Tool]:
+        return by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+
+    @pytest.mark.parametrize(
+        ("raw", "stands"),
+        [
+            ("dev1,dev2", ["dev1", "dev2"]),
+            (" DEV2 , dev1 ,", ["dev1", "dev2"]),
+            ("dev*", ["dev1", "dev2"]),
+            ("*", ["dev1", "dev2", "ift1"]),
+            ("ift1,dev?,dev1", ["dev1", "dev2", "ift1"]),
+            (["ift1", "Dev1"], ["dev1", "ift1"]),
+        ],
+    )
+    def test_names_and_patterns_mean_stands_in_the_registry_order(
+        self, registry: Registry, raw: Any, stands: list[str]
+    ) -> None:
+        assert registry.matching(raw) == stands
+
+    @pytest.mark.parametrize(
+        ("raw", "message"),
+        [
+            (None, 'stands must be stand names separated by commas or a pattern, e.g. "dev1,dev2" or "dev*". Stands'),
+            (" , ", "stands must be stand names separated by commas or a pattern"),
+            (7, "stands must be stand names separated by commas or a pattern"),
+            ("prod*", "No stand matches 'prod*'. Stands: dev1–dev2, ift1."),
+            ("dev1,dev11", "No stand 'dev11' in the registry. Similar: dev1, dev2."),
+        ],
+    )
+    def test_wrong_stands_are_explained(self, registry: Registry, raw: Any, message: str) -> None:
+        with pytest.raises(StandError) as caught:
+            registry.matching(raw)
+        assert str(caught.value).startswith(message)
+
+    def test_at_most_ten_stands_fit_in_one_call(self) -> None:
+        registry = Registry([Target(f"dev{n}", "orders", "billing", {"host": "db"}, "x") for n in range(1, 13)])
+        ten = ",".join(f"dev{n}" for n in range(1, 11))
+        assert registry.matching(ten) == [f"dev{n}" for n in range(1, 11)]
+        with pytest.raises(StandError) as caught:
+            registry.matching("dev*")
+        assert str(caught.value) == (
+            "'dev*' means 12 stands (dev1–dev12), and one call covers at most 10. "
+            "Narrow the pattern or name up to 10 stands separated by commas."
+        )
+
+    @pytest.mark.parametrize(
+        ("limit", "stands", "share"), [(200, 1, 200), (200, 3, 66), (200, 10, 20), (100, 7, 14), (100, 10, 10)]
+    )
+    def test_the_rows_are_shared_among_the_stands_with_a_floor(self, limit: int, stands: int, share: int) -> None:
+        assert stand_tools._share(limit, stands) == share
+
+    def test_stand_or_stands_not_both_and_not_neither(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=r"Pass either stand or stands, not both\."):
+            tools["run_select"].call({"stand": "dev1", "stands": "dev*", "schema": "shipping", "query": "SELECT 1"})
+        with pytest.raises(ToolError) as caught:
+            tools["search_schema"].call({"text": "order"})
+        assert str(caught.value) == (
+            'Pass stand, one of: dev1–dev2, ift1; or stands for several at once, e.g. "dev1,dev2" or "dev*".'
+        )
+
+    def test_each_stand_answers_under_its_label_and_a_failure_is_one_line(
+        self, pool: Pool, tools: dict[str, Tool]
+    ) -> None:
+        lines = tools["run_select"].call({"stands": "dev*", "schema": "billing", "query": "SELECT 1"}).splitlines()
+        assert lines[:3] == [
+            "dev1",
+            "  Schema 'billing' exists in several databases of dev1: archive, orders. Pass database to pick one.",
+            "dev2 / orders / billing",
+        ]
+        assert lines[3].startswith("  ")
+        assert len(lines) == 4
+        assert pool.outcomes == {"dev1": "error", "dev2": "unavailable"}
+        assert pool.current is None
+
+    def test_a_schema_no_stand_has_fails_as_one_stand_would(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match="Stand dev1 has no schema 'hr' that the server has a login for"):
+            tools["run_select"].call({"stands": "dev1,dev2", "schema": "hr", "query": "SELECT 1"})
+
+    def test_a_refused_statement_asks_no_stand(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        arguments = {"stands": "dev*", "schema": "billing", "database": "orders", "query": "DELETE FROM invoices"}
+        with pytest.raises(ToolError, match="DELETE is not allowed"):
+            tools["run_select"].call(arguments)
+        assert (pool.open_count(), pool.outcomes) == (0, {})
+
+    def test_search_without_schema_goes_database_by_database_on_each_stand(
+        self, pool: Pool, tools: dict[str, Tool]
+    ) -> None:
+        lines = tools["search_schema"].call({"stands": "dev2,dev1", "text": "order"}).splitlines()
+        assert [line for line in lines if not line.startswith("  ")] == [
+            "dev1 / archive",
+            "dev1 / orders",
+            "dev2 / orders",
+        ]
+        assert len(lines) == 6
+        assert pool.outcomes == {"dev1": "unavailable", "dev2": "unavailable"}
+
+    def test_search_in_a_schema_uses_the_login_of_each_stand(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        arguments = {"stands": "ift1,dev1", "text": "order", "schema": "shipping"}
+        lines = tools["search_schema"].call(arguments).splitlines()
+        assert (lines[0], lines[2]) == ("dev1 / orders / shipping", "ift1")
+        assert lines[3].startswith("  Stand ift1 has no schema 'shipping' that the server has a login for.")
+        assert len(lines) == 4
+        assert pool.outcomes == {"dev1": "unavailable", "ift1": "error"}
+
+    def test_an_unknown_database_on_one_stand_is_a_line_there(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        arguments = {"stands": "dev1,dev2", "text": "order", "database": "archive"}
+        lines = tools["search_schema"].call(arguments).splitlines()
+        assert lines[0] == "dev1 / archive"
+        assert lines[2:] == ["dev2", "  Stand dev2 has no database 'archive' in the registry. Databases: orders."]
+        assert pool.outcomes == {"dev1": "unavailable", "dev2": "error"}
+
+    def test_the_rest_are_named_when_the_call_runs_out_of_time(
+        self, monkeypatch: pytest.MonkeyPatch, pool: Pool, tools: dict[str, Tool]
+    ) -> None:
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0)
+        arguments = {"stands": "*", "schema": "billing", "database": "orders", "query": "SELECT 1"}
+        lines = tools["run_select"].call(arguments).splitlines()
+        assert lines[0] == "dev1 / orders / billing"
+        assert lines[2] == "dev2, ift1: not tried, the call would exceed its 0 seconds; ask for them in another call."
+        assert len(lines) == 3
+        assert pool.outcomes == {"dev1": "unavailable", "dev2": "skipped", "ift1": "skipped"}
+
+    def test_the_query_log_has_one_line_with_the_outcome_of_each_stand(self, pool: Pool, tmp_path: Path) -> None:
+        log = tmp_path / "queries.jsonl"
+        tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst", query_log=QueryLog(str(log), pool)))
+        tools["run_select"].call({"stands": "dev*", "schema": "billing", "database": "orders", "query": "SELECT 1"})
+        with pytest.raises(ToolError):
+            tools["run_select"].call({"stand": "dev1", "schema": "billing", "database": "orders", "query": "SELECT 1"})
+        many, one = (json.loads(line) for line in log.read_text(encoding="utf-8").splitlines())
+        assert (many["outcome"], many["stands"]) == ("ok", {"dev1": "unavailable", "dev2": "unavailable"})
+        assert (many["role"], many["database"], "stand" in many, "schema" in many) == (None, None, False, False)
+        assert (one["stand"], one["schema"], "stands" in one) == ("dev1", "billing", False)
 
 
 def serve(env: dict[str, str], *requests: dict[str, Any]) -> list[dict[str, Any]]:
