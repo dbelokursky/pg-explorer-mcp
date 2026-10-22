@@ -5,6 +5,7 @@
     python3 install.py --check    only start the server and call status
     python3 install.py --client qwen
     python3 install.py --lang ru  the server and this script speak Russian
+    PGDATABASE=sales python3 install.py --name sales  another database, as pg-sales
 
 Uses only the standard library and registers the very interpreter that runs it,
 so the agent later starts the server on a Python that is known to work. PG*
@@ -21,6 +22,7 @@ import datetime
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -35,7 +37,8 @@ from pg_mcp.i18n import t
 MIN_PYTHON = (3, 9)
 ROOT = Path(__file__).resolve().parent
 RUN_PY = str(ROOT / "run.py")
-SERVER_NAME = "pg"
+SERVER_NAME = "pg"  # further databases register as pg-<name>
+NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
 SETTINGS_FILES = {"gigacode": "~/.gigacode/settings.json", "qwen": "~/.qwen/settings.json"}
 COPIED_ENV = (
     "PGHOST",
@@ -53,19 +56,24 @@ COPIED_ENV = (
 PROFILES = ("schema", "explore", "analyst")
 
 
-def server_entry(profile: str | None = None, language: str | None = None) -> dict[str, Any]:
+def server_name(name: str | None = None) -> str:
+    """The entry in mcpServers: pg, or pg-<name> for a further database."""
+    return f"{SERVER_NAME}-{name}" if name else SERVER_NAME
+
+
+def server_entry(profile: str | None = None, language: str | None = None, name: str | None = None) -> dict[str, Any]:
     entry: dict[str, Any] = {"command": sys.executable, "args": ["-I", RUN_PY], "timeout": 30000}
-    env = {name: os.environ[name] for name in COPIED_ENV if os.environ.get(name)}
+    env = {variable: os.environ[variable] for variable in COPIED_ENV if os.environ.get(variable)}
+    env["PG_MCP_NAME"] = server_name(name)  # status says which entry, and so which database, it is
     if profile:
         env["PG_MCP_PROFILE"] = profile
     if language:
         env["PG_MCP_LANG"] = language
-    if env:
-        entry["env"] = env
+    entry["env"] = env
     return entry
 
 
-def register(settings_path: str | Path, entry: dict[str, Any]) -> None:
+def register(settings_path: str | Path, entry: dict[str, Any], name: str = SERVER_NAME) -> None:
     path = Path(settings_path)
     settings: Any = {}
     if path.exists():
@@ -75,17 +83,17 @@ def register(settings_path: str | Path, entry: dict[str, Any]) -> None:
         except ValueError:
             settings = None
         if not isinstance(settings, dict) or not isinstance(settings.get("mcpServers", {}), dict):
-            snippet = json.dumps({"mcpServers": {SERVER_NAME: entry}}, indent=2, ensure_ascii=False)
+            snippet = json.dumps({"mcpServers": {name: entry}}, indent=2, ensure_ascii=False)
             sys.exit(t("install.not_json", path=path, snippet=snippet))
         backup = path.with_name(f"{path.name}.bak-{datetime.datetime.now():%Y%m%d-%H%M%S}")
         shutil.copy2(path, backup)
         print(t("install.backup", path=backup))
-    settings.setdefault("mcpServers", {})[SERVER_NAME] = entry
+    settings.setdefault("mcpServers", {})[name] = entry
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(path)
-    print(t("install.registered", name=SERVER_NAME, path=path))
+    print(t("install.registered", name=name, path=path))
 
 
 def check(entry: dict[str, Any]) -> bool:
@@ -137,6 +145,12 @@ def connected(status: str) -> bool:
     return any(line.startswith(markers) for line in status.splitlines())
 
 
+def _name(value: str) -> str:
+    if not NAME.fullmatch(value):
+        raise argparse.ArgumentTypeError(t("install.bad_name", name=value))
+    return value
+
+
 def main(argv: list[str]) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -156,11 +170,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--check", action="store_true", help=t("install.help.check"))
     parser.add_argument("--profile", choices=PROFILES, help=t("install.help.profile"))
     parser.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
+    parser.add_argument("--name", type=_name, help=t("install.help.name"))
     args = parser.parse_args(argv)
 
-    entry = server_entry(args.profile, language)
+    entry = server_entry(args.profile, language, args.name)
     if not args.check:
-        register(Path(SETTINGS_FILES[args.client]).expanduser(), entry)
+        register(Path(SETTINGS_FILES[args.client]).expanduser(), entry, server_name(args.name))
     ok = check(entry)
     if not args.check:
         print()

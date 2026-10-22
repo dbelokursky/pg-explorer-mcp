@@ -19,7 +19,7 @@ from .budget import budget_from_env
 from .db import Database
 from .protocol import Server
 from .querylog import QueryLog
-from .tools import build_tools, profile_from_env
+from .tools import DEFAULT_NAME, build_tools, profile_from_env
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 # A checkout keeps run.py two levels up; an installed copy has only the package.
@@ -53,7 +53,13 @@ def main(
         warnings.append(profile_warning)
     query_log = QueryLog.from_env(env, db)
     tools = build_tools(
-        db, INSTALL_DIR, budget=budget_from_env(env), profile=profile, warnings=warnings, query_log=query_log
+        db,
+        INSTALL_DIR,
+        budget=budget_from_env(env),
+        profile=profile,
+        warnings=warnings,
+        query_log=query_log,
+        name=env.get("PG_MCP_NAME", "").strip() or DEFAULT_NAME,
     )
     server = Server(tools)
     try:

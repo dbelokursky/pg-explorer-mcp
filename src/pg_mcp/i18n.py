@@ -160,6 +160,7 @@ EN: dict[str, str] = {
     "argument.analyze": "Run the query to get real timings. Default false.",
     # status
     "status.version": "pg-mcp {version} on Python {python}, installed at {path}",
+    "status.name": "server name: {name}",
     "status.target": "target: {target}",
     "status.profile": "profile: {profile} ({tools})",
     "status.language": "language: {language}",
@@ -303,6 +304,8 @@ EN: dict[str, str] = {
     "install.help.check": "only start the server and call status; change nothing",
     "install.help.profile": "tools for this group: schema, explore (default) or analyst (adds run_select)",
     "install.help.lang": "language of the server and of this script: en or ru (default: from the system locale)",
+    "install.help.name": "register a further database as pg-NAME next to pg (lowercase letters, digits, hyphens)",
+    "install.bad_name": "{name!r} cannot be a server name: use lowercase letters, digits and hyphens, at most 30",
     "install.old_python": "pg-mcp needs Python {need} or newer, this is {have}",
     "install.backup": "backup of the old settings: {path}",
     "install.not_json": "{path} is not plain JSON (comments?). Merge this into it by hand:\n{snippet}",
@@ -379,6 +382,7 @@ RU: dict[str, str] = {
     "argument.text": 'Фрагмент имени или комментария, например "order" или "заказ".',
     "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время. По умолчанию false.",
     "status.version": "pg-mcp {version} на Python {python}, установлен в {path}",
+    "status.name": "имя сервера: {name}",
     "status.target": "адрес: {target}",
     "status.profile": "профиль: {profile} ({tools})",
     "status.language": "язык: {language}",
@@ -533,6 +537,12 @@ RU: dict[str, str] = {
     "install.help.check": "только запустить сервер и вызвать status, ничего не меняя",
     "install.help.profile": "инструменты для группы: schema, explore (по умолчанию) или analyst (добавляет run_select)",
     "install.help.lang": "язык сервера и этого скрипта: en или ru (по умолчанию — по локали системы)",
+    "install.help.name": (
+        "зарегистрировать ещё одну базу как pg-ИМЯ рядом с pg (строчные латинские буквы, цифры, дефисы)"
+    ),
+    "install.bad_name": (
+        "{name!r} не годится в имя сервера: нужны строчные латинские буквы, цифры и дефисы, до 30 знаков"
+    ),
     "install.old_python": "pg-mcp нужен Python {need} или новее, а здесь {have}",
     "install.backup": "копия прежних настроек: {path}",
     "install.not_json": "{path} — не чистый JSON (комментарии?). Добавьте это в него вручную:\n{snippet}",

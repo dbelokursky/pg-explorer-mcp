@@ -173,3 +173,34 @@ def test_old_python_is_refused_in_the_chosen_language(monkeypatch: pytest.Monkey
     monkeypatch.setattr(sys, "version_info", (3, 8, 18))
     with pytest.raises(SystemExit, match=r"pg-mcp нужен Python 3\.9 или новее"):
         install.main(["--lang", "ru", "--check"])
+
+
+def test_the_entry_names_the_server() -> None:
+    assert install.server_entry()["env"]["PG_MCP_NAME"] == "pg"
+    assert install.server_entry(name="sales")["env"]["PG_MCP_NAME"] == "pg-sales"
+
+
+def test_a_further_database_registers_next_to_pg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    assert install.main(["--client", "qwen"]) == 1
+    monkeypatch.setenv("PGDATABASE", "sales")
+    assert install.main(["--client", "qwen", "--name", "sales"]) == 1
+    settings = read(tmp_path / ".qwen" / "settings.json")
+    assert isinstance(settings, dict)
+    servers = settings["mcpServers"]
+    assert set(servers) == {"pg", "pg-sales"}
+    assert (servers["pg"]["env"]["PGDATABASE"], servers["pg"]["env"]["PG_MCP_NAME"]) == ("pg_mcp_test", "pg")
+    assert (servers["pg-sales"]["env"]["PGDATABASE"], servers["pg-sales"]["env"]["PG_MCP_NAME"]) == (
+        "sales",
+        "pg-sales",
+    )
+    assert "registered MCP server 'pg-sales'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("name", ["Sales", "sales_db", "-sales", "", "x" * 31])
+def test_names_that_would_not_make_a_clean_entry_are_refused(name: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        install.main(["--check", "--lang", "en", f"--name={name}"])  # = keeps "-sales" from looking like an option
+    assert "cannot be a server name" in capsys.readouterr().err

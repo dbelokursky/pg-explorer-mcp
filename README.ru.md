@@ -169,6 +169,18 @@ py -3 install.py                                # Windows
 Если в `settings.json` есть комментарии, скрипт не станет его переписывать и напечатает фрагмент,
 который нужно добавить вручную.
 
+#### Несколько баз
+
+Один клон обслуживает сколько угодно баз: каждую следующую регистрируйте под своим именем. Её запись
+называется `pg-<имя>` и стоит рядом с `pg`, со своим подключением, профилем, языком и журналом:
+
+```bash
+PGDATABASE=sales python3 install.py --name sales
+PGDATABASE=hr PGUSER=mcp_hr python3 install.py --name hr --profile schema
+```
+
+Тогда агент получает инструменты всех записей, а `status` каждой называет свой сервер и базу.
+
 ### 6. Расширение
 
 ```bash
@@ -204,6 +216,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 
 ```text
 pg-mcp 0.3.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
+имя сервера: pg
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 профиль: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 язык: ru
@@ -391,6 +404,7 @@ python3 install.py
 | `PG_MCP_STATEMENT_TIMEOUT_MS` | `5000` | таймаут одного запроса в миллисекундах |
 | `PG_MCP_LOG_LEVEL` | `INFO` | подробность журнала в stderr: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `PG_MCP_QUERY_LOG` | — (выключен) | абсолютный путь к файлу [журнала запросов](#журнал-запросов) |
+| `PG_MCP_NAME` | `pg` | имя записи, которое показывает `status`; его пишет `install.py --name` |
 
 Бюджет считается в символах. Русский текст занимает больше токенов на символ, чем английский: если
 контекст модели мал, бюджет лучше уменьшить.
@@ -451,7 +465,7 @@ psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owne
 Обновление: `git pull` в папке pg-mcp и перезапуск агента. `install.py` повторять нужно, только если
 вы перенесли папку, сменили Python, профиль или язык.
 
-Удаление: уберите `pg` из `mcpServers` в настройках агента (копии прежних настроек лежат рядом),
+Удаление: уберите `pg` (и записи `pg-<имя>`, если есть) из `mcpServers` в настройках агента (копии прежних настроек лежат рядом),
 выполните `gigacode extensions uninstall pg-mcp` и удалите папку.
 
 ## Вопросы и ответы
