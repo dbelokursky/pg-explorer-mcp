@@ -37,7 +37,7 @@ PG_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov
 ```
 
 CI гоняет то же самое: линтеры и типы, тесты на Linux, Windows и macOS под Python 3.9 и 3.14,
-интеграционные тесты с покрытием на PostgreSQL 16.
+интеграционные тесты на PostgreSQL с 13-й по 18-ю, покрытие — на 16-й.
 
 ## Раскладка
 

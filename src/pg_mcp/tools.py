@@ -52,8 +52,15 @@ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
   AND has_table_privilege(c.oid, 'SELECT')
 """
 
+# Estimated rows. PostgreSQL 14+ keeps -1 until a table is first analyzed; before 14 such a
+# table shows 0 rows in 0 pages, exactly like an empty one, so that case becomes NULL.
+_ESTIMATE = (
+    "CASE WHEN c.reltuples = 0 AND c.relpages = 0 AND current_setting('server_version_num')::int < 140000"
+    " THEN NULL ELSE c.reltuples::bigint END"
+)
+
 LIST_TABLES_SQL = (
-    "SELECT n.nspname, c.relname, c.relkind, c.reltuples::bigint, obj_description(c.oid, 'pg_class')"
+    f"SELECT n.nspname, c.relname, c.relkind, {_ESTIMATE}, obj_description(c.oid, 'pg_class')"
     + _READABLE_RELATIONS
     + "  AND (CAST(:schema AS text) IS NULL OR n.nspname = CAST(:schema AS text))\n"
     + 'ORDER BY n.nspname COLLATE "C", c.relname COLLATE "C"\nLIMIT :limit'
@@ -62,7 +69,7 @@ LIST_TABLES_SQL = (
 SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1\nLIMIT 50"
 
 FIND_RELATION_SQL = (
-    "SELECT c.oid, n.nspname, c.relname, c.relkind, c.reltuples::bigint, obj_description(c.oid, 'pg_class')"
+    f"SELECT c.oid, n.nspname, c.relname, c.relkind, {_ESTIMATE}, obj_description(c.oid, 'pg_class')"
     + _READABLE_RELATIONS
     + "  AND c.relname = :name\n"
     + "  AND (CAST(:schema AS text) IS NULL OR n.nspname = CAST(:schema AS text))\n"
@@ -478,7 +485,10 @@ def _describe_relation(schema: str, name: str, kind: str, estimate: int | None, 
 
 
 def _estimate(rows: int | None) -> str:
-    if rows is None or rows < 0:
+    """A row estimate from _ESTIMATE: None is "empty or never analyzed", a negative count "never analyzed"."""
+    if rows is None:
+        return t("estimate.empty_or_unknown")
+    if rows < 0:
         return t("estimate.unknown")
     for unit, scale in ((10**9, "estimate.billions"), (10**6, "estimate.millions"), (10**3, "estimate.thousands")):
         if rows >= unit:
