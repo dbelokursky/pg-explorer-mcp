@@ -18,9 +18,9 @@ updates:
       dev-tools:
         patterns: ["*"]
     ignore:
-      # mypy 2 and pytest 9 need Python 3.10, and pg-mcp still supports 3.9 (ADR 0003): uv
-      # cannot resolve them for the 3.9 branch of uv.lock, so every Dependabot run would fail.
+      # From mypy 1.20 and pytest 9 on, both need Python 3.10, and pg-mcp still supports 3.9
+      # (ADR 0003): uv cannot resolve them for the 3.9 branch of uv.lock, so Dependabot would fail.
       - dependency-name: mypy
-        versions: [">=2"]
+        versions: [">=1.20"]
       - dependency-name: pytest
         versions: [">=9"]
