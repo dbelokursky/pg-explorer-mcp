@@ -45,11 +45,16 @@ jobs:
       - run: uv run pytest
 
   integration:
-    name: integration and coverage (PostgreSQL 16)
+    name: integration (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 13 is past its end of life but still runs in many companies; coverage is measured on 16.
+        postgres: ["13", "14", "15", "16", "17", "18"]
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
         ports: ["5432:5432"]
@@ -67,4 +72,9 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run pytest --cov --cov-report=term-missing
+      - name: all tests with coverage
+        if: matrix.postgres == '16'
+        run: uv run pytest --cov --cov-report=term-missing
+      - name: integration tests
+        if: matrix.postgres != '16'
+        run: uv run pytest -m integration

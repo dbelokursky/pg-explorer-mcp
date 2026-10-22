@@ -103,6 +103,12 @@ def lines_of(tool: Tool, **arguments: object) -> list[str]:
     return tool.call(arguments).splitlines()
 
 
+def never_analyzed(db: Database) -> str:
+    """How list_tables describes a table without statistics on this server."""
+    version = int(db.query("SELECT current_setting('server_version_num')")[0][0])
+    return "rows unknown (never analyzed)" if version >= 140000 else "empty or never analyzed"
+
+
 class TestStructure:
     def test_status_reports_a_read_only_session(self, tools: dict[str, Tool]) -> None:
         text = tools["status"].call({})
@@ -117,6 +123,10 @@ class TestStructure:
             f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов",
             f"{SCHEMA}.заказы | table | ~3 rows | Заказы по-русски",
         ]
+
+    def test_a_table_without_statistics_says_so(self, db: Database, tools: dict[str, Tool]) -> None:
+        # Before PostgreSQL 14 an empty table and a never analyzed one look the same.
+        assert lines_of(tools["list_tables"], schema=ARCHIVE) == [f"{ARCHIVE}.orders | table | {never_analyzed(db)}"]
 
     def test_unknown_schema_points_to_the_schemas_that_exist(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match=SCHEMA):
@@ -371,7 +381,7 @@ class TestRoleScript:
     def test_the_role_reads_only_the_granted_schema(self, agent: Database) -> None:
         tools = by_name(build_tools(agent, str(ROOT), profile="analyst"))
         assert f"as {ROLE}" in tools["status"].call({})
-        assert lines_of(tools["list_tables"]) == [f"{ROLE_SCHEMA}.items | table | rows unknown (never analyzed)"]
+        assert lines_of(tools["list_tables"]) == [f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}"]
         assert lines_of(tools["run_select"], query=f"SELECT count(*) FROM {ROLE_SCHEMA}.items")[1] == "2"
 
     @pytest.mark.usefixtures("agent")

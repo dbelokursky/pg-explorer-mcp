@@ -418,7 +418,9 @@ repository; it only needs a network path to the database.
 **Can the agent change anything in the database?** No. Even if text inside the data tricks the model,
 the role's privileges, the read-only transaction and the text check stop the query.
 
-**Which PostgreSQL versions does it work with?** CI tests it against PostgreSQL 16.
+**Which PostgreSQL versions does it work with?** CI tests it against PostgreSQL 13 to 18. Before 14,
+a table PostgreSQL has never analyzed looks exactly like an empty one, so `list_tables` calls both
+"empty or never analyzed".
 
 **Which MCP protocol versions does it speak?** Revisions 2024-11-05 to 2025-11-25 (with the
 `initialize` handshake) and 2026-07-28 (without it).

@@ -186,7 +186,9 @@ class TestNumbers:
     @pytest.mark.parametrize(
         ("rows", "en", "ru"),
         [
-            (None, "rows unknown (never analyzed)", "число строк неизвестно (статистику ещё не собирали)"),
+            (-1, "rows unknown (never analyzed)", "число строк неизвестно (статистику ещё не собирали)"),
+            (None, "empty or never analyzed", "пусто или статистику ещё не собирали"),
+            (0, "~0 rows", "~0 строк"),
             (1, "~1 row", "~1 строка"),
             (3, "~3 rows", "~3 строки"),
             (11, "~11 rows", "~11 строк"),
