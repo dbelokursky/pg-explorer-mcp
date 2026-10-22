@@ -1,5 +1,0 @@
-[flake8]
-max-line-length = 150
-# E203 and W503 contradict the black-style slicing and line breaks used here.
-extend-ignore = E203, W503
-exclude = .git, __pycache__, server/vendor

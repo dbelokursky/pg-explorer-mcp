@@ -3,3 +3,12 @@ __pycache__/
 .venv/
 .DS_Store
 *.bak-*
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
