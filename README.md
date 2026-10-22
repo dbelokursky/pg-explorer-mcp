@@ -70,8 +70,10 @@ There is a shorter way too: link the extension (`gigacode extensions link`), res
 git clone https://github.com/dbelokursky/pg-mcp.git
 ```
 
-Without git, download the repository archive and unpack it anywhere. Do not move the folder afterwards:
-its path goes into the agent settings. If you do move it, repeat step 5.
+Without git, take `pg-mcp-<version>.zip` from the latest release on the
+[Releases page](https://github.com/dbelokursky/pg-mcp/releases) and unpack it anywhere: inside is a `pg-mcp` folder
+with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. Do not move
+the folder afterwards: its path goes into the agent settings. If you do move it, repeat step 5.
 
 ### 2. Python 3.9 or newer
 
@@ -563,8 +565,11 @@ check, `install.py --check` prints that log.
 
 ## Updating and removing
 
-To update, run `git pull` in the pg-mcp folder and restart the agent. Run `install.py` again only if
-you moved the folder or changed Python, the profile or the language.
+To update a clone, run `git pull` in the pg-mcp folder and restart the agent. To update an unpacked
+archive, take the new `pg-mcp-<version>.zip` from the
+[Releases page](https://github.com/dbelokursky/pg-mcp/releases), delete the old `pg-mcp` folder, unpack the new
+one in its place and restart the agent. Run `install.py` again only if the folder's path changed or
+you changed Python, the profile or the language.
 
 To remove, delete `pg` (and any `pg-<name>` entries) from `mcpServers` in the agent settings (backups of earlier settings sit next to
 the file), run `gigacode extensions uninstall pg-mcp` and delete the folder.

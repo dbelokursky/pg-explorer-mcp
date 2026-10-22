@@ -57,6 +57,27 @@ CI проверяет сервер в Qwen Code — открытой основ�
 4. В GigaCode: «Проверь подключение к базе» (агент вызывает `status`), «Какие таблицы есть?»
    (`list_tables`) и просьба удалить строки — агент должен получить отказ проверки SQL.
 
+## Выпуск
+
+1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_mcp/__init__.py` и
+   обоих манифестах расширения, раздел «Не выпущено» в `CHANGELOG.md` становится `## X.Y.Z — дата`.
+   `python3 scripts/release.py version` печатает версию, когда все файлы согласны.
+2. PR в `develop`, затем PR `develop` → `main`.
+3. Аннотированный тег на коммит слияния в `main`: `git tag -a vX.Y.Z -m "pg-mcp X.Y.Z"`,
+   `git push origin vX.Y.Z`.
+
+Пуш тега запускает `.github/workflows/release.yml`: он сверяет тег с версией в файлах, собирает
+`pg-mcp-X.Y.Z.zip` из дерева тега (`git archive`; `.github` в архив не попадает по `export-ignore` в
+`.gitattributes`), распаковывает архив и запускает из него `install.py --check` без базы
+(`scripts/release.py check`), считает `SHA256SUMS` и публикует GitHub Release с заметками из раздела
+этой версии в `CHANGELOG.md`. Так pg-mcp берут пользователи без git (README, шаг 1). Та же сборка с
+проверкой, но без публикации, идёт в каждом PR и при ручном запуске — `gh workflow run release.yml
+--ref <ветка>` (флаг `build_only` включён по умолчанию; снимать его есть смысл только на теге, чтобы
+опубликовать выпуск повторно); архив остаётся в артефактах запуска. По имени файла GitHub находит для
+ручного запуска только workflow из `main`; пока его там нет, подойдёт числовой id из
+`gh api repos/dbelokursky/pg-mcp/actions/workflows`:
+`gh api -X POST repos/dbelokursky/pg-mcp/actions/workflows/<id>/dispatches -f ref=<ветка> -f 'inputs[build_only]=true'`.
+
 ## Раскладка
 
 | Путь | Что там |
@@ -81,6 +102,7 @@ CI проверяет сервер в Qwen Code — открытой основ�
   `tests/test_i18n.py` сверяет ключи, формы множественного числа и плейсхолдеры. Журнал и ошибки
   JSON-RPC остаются английскими (ADR 0004).
 - **Версия в нескольких файлах.** `pyproject.toml`, `src/pg_mcp/__init__.py`, оба манифеста
-  расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`.
+  расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`, а тег
+  выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
 - **Почему так.** Решения про стек и инструменты описаны в [docs/adr/](docs/adr/); прежде чем
   менять принятое, допишите новый ADR.
