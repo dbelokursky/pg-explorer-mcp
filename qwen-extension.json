@@ -1,0 +1,6 @@
+{
+  "name": "pg-mcp",
+  "version": "0.1.0",
+  "description": "Read-only PostgreSQL access for the agent: connection status and table listing.",
+  "contextFileName": "pg-mcp-context.md"
+}
