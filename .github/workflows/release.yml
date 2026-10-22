@@ -1,11 +1,12 @@
 name: release
 
 # A tag v<version> publishes a GitHub Release with the source archive for users who have no git
-# (README, step 1). A run by hand only builds and checks the archive, so a branch can be tried before
-# it is tagged; on a tag with "build only" switched off it publishes too, say after a failed run.
+# (README, step 1). Every pull request, and a run by hand, only builds and checks the archive; a run
+# by hand on a tag with "build only" switched off publishes too, say after a failed run.
 on:
   push:
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
     inputs:
       build_only:
@@ -15,6 +16,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   archive:
