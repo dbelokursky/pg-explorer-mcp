@@ -1,0 +1,15 @@
+# Keeps CI actions and development tools fresh. The vendored runtime packages in
+# src/pg_mcp/_vendor are updated by hand, as src/pg_mcp/_vendor/README.md describes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      dev-tools:
+        patterns: ["*"]
