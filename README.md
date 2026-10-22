@@ -36,7 +36,7 @@ MCP-сервер для PostgreSQL с доступом только на чте�
    роль только с `SELECT` на выбранные схемы:
 
    ```bash
-   psql -d app -v role=pg_mcp_agent -v password='…' -v schemas=sales -v owner=app_owner -f docs/role.sql
+   psql -d app -v role=mcp_agent -v password='…' -v schemas=sales -v owner=app_owner -f docs/role.sql
    ```
 
 2. **Транзакция `READ ONLY` на каждый запрос**, которая всегда откатывается. Запрос уходит одной
