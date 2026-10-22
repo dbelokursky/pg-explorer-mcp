@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 
+from .i18n import t
+
 log = logging.getLogger(__name__)
 
 DEFAULT_BUDGET = 8000  # characters per tool answer
@@ -49,10 +51,7 @@ def fit_to_budget(lines: list[str], budget: int) -> list[str]:
 
 
 def _notice(budget: int, shown: int, total: int) -> str:
-    return (
-        f"… answer cut to {budget} characters: {shown} of {total} lines shown. "
-        "Narrow the request (one schema or table, fewer columns or rows) to see the rest."
-    )
+    return t("budget.notice", budget=budget, shown=shown, total=total)
 
 
 def shorten(value: str, limit: int = VALUE_LIMIT) -> str:

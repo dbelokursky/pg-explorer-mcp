@@ -23,6 +23,8 @@ from typing import Any
 import pg8000.exceptions
 import pg8000.native
 
+from .i18n import t
+
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
@@ -58,7 +60,7 @@ class Settings:
         database = env.get("PGDATABASE") or user
         sslmode = (env.get("PGSSLMODE") or "prefer").lower()
         if sslmode not in SSL_MODES:
-            raise ValueError(f"PGSSLMODE={sslmode!r} is not one of {', '.join(SSL_MODES)}")
+            raise ValueError(t("db.bad_sslmode", value=sslmode, choices=", ".join(SSL_MODES)))
         passfile = pgpass_path(env)
         return cls(
             host=host,
@@ -90,7 +92,7 @@ class Database:
 
     def describe_target(self) -> str:
         if self.settings is None:
-            return f"not configured: {self._config_error}"
+            return t("db.not_configured", error=self._config_error)
         return self.settings.describe()
 
     def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
@@ -104,7 +106,7 @@ class Database:
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
-                    raise DatabaseUnavailableError(f"Lost the connection to {self.describe_target()}: {exc}") from exc
+                    raise DatabaseUnavailableError(t("db.lost", target=self.describe_target(), error=exc)) from exc
         raise AssertionError("unreachable")
 
     def read_only(self, sql: str, max_rows: int, *, cursor: bool) -> tuple[list[str], list[Sequence[Any]], bool]:
@@ -132,7 +134,7 @@ class Database:
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
-                    raise DatabaseUnavailableError(f"Lost the connection to {self.describe_target()}: {exc}") from exc
+                    raise DatabaseUnavailableError(t("db.lost", target=self.describe_target(), error=exc)) from exc
                 continue
             columns = [str(column["name"]) for column in context.columns or []]
             rows = list(context.rows or [])
@@ -161,10 +163,7 @@ class Database:
     def _connect(self) -> pg8000.native.Connection:
         settings = self.settings
         if settings is None:
-            raise DatabaseUnavailableError(
-                f"Connection settings are invalid: {self._config_error}. "
-                "Fix the env block of the pg server entry in the agent settings."
-            )
+            raise DatabaseUnavailableError(t("db.settings_invalid", error=self._config_error))
         socket_dir = settings.host if settings.host.startswith("/") else None
         attempts = _ssl_attempts(settings)
         for number, ssl_context in enumerate(attempts, start=1):
@@ -189,16 +188,14 @@ class Database:
                 # but SCRAM fails on None.decode() instead.
                 if settings.password is not None:
                     raise
-                raise DatabaseUnavailableError(
-                    _password_hint(settings, "the server asks for a password and none is set")
-                ) from exc
+                raise DatabaseUnavailableError(_password_hint(settings, t("db.password_unset"))) from exc
         try:
             # Guardrails, not the security boundary: the role's privileges are.
             conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
             conn.run(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
         except pg8000.exceptions.Error as exc:
             conn.close()
-            raise DatabaseUnavailableError(f"Connected, but could not set up a read-only session: {exc}") from exc
+            raise DatabaseUnavailableError(t("db.session_setup", error=exc)) from exc
         return conn
 
 
@@ -291,9 +288,9 @@ def _server_message(exc: Exception) -> str:
     fields = _error_fields(exc)
     if not fields:
         return str(exc)
-    text = f"{fields.get('M', 'error')} (SQLSTATE {fields.get('C', '?')})"
+    text = t("db.server_error", message=fields.get("M", "error"), code=fields.get("C", "?"))
     if fields.get("H"):
-        text += f". Hint: {fields['H']}"
+        text = t("db.server_hint", text=text, hint=fields["H"])
     return text
 
 
@@ -304,33 +301,24 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
     detail = fields.get("M") or str(exc)
     where = f"{settings.host}:{settings.port}"
     if isinstance(cause, (ConnectionRefusedError, FileNotFoundError)):
-        return (
-            f"Nothing accepts connections at {where}. Check PGHOST and PGPORT, "
-            "and that the database is reachable from this machine (VPN?)."
-        )
+        return t("db.refused", where=where)
     if isinstance(cause, socket.gaierror):
-        return f"Host {settings.host!r} cannot be resolved. Check PGHOST."
+        return t("db.unresolved", host=settings.host)
     if isinstance(cause, (socket.timeout, TimeoutError)):
-        return f"Connecting to {where} timed out. The host may be behind a firewall or a VPN."
+        return t("db.timeout", where=where)
     if code == "28P01" or (not settings.password and "password" in detail.lower()):
         return _password_hint(settings, detail)
     if code == "3D000":
-        return f"Database {settings.database!r} does not exist at {where}. Check PGDATABASE."
+        return t("db.no_database", database=settings.database, where=where)
     if code == "28000":
-        return (
-            f"The server refused the login for {settings.user!r}: {detail}. "
-            "Check the role and pg_hba.conf with the DBA."
-        )
+        return t("db.login_refused", user=settings.user, detail=detail)
     if isinstance(cause, ssl.SSLError) or "SSL" in detail:
-        return f"TLS with {where} failed: {cause or detail}. Check PGSSLMODE and PGSSLROOTCERT."
-    return f"Cannot connect to {settings.describe()}: {detail}"
+        return t("db.tls", where=where, detail=cause or detail)
+    return t("db.cannot_connect", target=settings.describe(), detail=detail)
 
 
 def _password_hint(settings: Settings, detail: str) -> str:
-    return (
-        f"Login as {settings.user!r} failed: {detail}. Put the password into {settings.passfile} "
-        "as one line host:port:database:user:password (file mode 600). Never paste it into the chat."
-    )
+    return t("db.password", user=settings.user, detail=detail, passfile=settings.passfile)
 
 
 def _int_setting(env: Mapping[str, str], name: str, default: int) -> int:
@@ -340,4 +328,4 @@ def _int_setting(env: Mapping[str, str], name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        raise ValueError(f"{name}={raw!r} is not a number") from None
+        raise ValueError(t("db.not_a_number", name=name, value=raw)) from None

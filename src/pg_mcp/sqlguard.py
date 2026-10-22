@@ -11,73 +11,68 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .i18n import t
+
 ALLOWED_FIRST_WORDS = ("select", "with", "values", "table", "explain", "show")
 ROW_SOURCES = ("select", "with", "values", "table")  # statements that can feed a cursor
 
-# Words that only occur in statements or clauses that change data.
-FORBIDDEN_WORDS: dict[str, str] = {
-    "insert": "INSERT changes data",
-    "update": "UPDATE changes data, and FOR UPDATE locks rows",
-    "delete": "DELETE changes data",
-    "merge": "MERGE changes data",
-    "into": "SELECT ... INTO creates a table",
-}
+# Words that only occur in statements or clauses that change data; the text sql.word.<word> says why.
+FORBIDDEN_WORDS = ("insert", "update", "delete", "merge", "into")
 
+# Function -> reason, the text sql.reason.<reason>.
 FORBIDDEN_FUNCTIONS: dict[str, str] = {
-    "pg_terminate_backend": "it ends another session",
-    "pg_cancel_backend": "it cancels another session's query",
-    "set_config": "it changes session settings",
-    "query_to_xml": "it runs SQL text this check never saw",
-    "query_to_xmlschema": "it runs SQL text this check never saw",
-    "query_to_xml_and_xmlschema": "it runs SQL text this check never saw",
-    "cursor_to_xml": "it reads a cursor this check never saw",
-    "cursor_to_xmlschema": "it reads a cursor this check never saw",
-    "pg_read_file": "it reads files on the database server",
-    "pg_read_binary_file": "it reads files on the database server",
-    "pg_stat_file": "it inspects files on the database server",
-    "lo_import": "it reads files on the database server",
-    "lo_export": "it writes files on the database server",
-    "lo_create": "it changes large objects",
-    "lo_creat": "it changes large objects",
-    "lo_unlink": "it changes large objects",
-    "lo_put": "it changes large objects",
-    "lo_from_bytea": "it changes large objects",
-    "lowrite": "it changes large objects",
-    "lo_truncate": "it changes large objects",
-    "lo_truncate64": "it changes large objects",
-    "pg_reload_conf": "it administers the server",
-    "pg_rotate_logfile": "it administers the server",
-    "pg_switch_wal": "it administers the server",
-    "pg_create_restore_point": "it administers the server",
-    "pg_promote": "it administers the server",
-    "pg_backup_start": "it administers the server",
-    "pg_backup_stop": "it administers the server",
-    "pg_log_backend_memory_contexts": "it signals another session",
-    "pg_logical_emit_message": "it writes to the WAL",
-    "pg_import_system_collations": "it changes the catalog",
-    "pg_notify": "it wakes other sessions",
-    "nextval": "it changes a sequence",
-    "setval": "it changes a sequence",
-    "pg_sleep": "it holds the connection doing nothing",
-    "pg_sleep_for": "it holds the connection doing nothing",
-    "pg_sleep_until": "it holds the connection doing nothing",
+    "pg_terminate_backend": "ends_session",
+    "pg_cancel_backend": "cancels_query",
+    "set_config": "settings",
+    "query_to_xml": "unseen_sql",
+    "query_to_xmlschema": "unseen_sql",
+    "query_to_xml_and_xmlschema": "unseen_sql",
+    "cursor_to_xml": "unseen_cursor",
+    "cursor_to_xmlschema": "unseen_cursor",
+    "pg_read_file": "reads_files",
+    "pg_read_binary_file": "reads_files",
+    "pg_stat_file": "inspects_files",
+    "lo_import": "reads_files",
+    "lo_export": "writes_files",
+    "lo_create": "large_objects",
+    "lo_creat": "large_objects",
+    "lo_unlink": "large_objects",
+    "lo_put": "large_objects",
+    "lo_from_bytea": "large_objects",
+    "lowrite": "large_objects",
+    "lo_truncate": "large_objects",
+    "lo_truncate64": "large_objects",
+    "pg_reload_conf": "administers",
+    "pg_rotate_logfile": "administers",
+    "pg_switch_wal": "administers",
+    "pg_create_restore_point": "administers",
+    "pg_promote": "administers",
+    "pg_backup_start": "administers",
+    "pg_backup_stop": "administers",
+    "pg_log_backend_memory_contexts": "signals",
+    "pg_logical_emit_message": "wal",
+    "pg_import_system_collations": "catalog",
+    "pg_notify": "wakes",
+    "nextval": "sequence",
+    "setval": "sequence",
+    "pg_sleep": "sleeps",
+    "pg_sleep_for": "sleeps",
+    "pg_sleep_until": "sleeps",
 }
 
 FORBIDDEN_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("dblink", "it opens a separate connection that this server's read-only mode does not cover"),
-    ("pg_ls_", "it lists files on the database server"),
-    ("pg_stat_reset", "it resets statistics"),
-    ("pg_wal_replay_", "it controls replication"),
-    ("pg_file_", "it writes files on the database server"),
+    ("dblink", "dblink"),
+    ("pg_ls_", "lists_files"),
+    ("pg_stat_reset", "resets_stats"),
+    ("pg_wal_replay_", "replication"),
+    ("pg_file_", "writes_files"),
 )
 
 # Checked only for pg_* names: advisory locks outlive the query, slots steer replication.
 FORBIDDEN_FRAGMENTS: tuple[tuple[str, str], ...] = (
-    ("advisory", "advisory locks outlive the query and block other sessions"),
-    ("replication_slot", "it changes replication slots"),
+    ("advisory", "advisory"),
+    ("replication_slot", "slots"),
 )
-
-ALLOWED_SUMMARY = "SELECT, WITH ... SELECT, VALUES, TABLE, EXPLAIN and SHOW"
 
 _WORD = re.compile(r"[^\W\d][\w$]*")
 _NUMBER = re.compile(r"\d[\w.]*")
@@ -97,33 +92,33 @@ class Token:
 def check_read_only(sql: object) -> str:
     """Return the statement's first keyword, or raise SqlRejectedError with the reason."""
     if not isinstance(sql, str) or not sql.strip():
-        raise SqlRejectedError("query must be a non-empty string with one SQL statement")
+        raise SqlRejectedError(t("sql.empty"))
     tokens = tokenize(sql)
     if tokens and tokens[-1] == Token("punct", ";"):
         tokens = tokens[:-1]
     if not tokens:
-        raise SqlRejectedError("The query has no statement, only comments.")
+        raise SqlRejectedError(t("sql.only_comments"))
     if Token("punct", ";") in tokens:
-        raise SqlRejectedError("Send one statement per call: the query has ';' between statements.")
+        raise SqlRejectedError(t("sql.one_statement"))
 
     first = tokens[0]
     if first.kind != "word" or first.text not in ALLOWED_FIRST_WORDS:
-        shown = first.text.upper() if first.kind == "word" else "This statement"
-        raise SqlRejectedError(f"{shown} is not allowed. Only read-only statements are: {ALLOWED_SUMMARY}.")
+        if first.kind == "word":
+            raise SqlRejectedError(t("sql.not_allowed", word=first.text.upper(), allowed=t("sql.summary")))
+        raise SqlRejectedError(t("sql.not_allowed_other", allowed=t("sql.summary")))
     if first.text == "explain":
         explained = _explained_statement(tokens)
         if explained not in ROW_SOURCES:
-            raise SqlRejectedError("EXPLAIN is allowed only for SELECT, WITH ... SELECT, VALUES and TABLE.")
+            raise SqlRejectedError(t("sql.explain"))
 
     for index, token in enumerate(tokens):
         if token.kind != "word":
             continue
         if token.text in FORBIDDEN_WORDS:
-            raise SqlRejectedError(
-                f"{token.text.upper()} is not allowed: {FORBIDDEN_WORDS[token.text]}. This server only reads."
-            )
+            reason = t(f"sql.word.{token.text}")
+            raise SqlRejectedError(t("sql.forbidden_word", word=token.text.upper(), reason=reason))
         if token.text == "for" and _word_after(tokens, index) in ("share", "key"):
-            raise SqlRejectedError("Row locks (FOR SHARE, FOR KEY SHARE) are not allowed: they block other sessions.")
+            raise SqlRejectedError(t("sql.row_locks"))
         if token.kind == "word" and _word_after(tokens, index, punct="(") is not None:
             _check_function(token.text)
     for index, token in enumerate(tokens[:-1]):
@@ -133,17 +128,14 @@ def check_read_only(sql: object) -> str:
 
 
 def forbidden_function(name: str) -> str | None:
+    """Why the function may not be called, in the current language; None if it may."""
     lowered = name.lower()
-    if lowered in FORBIDDEN_FUNCTIONS:
-        return FORBIDDEN_FUNCTIONS[lowered]
-    for prefix, reason in FORBIDDEN_PREFIXES:
-        if lowered.startswith(prefix):
-            return reason
-    if lowered.startswith("pg_"):
-        for fragment, reason in FORBIDDEN_FRAGMENTS:
-            if fragment in lowered:
-                return reason
-    return None
+    reason = FORBIDDEN_FUNCTIONS.get(lowered)
+    if reason is None:
+        reason = next((reason for prefix, reason in FORBIDDEN_PREFIXES if lowered.startswith(prefix)), None)
+    if reason is None and lowered.startswith("pg_"):
+        reason = next((reason for fragment, reason in FORBIDDEN_FRAGMENTS if fragment in lowered), None)
+    return None if reason is None else t(f"sql.reason.{reason}")
 
 
 def tokenize(sql: str) -> list[Token]:
@@ -176,7 +168,7 @@ def tokenize(sql: str) -> list[Token]:
             tag = _DOLLAR_TAG.match(sql, i).group(0)  # type: ignore[union-attr]
             end = sql.find(tag, i + len(tag))
             if end < 0:
-                raise SqlRejectedError("Unterminated dollar-quoted string.")
+                raise SqlRejectedError(t("sql.unterminated_dollar"))
             i = end + len(tag)
             tokens.append(Token("literal", ""))
         elif _WORD.match(sql, i):
@@ -195,7 +187,7 @@ def tokenize(sql: str) -> list[Token]:
 def _check_function(name: str) -> None:
     reason = forbidden_function(name)
     if reason:
-        raise SqlRejectedError(f"Function {name}() is not allowed: {reason}.")
+        raise SqlRejectedError(t("sql.function", name=name, reason=reason))
 
 
 def _word_after(tokens: list[Token], index: int, punct: str | None = None) -> str | None:
@@ -242,7 +234,7 @@ def _skip_block_comment(sql: str, start: int) -> int:
                 return i
         else:
             i += 1
-    raise SqlRejectedError("Unterminated /* comment.")
+    raise SqlRejectedError(t("sql.unterminated_comment"))
 
 
 def _skip_quoted(sql: str, start: int, quote: str, *, backslashes: bool) -> int:
@@ -258,4 +250,4 @@ def _skip_quoted(sql: str, start: int, quote: str, *, backslashes: bool) -> int:
                 return i + 1
         else:
             i += 1
-    raise SqlRejectedError(f"Unterminated {quote} quote.")
+    raise SqlRejectedError(t("sql.unterminated_quote", quote=quote))

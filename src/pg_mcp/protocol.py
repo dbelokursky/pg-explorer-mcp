@@ -14,6 +14,7 @@ import logging
 from typing import Any, Callable
 
 from . import __version__
+from .i18n import t
 from .tools import Tool, ToolError
 
 log = logging.getLogger(__name__)
@@ -33,12 +34,6 @@ METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 UNSUPPORTED_PROTOCOL_VERSION = -32022
-
-INSTRUCTIONS = (
-    "Read-only access to one PostgreSQL database. Call status first: it shows the "
-    "database, the role, the tools this profile offers and the limits in force. "
-    "Then explore with list_tables and describe_table before querying data."
-)
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -160,14 +155,14 @@ class Server:
             "protocolVersion": self.protocol_version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": self._info,
-            "instructions": INSTRUCTIONS,
+            "instructions": t("server.instructions"),
         }
 
     def _discover(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {
             "supportedVersions": list(MODERN_PROTOCOL_VERSIONS),
             "capabilities": {"tools": {"listChanged": False}},
-            "instructions": INSTRUCTIONS,
+            "instructions": t("server.instructions"),
         }
 
     def _tools_list(self, _params: dict[str, Any]) -> dict[str, Any]:
