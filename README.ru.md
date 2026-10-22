@@ -203,7 +203,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 `status`:
 
 ```text
-pg-mcp 0.2.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
+pg-mcp 0.3.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 профиль: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 язык: ru

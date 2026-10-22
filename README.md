@@ -202,7 +202,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-mcp 0.2.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+pg-mcp 0.3.0 on Python 3.9.6, installed at /Users/me/pg-mcp
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 language: en
