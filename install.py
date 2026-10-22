@@ -138,6 +138,11 @@ def connected(status: str) -> bool:
 
 
 def main(argv: list[str]) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            # Through a pipe, as an agent runs this script, Python writes in the system code page,
+            # which may lack Cyrillic (cp1252) or the dash (cp866): print "?" rather than crash.
+            stream.reconfigure(errors="replace")
     # The help texts are in the chosen language, so --lang is read before the parser is built.
     early = argparse.ArgumentParser(add_help=False)
     early.add_argument("--lang", choices=i18n.LANGUAGES)
