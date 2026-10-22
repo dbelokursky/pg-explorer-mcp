@@ -11,6 +11,8 @@ reaches dozens of stands through the same tools.
 - On an entry for many stands every tool takes `stand`, and reading data takes `schema` as well: the
   server uses that schema's login. `status` lists the stands and `list_schemas` the schemas of one;
   pass `database` only when an answer asks for it. Every answer starts with stand / database / schema.
+- To learn how a schema differs between two stands (tables, columns, constraints, indexes), call
+  `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.
 - Never ask the user to paste a database password into the chat; it belongs in ~/.pgpass.
 - The server speaks English or Russian (`PG_MCP_LANG`). Whichever it speaks, reply to the user

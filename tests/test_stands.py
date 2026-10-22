@@ -14,9 +14,18 @@ from typing import Any
 import pytest
 
 from pg_mcp import __main__ as entry
-from pg_mcp.db import Database, DatabaseUnavailableError, Settings
+from pg_mcp.compare import (
+    RELATIONS_SQL,
+    SCHEMA_CONSTRAINTS_SQL,
+    SCHEMA_INDEXES_SQL,
+    Relation,
+    Structure,
+    differences,
+    read_structure,
+)
+from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
 from pg_mcp.querylog import QueryLog
-from pg_mcp.stand_tools import STAND_PROFILES, build_stand_tools
+from pg_mcp.stand_tools import STAND_ONLY_TOOLS, STAND_PROFILES, build_stand_tools
 from pg_mcp.stands import (
     Pool,
     Registry,
@@ -336,22 +345,39 @@ class TestPool:
         assert (pool.settings.user, pool.settings.database) == ("shipping", "orders")
 
 
+@pytest.fixture
+def pool(tmp_path: Path, unreachable_env: dict[str, str]) -> Pool:
+    """The registry's stands, every one on a local port where nothing listens."""
+    own = write(tmp_path / "stands.conf", sections(host="127.0.0.1", port=unreachable_env["PGPORT"]))
+    return Pool(loaded(STANDS_ON, [own]), unreachable_env)
+
+
+@pytest.fixture
+def tools(pool: Pool) -> dict[str, Tool]:
+    return by_name(build_stand_tools(pool, str(ROOT)))
+
+
 class TestOfflineTools:
     """The stand tools with every stand unreachable: routing and messages, no database needed."""
 
-    @pytest.fixture
-    def pool(self, tmp_path: Path, unreachable_env: dict[str, str]) -> Pool:
-        own = write(tmp_path / "stands.conf", sections(host="127.0.0.1", port=unreachable_env["PGPORT"]))
-        return Pool(loaded(STANDS_ON, [own]), unreachable_env)
-
-    @pytest.fixture
-    def tools(self, pool: Pool) -> dict[str, Tool]:
-        return by_name(build_stand_tools(pool, str(ROOT)))
-
     @pytest.mark.parametrize("profile", list(PROFILES))
-    def test_every_profile_offers_list_schemas_right_after_status(self, pool: Pool, profile: str) -> None:
+    def test_every_profile_has_the_stand_tools_right_after_the_tools_they_follow(
+        self, pool: Pool, profile: str
+    ) -> None:
         names = [tool.name for tool in build_stand_tools(pool, str(ROOT), profile=profile)]
-        assert names == list(STAND_PROFILES[profile]) == ["status", "list_schemas", *PROFILES[profile][1:]]
+        assert names == list(STAND_PROFILES[profile])
+        assert [name for name in names if name not in STAND_ONLY_TOOLS] == list(PROFILES[profile])
+        assert [names[names.index(after) + 1] for after in STAND_ONLY_TOOLS.values()] == list(STAND_ONLY_TOOLS)
+
+    def test_the_schema_profile_in_full(self) -> None:
+        assert STAND_PROFILES["schema"] == (
+            "status",
+            "list_schemas",
+            "list_tables",
+            "search_schema",
+            "describe_table",
+            "compare_schema",
+        )
 
     def test_every_tool_but_status_needs_a_stand_and_data_needs_a_schema(self, pool: Pool) -> None:
         required = {
@@ -364,6 +390,7 @@ class TestOfflineTools:
             "list_tables": ["stand"],
             "search_schema": ["stand", "text"],
             "describe_table": ["stand", "table"],
+            "compare_schema": ["stand_a", "stand_b", "schema"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
             "run_select": ["stand", "schema", "query"],
@@ -489,6 +516,205 @@ class TestOfflineTools:
         )
         assert first["outcome"] == "unavailable"
         assert ("stand" in second, second["role"]) == (False, None)  # not the previous call's login
+
+
+class TestCompareSchema:
+    """compare_schema without a database: the arguments, failures that name the stand, and the catalog reading."""
+
+    @pytest.mark.parametrize(
+        ("arguments", "message"),
+        [
+            ({"stand_a": "dev1", "stand_b": "dev2"}, "Missing argument(s): schema."),
+            ({"stand_a": " ", "stand_b": "dev2", "schema": "billing"}, "Pass stand_a, one of: dev1–dev2, ift1."),
+            (
+                {"stand_a": "dev1", "stand_b": "dev11", "schema": "billing"},
+                "No stand 'dev11' in the registry. Similar: dev1, dev2.",
+            ),
+            (
+                {"stand_a": "dev1", "stand_b": "DEV1 ", "schema": "billing"},
+                "stand_a and stand_b are both 'dev1'. Pass two different stands.",
+            ),
+            (
+                {"stand_a": "dev1", "stand_b": "dev2", "schema": "billing"},
+                "Schema 'billing' exists in several databases of dev1: archive, orders. Pass database to pick one.",
+            ),
+            (
+                {"stand_a": "dev1", "stand_b": "dev2", "schema": "billing", "database": "archive"},
+                "Schema 'billing' of dev2 is in orders, not in 'archive'. Pass one of those as database.",
+            ),
+            (
+                {"stand_a": "dev2", "stand_b": "dev1", "schema": "shipping"},
+                "Stand dev2 has no schema 'shipping' that the server has a login for. Call list_schemas to see them.",
+            ),
+        ],
+    )
+    def test_wrong_arguments_are_explained(
+        self, tools: dict[str, Tool], arguments: dict[str, Any], message: str
+    ) -> None:
+        with pytest.raises(ToolError) as caught:
+            tools["compare_schema"].call(arguments)
+        assert str(caught.value) == message
+
+    def test_an_unreachable_stand_is_named_and_logged_as_unavailable(self, pool: Pool, tmp_path: Path) -> None:
+        log = tmp_path / "queries.jsonl"
+        tools = by_name(build_stand_tools(pool, str(ROOT), query_log=QueryLog(str(log), pool)))
+        arguments = {"stand_a": "dev2", "stand_b": "dev1", "schema": "billing", "database": "orders"}
+        with pytest.raises(ToolError) as caught:
+            tools["compare_schema"].call(arguments)
+        assert str(caught.value).startswith("dev2 / orders / billing: Nothing accepts connections at 127.0.0.1:")
+        entry = json.loads(log.read_text(encoding="utf-8"))
+        assert (entry["outcome"], entry["stand"], entry["schema"]) == ("unavailable", "dev2", "billing")
+
+    def test_a_failed_statement_names_the_stand(self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch) -> None:
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            raise QueryFailedError("canceling statement due to statement timeout (SQLSTATE 57014)")
+
+        monkeypatch.setattr(Database, "query", query)
+        arguments = {"stand_a": "dev1", "stand_b": "dev2", "schema": "billing", "database": "orders"}
+        with pytest.raises(ToolError, match=r"^dev1 / orders / billing: canceling statement due to statement timeout"):
+            tools["compare_schema"].call(arguments)
+
+    def test_a_schema_the_database_lacks_is_an_error_not_a_difference(
+        self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            return []
+
+        monkeypatch.setattr(Database, "query", query)
+        with pytest.raises(ToolError) as caught:
+            tools["compare_schema"].call(
+                {"stand_a": "dev1", "stand_b": "dev2", "schema": "billing", "database": "orders"}
+            )
+        assert str(caught.value) == (
+            "Stand dev1 has no schema 'billing' in database orders: the registry lists it, but the database does "
+            "not have it. Nothing to compare."
+        )
+
+    def test_the_structure_is_read_in_three_queries(self, pool: Pool, monkeypatch: pytest.MonkeyPatch) -> None:
+        asked: list[str] = []
+        index = "CREATE UNIQUE INDEX invoices_pkey ON billing.invoices USING btree (id)"
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            asked.append(sql)
+            assert params == {"schema": "billing"}
+            if sql is RELATIONS_SQL:
+                return [
+                    ("bare", "r", None, None, None, None),  # a table without columns
+                    ("invoices", "r", "id", "integer", True, "nextval('invoices_id_seq'::regclass)"),
+                    ("invoices", "r", "note", "text", False, None),
+                ]
+            if sql is SCHEMA_CONSTRAINTS_SQL:
+                return [("invoices", "r", "invoices_pkey", "PRIMARY KEY (id)")]
+            return [("invoices", "r", "invoices_pkey", index)]
+
+        monkeypatch.setattr(Database, "query", query)
+        structure = read_structure(pool, pool.registry.targets[0])
+        assert asked == [RELATIONS_SQL, SCHEMA_CONSTRAINTS_SQL, SCHEMA_INDEXES_SQL]
+        assert structure.target.name == "dev1.orders.billing"
+        assert structure.relations == {
+            "bare": Relation("r"),
+            "invoices": Relation(
+                "r",
+                {"id": "integer NOT NULL DEFAULT nextval('invoices_id_seq'::regclass)", "note": "text"},
+                {"invoices_pkey": "PRIMARY KEY (id)"},
+                {"invoices_pkey": index},
+            ),
+        }
+
+    def test_an_empty_schema_has_no_relations(self, pool: Pool, monkeypatch: pytest.MonkeyPatch) -> None:
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            return [(None,) * 6] if sql is RELATIONS_SQL else []
+
+        monkeypatch.setattr(Database, "query", query)
+        assert read_structure(pool, pool.registry.targets[0]).relations == {}
+
+
+def structure(stand: str, **relations: Relation) -> Structure:
+    return Structure(Target(stand, "orders", "shop", {"host": "db"}, "stands.conf"), dict(relations))
+
+
+PRIMARY_KEY = "CREATE UNIQUE INDEX orders_pkey ON shop.orders USING btree (id)"
+CUSTOMER_INDEX = "CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)"
+
+
+class TestDifferences:
+    """The lines of compare_schema, on structures built by hand."""
+
+    def test_the_same_structure_is_one_line(self) -> None:
+        def same(stand: str) -> Structure:
+            orders = Relation("r", {"id": "integer NOT NULL", "total": "numeric(12,2)"}, {"pk": "PRIMARY KEY (id)"})
+            return structure(stand, orders=orders, daily=Relation("v", {"day": "date"}))
+
+        assert differences(same("dev7"), same("dev12")) == [
+            "dev7 / orders / shop  vs  dev12 / orders / shop",
+            "identical: 2 tables, 3 columns",
+        ]
+
+    def test_every_kind_of_difference_has_a_line_of_its_own(self) -> None:
+        a = structure(
+            "dev7",
+            archive=Relation("r", {"id": "integer"}),
+            items=Relation("r", {"id": "integer"}),
+            orders=Relation(
+                "r",
+                {"id": "integer NOT NULL", "total": "numeric(12,2) NOT NULL"},
+                {"orders_pkey": "PRIMARY KEY (id)", "orders_status_check": "CHECK (status = 'new')"},
+                {"orders_pkey": PRIMARY_KEY, "orders_customer_idx": CUSTOMER_INDEX},
+            ),
+        )
+        b = structure(
+            "dev12",
+            daily=Relation("v", {"day": "date"}),
+            items=Relation("v", {"id": "integer"}),
+            orders=Relation(
+                "r",
+                {"id": "integer NOT NULL", "total": "numeric(10,2)", "note": "text DEFAULT ''::text"},
+                {
+                    "orders_pkey": "PRIMARY KEY (id)",
+                    "orders_status_check": "CHECK (status = 'paid')",
+                    "orders_total_check": "CHECK (total > 0::numeric)",
+                },
+                {"orders_pkey": PRIMARY_KEY},
+            ),
+        )
+        assert differences(a, b) == [
+            "dev7 / orders / shop  vs  dev12 / orders / shop",
+            "only on dev7:",
+            "  archive | table",
+            "only on dev12:",
+            "  daily | view",
+            "differ:",
+            "  items: dev7 table | dev12 view",
+            "  orders.note only on dev12: text DEFAULT ''::text",
+            "  orders.total: dev7 numeric(12,2) NOT NULL | dev12 numeric(10,2)",
+            "  orders: constraint orders_status_check: dev7 CHECK (status = 'new') | dev12 CHECK (status = 'paid')",
+            "  orders: constraint orders_total_check only on dev12: CHECK (total > 0::numeric)",
+            f"  orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
+        ]
+
+    def test_definitions_are_compared_whole_and_shortened_only_for_display(self) -> None:
+        long_check = "CHECK (" + "x" * 300 + ")"
+        a = structure("dev7", orders=Relation("r", constraints={"c": long_check}))
+        same = structure("dev12", orders=Relation("r", constraints={"c": long_check}))
+        other = structure("dev12", orders=Relation("r", constraints={"c": long_check[:-2] + "y)"}))
+        assert differences(a, same)[-1] == "identical: 1 table, 0 columns"
+        line = differences(a, other)[-1]
+        assert line.startswith("  orders: constraint c: dev7 CHECK (xxx")
+        assert line.count("…") == 2
+        assert len(line) < 2 * 200 + 40
+
+    @pytest.mark.usefixtures("russian")
+    def test_in_russian(self) -> None:
+        a = structure("dev7", orders=Relation("r", {"id": "integer"}, indexes={"orders_pkey": PRIMARY_KEY}))
+        b = structure("dev12", orders=Relation("r", {"id": "integer"}), log=Relation("r", {"at": "date"}))
+        assert differences(a, b) == [
+            "dev7 / orders / shop  vs  dev12 / orders / shop",
+            "только на dev12:",
+            "  log | таблица",
+            "отличаются:",
+            f"  orders: индекс orders_pkey только на dev7: {PRIMARY_KEY}",
+        ]
+        assert differences(a, structure("dev12", orders=a.relations["orders"]))[-1] == "одинаково: 1 таблица, 1 колонка"
 
 
 @pytest.fixture

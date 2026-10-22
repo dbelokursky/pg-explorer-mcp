@@ -302,7 +302,8 @@ EN: dict[str, str] = {
     # Many stands in one server entry (ADR 0006).
     "stands.instructions": (
         "This server reaches many stands. status lists them and list_schemas shows the schemas of one; every "
-        "tool takes stand, and reading data takes schema as well."
+        "tool takes stand, and reading data takes schema as well. compare_schema shows how one schema differs "
+        "between two stands."
     ),
     "stands.tool_note": "Pass stand, and schema to read data with that schema's login.",
     "stands.status_note": "Without stand it lists the stands; with stand it also checks that stand's connection.",
@@ -324,7 +325,7 @@ EN: dict[str, str] = {
     ),
     "status.stand_hint": "pass stand to status to check that stand's connection",
     "status.checked_with": "checked with {label}",
-    "stands.no_stand_argument": "Pass stand, one of: {stands}.",
+    "stands.no_stand_argument": "Pass {argument}, one of: {stands}.",
     "stands.unknown": "No stand {stand!r} in the registry. Stands: {stands}.",
     "stands.unknown_similar": "No stand {stand!r} in the registry. Similar: {similar}.",
     "stands.no_schema_argument": (
@@ -357,6 +358,32 @@ EN: dict[str, str] = {
     "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
     "stands.none_found": "PG_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings",
     "stands.more_warnings": "... and {count} more problems in the stands registry",
+    # compare_schema: one schema on two stands.
+    "tool.compare_schema.title": "Compare a schema on two stands",
+    "tool.compare_schema.description": (
+        "Compare the structure of one schema on two stands: tables and views, columns with types, NOT NULL and "
+        "defaults, constraints and indexes. Shows what exists on one stand only and what differs; the data is "
+        "not compared. Pass database only when the schema exists in several databases of a stand."
+    ),
+    "argument.stand_a": 'The first stand, e.g. "dev7".',
+    "argument.stand_b": 'The second stand, to compare with the first, e.g. "dev12".',
+    "argument.schema_compare": "The schema to compare; on each stand it is read with its own login.",
+    "compare.header": "{a}  vs  {b}",
+    "compare.only_on": "only on {stand}:",
+    "compare.differ": "differ:",
+    "compare.same": "identical: {tables}, {columns}",
+    "compare.tables.one": "{count} table",
+    "compare.tables.other": "{count} tables",
+    "compare.columns.one": "{count} column",
+    "compare.columns.other": "{count} columns",
+    "compare.constraint": "{table}: constraint {name}",
+    "compare.index": "{table}: index {name}",
+    "compare.only_here": "{what} only on {stand}: {definition}",
+    "compare.same_stand": "stand_a and stand_b are both {stand!r}. Pass two different stands.",
+    "compare.no_schema": (
+        "Stand {stand} has no schema {schema!r} in database {database}: the registry lists it, but the database "
+        "does not have it. Nothing to compare."
+    ),
     # install.py
     "install.description": "Register the pg-mcp server in the agent's settings and check it.",
     "install.help.client": "whose settings.json to edit",
@@ -594,7 +621,8 @@ RU: dict[str, str] = {
     "sql.reason.slots": "она меняет слоты репликации",
     "stands.instructions": (
         "Этот сервер работает со многими стендами. status перечисляет их, list_schemas показывает схемы стенда; "
-        "каждый инструмент принимает stand, а для чтения данных нужна ещё и schema."
+        "каждый инструмент принимает stand, а для чтения данных нужна ещё и schema. compare_schema показывает, "
+        "чем одна схема на одном стенде отличается от другого."
     ),
     "stands.tool_note": "Передайте stand, а для чтения данных — schema: данные читаются под учёткой этой схемы.",
     "stands.status_note": "Без stand перечисляет стенды; со stand ещё и проверяет подключение к этому стенду.",
@@ -616,7 +644,7 @@ RU: dict[str, str] = {
     ),
     "status.stand_hint": "передайте status стенд, чтобы проверить подключение к нему",
     "status.checked_with": "проверено через {label}",
-    "stands.no_stand_argument": "Передайте stand, один из: {stands}.",
+    "stands.no_stand_argument": "Передайте {argument}, один из: {stands}.",
     "stands.unknown": "В реестре нет стенда {stand!r}. Стенды: {stands}.",
     "stands.unknown_similar": "В реестре нет стенда {stand!r}. Похожие: {similar}.",
     "stands.no_schema_argument": (
@@ -652,6 +680,33 @@ RU: dict[str, str] = {
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
     "stands.none_found": "PG_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*",
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
+    "tool.compare_schema.title": "Сравнить схему на двух стендах",
+    "tool.compare_schema.description": (
+        "Сравнивает структуру одной схемы на двух стендах: таблицы и представления, колонки с типами, NOT NULL "
+        "и значениями по умолчанию, ограничения и индексы. Показывает, что есть только на одном стенде и что "
+        "отличается; данные не сравниваются. database передавайте, только если схема есть в нескольких базах "
+        "стенда."
+    ),
+    "argument.stand_a": 'Первый стенд, например "dev7".',
+    "argument.stand_b": 'Второй стенд, с которым сравнивать первый, например "dev12".',
+    "argument.schema_compare": "Схема, которую сравнивать; на каждом стенде она читается под своей учёткой.",
+    "compare.header": "{a}  vs  {b}",
+    "compare.only_on": "только на {stand}:",
+    "compare.differ": "отличаются:",
+    "compare.same": "одинаково: {tables}, {columns}",
+    "compare.tables.one": "{count} таблица",
+    "compare.tables.few": "{count} таблицы",
+    "compare.tables.many": "{count} таблиц",
+    "compare.columns.one": "{count} колонка",
+    "compare.columns.few": "{count} колонки",
+    "compare.columns.many": "{count} колонок",
+    "compare.constraint": "{table}: ограничение {name}",
+    "compare.index": "{table}: индекс {name}",
+    "compare.only_here": "{what} только на {stand}: {definition}",
+    "compare.same_stand": "stand_a и stand_b — один и тот же стенд {stand!r}. Передайте два разных стенда.",
+    "compare.no_schema": (
+        "На стенде {stand} в базе {database} нет схемы {schema!r}: она есть в реестре, но не в базе. Сравнивать нечего."
+    ),
     "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
     "install.help.client": "чей settings.json править",
     "install.help.check": "только запустить сервер и вызвать status, ничего не меняя",
