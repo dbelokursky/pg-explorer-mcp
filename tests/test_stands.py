@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import io
 import json
+import socket
 import sys
+import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from pg_mcp import __main__ as entry
-from pg_mcp.db import Settings
+from pg_mcp.db import Database, DatabaseUnavailableError, Settings
 from pg_mcp.querylog import QueryLog
 from pg_mcp.stand_tools import STAND_PROFILES, build_stand_tools
 from pg_mcp.stands import (
@@ -380,11 +383,51 @@ class TestOfflineTools:
         assert "pass stand to status to check that stand's connection" in lines
         assert pool.open_count() == 0
 
-    def test_status_with_a_stand_lists_its_schemas_and_tries_two_logins(self, tools: dict[str, Tool]) -> None:
+    def test_status_with_a_stand_lists_its_schemas_and_checks_one_login(self, tools: dict[str, Tool]) -> None:
         lines = tools["status"].call({"stand": "dev1"}).splitlines()
-        assert lines[-6:-4] == ["dev1 / archive: billing", "dev1 / orders: billing, shipping"]
-        assert lines[-4::2] == ["checked with dev1 / archive / billing", "checked with dev1 / orders / billing"]
-        assert [line.startswith("database: unavailable.") for line in lines[-3::2]] == [True, True]
+        assert lines[-4:-1] == [
+            "dev1 / archive: billing",
+            "dev1 / orders: billing, shipping",
+            "checked with dev1 / archive / billing",
+        ]
+        assert lines[-1].startswith("database: unavailable. Nothing accepts connections at 127.0.0.1:")
+
+    def test_a_login_the_server_turned_down_is_followed_by_the_next_one(
+        self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logins: list[str] = []
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            assert self.settings is not None
+            logins.append(self.settings.user)
+            if self.settings.user == "billing":
+                raise DatabaseUnavailableError("Login as 'billing' failed", host_down=False)
+            return [("orders", "parcels", "r", 10, None)]
+
+        monkeypatch.setattr(Database, "query", query)
+        lines = tools["list_tables"].call({"stand": "dev1", "database": "orders"}).splitlines()
+        assert logins == ["billing", "shipping"]
+        assert lines == ["dev1 / orders", "orders.parcels | table | ~10 rows"]
+
+    def test_a_host_that_did_not_answer_is_not_tried_again_in_the_call(
+        self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logins: list[str] = []
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            assert self.settings is not None
+            logins.append(f"{self.settings.database}.{self.settings.user}")
+            raise DatabaseUnavailableError("Connecting to db:5432 timed out.", host_down=True)
+
+        monkeypatch.setattr(Database, "query", query)
+        lines = tools["search_schema"].call({"stand": "dev1", "text": "parcel"}).splitlines()
+        assert logins == ["archive.billing"]  # orders.billing and orders.shipping share the host
+        assert lines == [
+            "dev1 / archive",
+            "  Connecting to db:5432 timed out.",
+            "dev1 / orders",
+            "  Connecting to db:5432 timed out.",
+        ]
 
     def test_list_schemas_shows_the_databases_of_a_stand(self, tools: dict[str, Tool]) -> None:
         assert tools["list_schemas"].call({"stand": "Dev1"}).splitlines() == [
@@ -392,10 +435,11 @@ class TestOfflineTools:
             "dev1 / orders: billing, shipping",
         ]
 
-    def test_one_database_failing_does_not_hide_the_others(self, tools: dict[str, Tool]) -> None:
+    def test_one_database_failing_does_not_hide_the_others(self, pool: Pool, tools: dict[str, Tool]) -> None:
         lines = tools["list_tables"].call({"stand": "dev1"}).splitlines()
         assert [line for line in lines if not line.startswith("  ")] == ["dev1 / archive", "dev1 / orders"]
         assert len(lines) == 4
+        assert pool.open_count() == 1  # the refused port was tried once, not once per login
 
     def test_an_unknown_database_lists_the_known_ones(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(
@@ -445,6 +489,55 @@ class TestOfflineTools:
         )
         assert first["outcome"] == "unavailable"
         assert ("stand" in second, second["role"]) == (False, None)  # not the previous call's login
+
+
+@pytest.fixture
+def silent_port() -> Iterator[str]:
+    """A port that accepts TCP connections and never answers: a host behind a dropped VPN."""
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        yield str(server.getsockname()[1])
+
+
+class TestSilentHost:
+    """One timeout per call, not one per login and database, and the short connect timeout applies."""
+
+    @pytest.fixture
+    def pool(self, tmp_path: Path, unreachable_env: dict[str, str], silent_port: str) -> Pool:
+        text = "".join(
+            f"[{name}]\nhost=127.0.0.1\nport={silent_port}\nconnect_timeout=1\n\n"
+            for name in ("dev1.orders.billing", "dev1.orders.shipping", "dev1.archive.billing")
+        )
+        return Pool(loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)]), unreachable_env)
+
+    @pytest.fixture
+    def tools(self, pool: Pool) -> dict[str, Tool]:
+        return by_name(build_stand_tools(pool, str(ROOT)))
+
+    def test_the_whole_stand_costs_one_timeout(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        started = time.monotonic()
+        lines = tools["list_tables"].call({"stand": "dev1"}).splitlines()
+        assert time.monotonic() - started < 5  # one second of connect timeout, not ten of the query one
+        assert pool.open_count() == 1
+        assert [line.split(" timed out")[0] for line in lines] == [
+            "dev1 / archive",
+            f"  Connecting to 127.0.0.1:{pool.registry.targets[0].options['port']}",
+            "dev1 / orders",
+            f"  Connecting to 127.0.0.1:{pool.registry.targets[0].options['port']}",
+        ]
+
+    def test_status_stops_at_the_first_silent_login(self, tools: dict[str, Tool]) -> None:
+        lines = tools["status"].call({"stand": "dev1"}).splitlines()
+        assert len([line for line in lines if line.startswith("checked with")]) == 1
+        assert "timed out" in lines[-1]
+
+    def test_finding_a_table_gives_up_after_one_timeout(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        started = time.monotonic()
+        with pytest.raises(ToolError, match="timed out"):
+            tools["describe_table"].call({"stand": "dev1", "table": "parcels"})
+        assert time.monotonic() - started < 5
+        assert pool.open_count() == 1
 
 
 def serve(env: dict[str, str], *requests: dict[str, Any]) -> list[dict[str, Any]]:

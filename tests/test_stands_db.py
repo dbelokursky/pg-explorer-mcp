@@ -59,7 +59,7 @@ def registry_text(settings: Settings, dead_port: str) -> str:
     return (
         f"[dev1.shop.{BILLING}]\n{live}\n"
         f"[dev1.shop.{ORDERS}]\n{live}\n"
-        f"[dev2.shop.mcp_it_aaa]\n{dead}\n"  # a login that cannot connect, first in line
+        f"[dev2.shop.mcp_it_aaa]\n{live}\n"  # a role the server does not have, first in line
         f"[dev2.shop.{BILLING}]\n{live}\n"
         f"[dev3.shop.mcp_it_ghost]\n{live}user={BILLING}\n\n"  # a schema the database does not have
         f"[dev9.shop.{BILLING}]\n{dead}\n"

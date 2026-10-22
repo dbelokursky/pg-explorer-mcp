@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import socket
 import ssl
@@ -35,6 +36,11 @@ class TestSettings:
     def test_the_socket_outwaits_the_statement_timeout(self, socket_s: str, statement_ms: str, expected: int) -> None:
         s = settings(PG_MCP_SOCKET_TIMEOUT_S=socket_s, PG_MCP_STATEMENT_TIMEOUT_MS=statement_ms)
         assert db.socket_timeout(s) == expected
+
+    def test_connecting_waits_only_its_own_timeout(self) -> None:
+        s = settings(PG_MCP_SOCKET_TIMEOUT_S="1", PG_MCP_STATEMENT_TIMEOUT_MS="5000")
+        assert (db.connect_timeout(s), db.socket_timeout(s)) == (1, 10)
+        assert db.connect_timeout(settings(PG_MCP_SOCKET_TIMEOUT_S="0")) == 30
 
     def test_settings_problem_reaches_the_tools_as_a_hint(self) -> None:
         with pytest.raises(DatabaseUnavailableError, match="Connection settings are invalid"):
@@ -113,6 +119,31 @@ def failure(message: object, cause: BaseException | None = None) -> pg8000.excep
 )
 def test_connection_failures_become_hints(error: pg8000.exceptions.Error, hint: str) -> None:
     assert hint in db._explain_connect_failure(error, settings(PGPASSWORD="x"))
+
+
+def test_no_route_to_the_host_points_at_the_vpn() -> None:
+    # pg8000 does not wrap the errors of its TLS request, so a bare OSError is explained too.
+    error = OSError(errno.EHOSTUNREACH, "No route to host")
+    assert "localhost:5432 is unreachable from this machine: No route to host" in db._explain_connect_failure(
+        error, settings()
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "down"),
+    [
+        (failure("x", ConnectionRefusedError()), True),
+        (failure("x", socket.gaierror()), True),
+        (failure("x", TimeoutError()), True),
+        (failure("x", OSError(errno.ENETUNREACH, "Network is unreachable")), True),
+        (socket.timeout("timed out"), True),
+        (failure("x", ssl.SSLError("wrong version number")), False),
+        (failure({"C": "28P01", "M": "password authentication failed"}), False),
+        (failure("Server refuses SSL"), False),
+    ],
+)
+def test_only_a_silent_host_counts_as_down(error: Exception, down: bool) -> None:  # noqa: FBT001
+    assert db._host_down(error) is down
 
 
 def test_scram_login_without_a_password_gets_the_password_file_hint(monkeypatch: pytest.MonkeyPatch) -> None:
