@@ -470,6 +470,10 @@ a table PostgreSQL has never analyzed looks exactly like an empty one, so `list_
 **Which MCP protocol versions does it speak?** Revisions 2024-11-05 to 2025-11-25 (with the
 `initialize` handshake) and 2026-07-28 (without it).
 
+**Which clients is it checked with?** CI starts Qwen Code, the open-source base of GigaCode CLI, with the
+server registered by `install.py`: the client must connect to the server and see the extension. GigaCode
+CLI itself is not available outside companies, so it is checked by hand before a release.
+
 **Will another MCP client do?** Yes, any client that starts servers over stdio. Give it the command
 `python3`, the arguments `-I /path/to/pg-mcp/run.py` and the `PG*` variables in the environment. If the
 client reads the `mcpServers` format, the entry from [step 5](#5-register-the-server-with-the-agent)

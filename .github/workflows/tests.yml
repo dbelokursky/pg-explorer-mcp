@@ -44,6 +44,33 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest
 
+  client:
+    # A real MCP client, Qwen Code (the open-source base of GigaCode CLI), without a model:
+    # it must reach the server that install.py registered and see the extension.
+    name: real client (Qwen Code)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      QWEN_CODE_VERSION: "0.25.2"
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "22"
+      - run: npm install --global --no-audit --no-fund "@qwen-code/qwen-code@${QWEN_CODE_VERSION}"
+      - run: python3 scripts/client_smoke.py --qwen "$(command -v qwen)"
+
   integration:
     name: integration (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest

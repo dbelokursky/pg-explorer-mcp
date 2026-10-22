@@ -28,6 +28,7 @@ uvx pre-commit install
 | `uv run ruff format` | форматирование |
 | `uv run mypy` | проверка типов в режиме strict |
 | `uv run python scripts/check_vendor.py` | целостность `src/pg_mcp/_vendor` |
+| `python3 scripts/client_smoke.py --qwen "$(command -v qwen)"` | проверка в настоящем клиенте, Qwen Code (`npm install -g @qwen-code/qwen-code`), по переменным `PG*`; модель не нужна |
 
 Интеграционные тесты ходят в настоящий PostgreSQL. Они создают и удаляют схемы `mcp_it`,
 `mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`; тестам роли нужен `psql`:
@@ -37,7 +38,21 @@ PG_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov
 ```
 
 CI гоняет то же самое: линтеры и типы, тесты на Linux, Windows и macOS под Python 3.9 и 3.14,
-интеграционные тесты на PostgreSQL с 13-й по 18-ю, покрытие — на 16-й.
+интеграционные тесты на PostgreSQL с 13-й по 18-ю (покрытие — на 16-й) и проверку в Qwen Code.
+
+## Проверка в GigaCode CLI
+
+CI проверяет сервер в Qwen Code — открытой основе GigaCode CLI: `scripts/client_smoke.py` в
+одноразовой домашней папке регистрирует сервер через `install.py`, ждёт от `qwen mcp list` статуса
+`Connected` и подключает репозиторий как расширение. Сам GigaCode CLI вне компании не достать, поэтому
+перед выпуском его проверяют вручную:
+
+1. `python3 install.py` с переменными `PG*` тестовой базы — в конце `database: connected`.
+2. `gigacode mcp list`, если эта команда есть в вашей версии, — у сервера `pg` статус `Connected`.
+3. `gigacode extensions link .`, затем `gigacode extensions list` — расширение `pg-mcp` с командой
+   `/pg:setup` и контекстом `pg-mcp-context.md`.
+4. В GigaCode: «Проверь подключение к базе» (агент вызывает `status`), «Какие таблицы есть?»
+   (`list_tables`) и просьба удалить строки — агент должен получить отказ проверки SQL.
 
 ## Раскладка
 
