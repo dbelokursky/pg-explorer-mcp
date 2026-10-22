@@ -561,7 +561,8 @@ class TestCompareSchema:
         arguments = {"stand_a": "dev2", "stand_b": "dev1", "schema": "billing", "database": "orders"}
         with pytest.raises(ToolError) as caught:
             tools["compare_schema"].call(arguments)
-        assert str(caught.value).startswith("dev2 / orders / billing: Nothing accepts connections at 127.0.0.1:")
+        assert str(caught.value).startswith("dev2 / orders / billing: ")
+        assert "127.0.0.1:" in str(caught.value)  # refused, or on Windows sometimes timed out
         entry = json.loads(log.read_text(encoding="utf-8"))
         assert (entry["outcome"], entry["stand"], entry["schema"]) == ("unavailable", "dev2", "billing")
 

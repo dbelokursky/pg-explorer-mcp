@@ -266,7 +266,9 @@ class TestCompareSchema:
     def test_an_unreachable_stand_is_named(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError) as caught:
             tools["compare_schema"].call({"stand_a": "dev1", "stand_b": "dev9", "schema": BILLING})
-        assert str(caught.value).startswith(f"dev9 / shop / {BILLING}: Nothing accepts connections at 127.0.0.1:")
+        # Windows answers a closed local port with a timeout rather than a refusal; the stand is named either way.
+        assert str(caught.value).startswith(f"dev9 / shop / {BILLING}: ")
+        assert "127.0.0.1:" in str(caught.value)
 
 
 class TestData:
