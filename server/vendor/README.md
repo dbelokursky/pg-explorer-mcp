@@ -37,5 +37,7 @@ a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427  python_dateuti
    ```
 
 3. Обновите таблицу и хеши выше и прогоните все тесты, включая интеграционные, на Python 3.9.
+   Тест `test_vendor.py` (и `python3 scripts/check_vendor.py`) сверяет каждый файл с хешем из
+   `RECORD` его wheel: любая ручная правка в `server/vendor/` его уронит.
 
 Пока поддерживаем Python 3.9, scramp остаётся на 1.4.6: следующие версии требуют 3.10.

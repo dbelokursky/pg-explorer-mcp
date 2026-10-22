@@ -38,6 +38,24 @@ class StdioSessionTests(unittest.TestCase):
         self.assertTrue(tables["result"]["isError"])
         self.assertIn("Nothing accepts connections", tables["result"]["content"][0]["text"])
 
+    def test_modern_session_needs_no_initialize(self):
+        meta = {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}}}
+        lines, proc = run_stdio_session(
+            [
+                request(1, "server/discover", meta),
+                request(2, "tools/list", meta),
+                request(3, "tools/call", dict(meta, name="status", arguments={})),
+            ],
+            env=unreachable_database_env(),
+        )
+        stderr = proc.stderr.decode("utf-8", "replace")
+        self.assertEqual(len(lines), 3, stderr)
+        discover, tools, status = (json.loads(line) for line in lines)
+        self.assertEqual(discover["result"]["supportedVersions"], ["2026-07-28"])
+        self.assertEqual(len(tools["result"]["tools"]), 5)
+        self.assertEqual(status["result"]["resultType"], "complete")
+        self.assertIn("database: unavailable", status["result"]["content"][0]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

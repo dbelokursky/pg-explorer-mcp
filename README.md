@@ -2,7 +2,8 @@
 
 MCP-сервер для PostgreSQL с доступом только на чтение: для GigaCode CLI и других агентов
 семейства Qwen Code. Написан на Python 3.9+ без внешних зависимостей: драйвер pg8000 лежит
-в репозитории, ставить ничего не нужно.
+в репозитории, ставить ничего не нужно. Понимает ревизии MCP с 2024-11-05 по 2025-11-25
+(через `initialize`) и 2026-07-28 (без рукопожатия). История версий — в [CHANGELOG.md](CHANGELOG.md).
 
 ## Что умеет
 
@@ -35,7 +36,7 @@ MCP-сервер для PostgreSQL с доступом только на чте�
    роль только с `SELECT` на выбранные схемы:
 
    ```bash
-   psql -d app -v role=pg_mcp_agent -v password='…' -v schemas=sales -v owner=app_owner -f docs/role.sql
+   psql -d app -v role=mcp_agent -v password='…' -v schemas=sales -v owner=app_owner -f docs/role.sql
    ```
 
 2. **Транзакция `READ ONLY` на каждый запрос**, которая всегда откатывается. Запрос уходит одной

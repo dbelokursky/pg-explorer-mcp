@@ -2,9 +2,9 @@
 --
 -- Run it as a superuser or as the owner of the schemas, in the database the agent will read:
 --
---   psql -d app -v role=pg_mcp_agent -v password='…' -v schemas=sales,reports -v owner=app_owner -f docs/role.sql
+--   psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owner=app_owner -f docs/role.sql
 --
---   role      name of the new login role
+--   role      name of the new login role; PostgreSQL reserves names that start with pg_
 --   password  its password; give it to users through ~/.pgpass, never in the agent settings
 --   schemas   comma-separated schemas the agent may read
 --   owner     role that creates tables in those schemas, so future tables become readable too
