@@ -1,15 +1,26 @@
 # Keeps CI actions and development tools fresh. The vendored runtime packages in
 # src/pg_mcp/_vendor are updated by hand, as src/pg_mcp/_vendor/README.md describes.
+# Dependabot reads this file from the default branch, main, which holds releases;
+# its pull requests go to develop, like every other change.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule:
       interval: monthly
   - package-ecosystem: uv
     directory: /
+    target-branch: develop
     schedule:
       interval: monthly
     groups:
       dev-tools:
         patterns: ["*"]
+    ignore:
+      # mypy 2 and pytest 9 need Python 3.10, and pg-mcp still supports 3.9 (ADR 0003): uv
+      # cannot resolve them for the 3.9 branch of uv.lock, so every Dependabot run would fail.
+      - dependency-name: mypy
+        versions: [">=2"]
+      - dependency-name: pytest
+        versions: [">=9"]
