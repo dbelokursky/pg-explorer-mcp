@@ -14,7 +14,7 @@ import ssl
 import stat
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pg8000.exceptions
 import pg8000.native
@@ -22,6 +22,7 @@ import pg8000.native
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
+CURSOR_NAME = "pg_mcp_rows"
 
 
 class DatabaseUnavailable(Exception):
@@ -102,6 +103,38 @@ class Database:
                     raise DatabaseUnavailable(f"Lost the connection to {self.describe_target()}: {exc}") from exc
         raise AssertionError("unreachable")
 
+    def read_only(self, sql: str, max_rows: int, cursor: bool) -> Tuple[List[str], List[Sequence[Any]], bool]:
+        """Run one statement inside a READ ONLY transaction that is always rolled back.
+
+        The text goes to PostgreSQL as is, through the extended protocol, so it can
+        hold one statement only, and pg8000 never parses it for :name parameters.
+        With cursor=True the rows come through a cursor, never more than max_rows + 1,
+        to learn whether more exist. Returns column names, rows and that flag.
+        """
+        for attempt in (1, 2):
+            conn = self._connection()
+            try:
+                conn.execute_simple("BEGIN TRANSACTION READ ONLY")
+                try:
+                    if cursor:
+                        conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
+                        context = conn.execute_simple(f"FETCH FORWARD {int(max_rows) + 1} FROM {CURSOR_NAME}")
+                    else:
+                        context = conn.execute_unnamed(sql)
+                finally:
+                    conn.execute_simple("ROLLBACK")
+            except pg8000.exceptions.DatabaseError as exc:
+                raise QueryFailed(_server_message(exc)) from exc
+            except (pg8000.exceptions.InterfaceError, OSError) as exc:
+                self.close()
+                if attempt == 2:
+                    raise DatabaseUnavailable(f"Lost the connection to {self.describe_target()}: {exc}") from exc
+                continue
+            columns = [str(column["name"]) for column in context.columns or []]
+            rows = list(context.rows or [])
+            return columns, rows[:max_rows], len(rows) > max_rows
+        raise AssertionError("unreachable")
+
     def server_info(self) -> Dict[str, str]:
         row = self.query(
             "SELECT current_database(), current_user, current_setting('server_version'), "
@@ -149,6 +182,12 @@ class Database:
             except pg8000.exceptions.Error as exc:
                 if number == len(attempts):
                     raise DatabaseUnavailable(_explain_connect_failure(exc, settings)) from exc
+            except AttributeError as exc:
+                # pg8000 1.31 reports a missing password for cleartext and MD5 logins,
+                # but SCRAM fails on None.decode() instead.
+                if settings.password is not None:
+                    raise
+                raise DatabaseUnavailable(_password_hint(settings, "the server asks for a password and none is set")) from exc
         try:
             # Guardrails, not the security boundary: the role's privileges are.
             conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
@@ -269,10 +308,7 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
     if isinstance(cause, (socket.timeout, TimeoutError)):
         return f"Connecting to {where} timed out. The host may be behind a firewall or a VPN."
     if code == "28P01" or (not settings.password and "password" in detail.lower()):
-        return (
-            f"Login as {settings.user!r} failed: {detail}. Put the password into {settings.passfile} "
-            "as one line host:port:database:user:password (file mode 600). Never paste it into the chat."
-        )
+        return _password_hint(settings, detail)
     if code == "3D000":
         return f"Database {settings.database!r} does not exist at {where}. Check PGDATABASE."
     if code == "28000":
@@ -280,6 +316,13 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
     if isinstance(cause, ssl.SSLError) or "SSL" in detail:
         return f"TLS with {where} failed: {cause or detail}. Check PGSSLMODE and PGSSLROOTCERT."
     return f"Cannot connect to {settings.describe()}: {detail}"
+
+
+def _password_hint(settings: Settings, detail: str) -> str:
+    return (
+        f"Login as {settings.user!r} failed: {detail}. Put the password into {settings.passfile} "
+        "as one line host:port:database:user:password (file mode 600). Never paste it into the chat."
+    )
 
 
 def _int_setting(env: Mapping[str, str], name: str, default: int) -> int:

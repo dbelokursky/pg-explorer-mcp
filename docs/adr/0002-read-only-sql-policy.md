@@ -1,6 +1,8 @@
 # ADR 0002. Какой SQL разрешён агенту
 
-Статус: предложено, ждёт ревью. Нужно до инструмента `run_select` (свободный SQL).
+Статус: принято 2026-10-22 и реализовано (`sqlguard.py`, инструменты `run_select` и
+`explain_query`, профили групп, `docs/role.sql`). Открытые вопросы решены так, как предлагалось
+(раздел в конце); их можно пересмотреть отдельным решением.
 
 ## Принцип
 
@@ -76,35 +78,26 @@
 4. `ROLLBACK` — всегда, даже после успеха.
 5. Ответ проходит через бюджет ответа.
 
-## Роль для агента: черновик для DBA
+## Роль для агента
 
-```sql
-CREATE ROLE pg_mcp_agent LOGIN PASSWORD '…'
-    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 5;
-ALTER ROLE pg_mcp_agent SET default_transaction_read_only = on;
-ALTER ROLE pg_mcp_agent SET statement_timeout = '5s';
-ALTER ROLE pg_mcp_agent SET idle_in_transaction_session_timeout = '60s';
-
-GRANT CONNECT ON DATABASE app TO pg_mcp_agent;
-GRANT USAGE ON SCHEMA sales TO pg_mcp_agent;
-GRANT SELECT ON ALL TABLES IN SCHEMA sales TO pg_mcp_agent;
-ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA sales GRANT SELECT ON TABLES TO pg_mcp_agent;
-```
+Скрипт для DBA — [docs/role.sql](../role.sql): роль `NOSUPERUSER … CONNECTION LIMIT 5` с
+`default_transaction_read_only = on`, `statement_timeout`, `GRANT SELECT` на выбранные схемы и
+правами по умолчанию на будущие таблицы. Интеграционный тест прогоняет его через `psql` и
+проверяет, что роль читает выданную схему и не может писать, даже если выключить режим только чтения.
 
 Чего роли не выдавать: `pg_read_all_stats` и `pg_monitor` (открывают тексты чужих запросов),
 `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`, `pg_signal_backend`,
 членство в ролях-владельцах таблиц. Право `CREATE` на схемах тоже не нужно: в PostgreSQL 15+
 у `public` оно отозвано по умолчанию, в старых версиях это стоит проверить.
 
-## Вопросы на ревью
+## Решения по открытым вопросам
 
-1. **`EXPLAIN ANALYZE`.** Он выполняет запрос, зато показывает реальное время. Предлагаю разрешить для
-   `SELECT`: работает внутри `READ ONLY` и под `statement_timeout`.
-2. **`pg_stat_activity` и `pg_stat_statements`.** Роль без `pg_read_all_stats` видит тексты только своих
-   запросов. Предлагаю разрешить и опереться на роль, а не запрещать на уровне сервера.
-3. **Лимит строк `run_select`.** Предлагаю 200 строк; сверху его дополнительно режет бюджет ответа.
-4. **Кому `run_select`.** Предлагаю включать его только профилем группы, а остальным оставить
+1. **`EXPLAIN ANALYZE`** разрешён для `SELECT` и только профилю `analyst`: запрос выполняется внутри
+   `READ ONLY` и под `statement_timeout`, зато план показывает реальное время.
+2. **`pg_stat_activity` и `pg_stat_statements`** разрешены; от чужих текстов запросов защищает роль без
+   `pg_read_all_stats`, а не сервер.
+3. **Лимит строк `run_select`** — 200; сверху его дополнительно режет бюджет ответа.
+4. **`run_select`** есть только в профиле `analyst`; профили `schema` и `explore` обходятся
    `describe_table`, `sample_rows` и `explain_query`.
-5. **Ложные срабатывания.** `INSERT`, `UPDATE`, `DELETE` в PostgreSQL — не зарезервированные слова,
-   и колонку можно назвать `update`. Такой запрос проверка отвергнет, пока имя не возьмут в кавычки.
-   Предлагаю с этим смириться: случай редкий, а ошибка объяснит, что делать.
+5. **Ложные срабатывания** приняты: колонку с именем `update` или `delete` нужно брать в кавычки,
+   и ошибка проверки говорит, какое слово её остановило.

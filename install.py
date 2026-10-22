@@ -19,7 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 MIN_PYTHON = (3, 9)
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -36,12 +36,16 @@ COPIED_ENV = (
     "PGPASSFILE",
     "PG_MCP_STATEMENT_TIMEOUT_MS",
     "PG_MCP_MAX_RESPONSE_CHARS",
+    "PG_MCP_PROFILE",
 )
+PROFILES = ("schema", "explore", "analyst")
 
 
-def server_entry() -> Dict[str, Any]:
+def server_entry(profile: Optional[str] = None) -> Dict[str, Any]:
     entry: Dict[str, Any] = {"command": sys.executable, "args": ["-I", RUN_PY], "timeout": 30000}
     env = {name: os.environ[name] for name in COPIED_ENV if os.environ.get(name)}
+    if profile:
+        env["PG_MCP_PROFILE"] = profile
     if env:
         entry["env"] = env
     return entry
@@ -115,9 +119,12 @@ def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Register the pg-mcp server in the agent's settings and check it.")
     parser.add_argument("--client", choices=sorted(SETTINGS_FILES), default="gigacode", help="whose settings.json to edit")
     parser.add_argument("--check", action="store_true", help="only start the server and call status; change nothing")
+    parser.add_argument(
+        "--profile", choices=PROFILES, help="tools for this group: schema, explore (default) or analyst (adds run_select)"
+    )
     args = parser.parse_args(argv)
 
-    entry = server_entry()
+    entry = server_entry(args.profile)
     if not args.check:
         register(os.path.expanduser(SETTINGS_FILES[args.client]), entry)
     connected = check(entry)

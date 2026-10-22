@@ -18,3 +18,7 @@ Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-mcp extens
    `<python> <pg-mcp folder>/install.py --check` again.
 5. When the check reports "database: connected", tell the user to restart GigaCode so it starts the
    server with the new settings.
+
+The tools the agent gets depend on the profile: `schema` (structure only), `explore` (the default:
+adds sample rows and query plans) or `analyst` (adds read-only SQL). To change it, run
+`<python> <pg-mcp folder>/install.py --profile <name>` and restart GigaCode.

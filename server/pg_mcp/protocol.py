@@ -27,8 +27,8 @@ INTERNAL_ERROR = -32603
 
 INSTRUCTIONS = (
     "Read-only access to one PostgreSQL database. Call status first: it shows the "
-    "database, the role and the limits in force. Then use list_tables and "
-    "describe_table to explore."
+    "database, the role, the tools this profile offers and the limits in force. "
+    "Then explore with list_tables and describe_table before querying data."
 )
 
 
