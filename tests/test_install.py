@@ -57,6 +57,11 @@ def test_entry_runs_this_interpreter_isolated_and_never_copies_the_password(monk
     assert "PGPASSWORD" not in entry["env"]
 
 
+def test_query_log_setting_is_copied_into_the_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PG_MCP_QUERY_LOG", str(tmp_path / "queries.jsonl"))
+    assert install.server_entry()["env"]["PG_MCP_QUERY_LOG"] == str(tmp_path / "queries.jsonl")
+
+
 def test_profile_option_goes_into_the_server_env() -> None:
     assert install.server_entry("analyst")["env"]["PG_MCP_PROFILE"] == "analyst"
 

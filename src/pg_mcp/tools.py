@@ -12,13 +12,14 @@ from __future__ import annotations
 import json
 import platform
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
 from . import __version__
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, number, plural, t
+from .querylog import ERROR, FAILED, OK, REFUSED, UNAVAILABLE, Mark, QueryLog
 from .sqlguard import ROW_SOURCES, SqlRejectedError, check_read_only
 
 LIST_TABLES_LIMIT = 200
@@ -174,6 +175,7 @@ class Tool:
     handler: Callable[[dict[str, Any]], Answer]
     required: tuple[str, ...] = ()
     budget: int = DEFAULT_BUDGET
+    query_log: QueryLog | None = None
 
     def describe(self) -> dict[str, Any]:
         schema: dict[str, Any] = {"type": "object", "properties": self.properties, "additionalProperties": False}
@@ -188,7 +190,32 @@ class Tool:
         }
 
     def call(self, arguments: Any) -> str:
-        """Run the tool; bad arguments, refused SQL and database failures become ToolError."""
+        """Run the tool; bad arguments, refused SQL and database failures become ToolError.
+
+        Every call goes into the query log, however it ends.
+        """
+        mark = self.query_log.start() if self.query_log else None
+        try:
+            lines = self._run(arguments)
+        except SqlRejectedError as exc:
+            self._log(mark, arguments, REFUSED, str(exc))
+            raise ToolError(str(exc)) from exc
+        except DatabaseUnavailableError as exc:
+            self._log(mark, arguments, UNAVAILABLE, str(exc))
+            raise ToolError(str(exc)) from exc
+        except QueryFailedError as exc:
+            self._log(mark, arguments, ERROR, str(exc))
+            raise ToolError(str(exc)) from exc
+        except ToolError as exc:
+            self._log(mark, arguments, ERROR, str(exc))
+            raise
+        except Exception as exc:
+            self._log(mark, arguments, FAILED, f"{type(exc).__name__}: {exc}")
+            raise
+        self._log(mark, arguments, OK, None)
+        return "\n".join(fit_to_budget(lines, self.budget))
+
+    def _run(self, arguments: Any) -> list[str]:
         if arguments is None:
             arguments = {}
         if not isinstance(arguments, dict):
@@ -200,12 +227,12 @@ class Tool:
         missing = [name for name in self.required if arguments.get(name) in (None, "")]
         if missing:
             raise ToolError(t("error.missing_arguments", missing=", ".join(missing)))
-        try:
-            answer = self.handler(arguments)
-        except (DatabaseUnavailableError, QueryFailedError, SqlRejectedError) as exc:
-            raise ToolError(str(exc)) from exc
-        lines = answer.splitlines() if isinstance(answer, str) else answer
-        return "\n".join(fit_to_budget(lines, self.budget))
+        answer = self.handler(arguments)
+        return answer.splitlines() if isinstance(answer, str) else answer
+
+    def _log(self, mark: Mark | None, arguments: Any, outcome: str, message: str | None) -> None:
+        if self.query_log is not None and mark is not None:
+            self.query_log.write(mark, self.name, arguments, outcome, message)
 
 
 def profile_from_env(env: Mapping[str, str]) -> tuple[str, str | None]:
@@ -219,11 +246,14 @@ def profile_from_env(env: Mapping[str, str]) -> tuple[str, str | None]:
 def build_tools(
     db: Database,
     install_dir: str,
+    *,
     budget: int = DEFAULT_BUDGET,
     profile: str = DEFAULT_PROFILE,
     warnings: Sequence[str] = (),
+    query_log: QueryLog | None = None,
 ) -> list[Tool]:
-    """The tools of this profile, described in the current language."""
+    """The tools of this profile, described in the current language, all writing to one query log."""
+    query_log = query_log or QueryLog(None)
     names = PROFILES[profile]
     analyze = profile == "analyst"
     table_argument = {"type": "string", "description": t("argument.table")}
@@ -239,7 +269,7 @@ def build_tools(
             description=t("tool.status.description"),
             properties={},
             handler=lambda _args: status(
-                db, install_dir, budget=budget, profile=profile, names=names, warnings=warnings
+                db, install_dir, budget=budget, profile=profile, names=names, warnings=warnings, query_log=query_log
             ),
         ),
         Tool(
@@ -303,20 +333,25 @@ def build_tools(
         ),
     ]
     offered = [tool for tool in tools if tool.name in names]
-    return [
-        Tool(tool.name, tool.title, tool.description, tool.properties, tool.handler, tool.required, budget)
-        for tool in offered
-    ]
+    return [replace(tool, budget=budget, query_log=query_log) for tool in offered]
 
 
 def status(
-    db: Database, install_dir: str, *, budget: int, profile: str, names: Sequence[str], warnings: Sequence[str]
+    db: Database,
+    install_dir: str,
+    *,
+    budget: int,
+    profile: str,
+    names: Sequence[str],
+    warnings: Sequence[str],
+    query_log: QueryLog,
 ) -> list[str]:
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.target", target=db.describe_target()),
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),
+        query_log.describe(),
     ]
     lines.extend(t("status.warning", warning=warning) for warning in warnings)
     try:
