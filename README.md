@@ -70,8 +70,10 @@ There is a shorter way too: link the extension (`gigacode extensions link`), res
 git clone https://github.com/dbelokursky/pg-mcp.git
 ```
 
-Without git, download the repository archive and unpack it anywhere. Do not move the folder afterwards:
-its path goes into the agent settings. If you do move it, repeat step 5.
+Without git, take `pg-mcp-<version>.zip` from the latest release on the
+[Releases page](https://github.com/dbelokursky/pg-mcp/releases) and unpack it anywhere: inside is a `pg-mcp` folder
+with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. Do not move
+the folder afterwards: its path goes into the agent settings. If you do move it, repeat step 5.
 
 ### 2. Python 3.9 or newer
 
@@ -576,6 +578,7 @@ says what is wrong.
 | "Host … cannot be resolved" | a typo in `PGHOST`, or a VPN is needed | fix `PGHOST` |
 | "Connecting to … timed out" | a firewall or a VPN | check that the port is reachable from this machine |
 | "… is unreachable from this machine" | no route to the host: the VPN is down | connect the VPN |
+| "… accepted the connection, then closed it during the login" | the server refused the login, but its message was lost (Windows drops it on a reset); usually the password or `pg_hba.conf` | check the password file, then ask the DBA |
 | "Login as … failed" or "the server asks for a password" | no password in the password file, a wrong line, or file permissions | check the path, the line format and `chmod 600` |
 | "Database … does not exist" | wrong database name | fix `PGDATABASE` |
 | "The server refused the login for …" | `pg_hba.conf`, or the role lacks `LOGIN`/`CONNECT` | ask the DBA |
@@ -593,8 +596,11 @@ check, `install.py --check` prints that log.
 
 ## Updating and removing
 
-To update, run `git pull` in the pg-mcp folder and restart the agent. Run `install.py` again only if
-you moved the folder or changed Python, the profile or the language.
+To update a clone, run `git pull` in the pg-mcp folder and restart the agent. To update an unpacked
+archive, take the new `pg-mcp-<version>.zip` from the
+[Releases page](https://github.com/dbelokursky/pg-mcp/releases), delete the old `pg-mcp` folder, unpack the new
+one in its place and restart the agent. Run `install.py` again only if the folder's path changed or
+you changed Python, the profile or the language.
 
 To remove, delete `pg` (and any `pg-<name>` entries) from `mcpServers` in the agent settings (backups of earlier settings sit next to
 the file), run `gigacode extensions uninstall pg-mcp` and delete the folder.
