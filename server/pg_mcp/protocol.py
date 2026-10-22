@@ -1,9 +1,10 @@
-"""JSON-RPC 2.0 and the MCP lifecycle for a server that only offers tools.
+"""JSON-RPC 2.0 and both MCP eras for a server that only offers tools.
 
-Covers protocol revisions 2024-11-05 to 2025-11-25: initialize, ping,
-tools/list and tools/call. Revision 2026-07-28 drops the initialize handshake;
-clients that speak it probe with server/discover, get "method not found" from
-this server and fall back to initialize, as that revision prescribes.
+Legacy revisions 2024-11-05 to 2025-11-25 open with an initialize handshake;
+this server answers it and then serves ping, tools/list and tools/call.
+Revision 2026-07-28 has no handshake: every request names its protocol
+version in params._meta, and server/discover tells a client what this server
+speaks. Each request picks its era by itself, so both kinds of clients work.
 """
 from __future__ import annotations
 
@@ -16,20 +17,29 @@ from .tools import Tool, ToolError
 
 log = logging.getLogger(__name__)
 
-# Protocol revisions this server implements, newest first.
+# Legacy protocol revisions, agreed through initialize, newest first.
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+# Modern revisions, named by every request in params._meta.
+MODERN_PROTOCOL_VERSIONS = ("2026-07-28",)
+
+META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
+META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
+LIST_TTL_MS = 3_600_000  # the tool list never changes while the process runs
 
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
+UNSUPPORTED_PROTOCOL_VERSION = -32022
 
 INSTRUCTIONS = (
     "Read-only access to one PostgreSQL database. Call status first: it shows the "
     "database, the role, the tools this profile offers and the limits in force. "
     "Then explore with list_tables and describe_table before querying data."
 )
+
+Handler = Callable[[Dict[str, Any]], Dict[str, Any]]
 
 
 class InvalidParams(Exception):
@@ -63,9 +73,16 @@ class Server:
         self._order = [tool.name for tool in tools]
         self._info = {"name": name, "version": version}
         self.protocol_version: Optional[str] = None
-        self._handlers: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
+        self._legacy: Dict[str, Handler] = {
             "initialize": self._initialize,
             "ping": lambda _params: {},
+            "server/discover": self._discover,
+            "tools/list": self._tools_list,
+            "tools/call": self._tools_call,
+        }
+        # Revision 2026-07-28 removed ping and the handshake.
+        self._modern: Dict[str, Handler] = {
+            "server/discover": self._discover,
             "tools/list": self._tools_list,
             "tools/call": self._tools_call,
         }
@@ -93,14 +110,21 @@ class Server:
         if "id" not in message:
             return None  # notifications (initialized, cancelled, ...) need no reply
         msg_id = message["id"]
-        handler = self._handlers.get(method)
-        if handler is None:
-            return _error(msg_id, METHOD_NOT_FOUND, f"Method not found: {method}")
         params = message.get("params")
         if params is None:
             params = {}
         if not isinstance(params, dict):
             return _error(msg_id, INVALID_PARAMS, "params must be an object")
+
+        meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+        version = meta.get(META_PROTOCOL_VERSION)
+        modern = version is not None and method != "initialize"
+        if modern and version not in MODERN_PROTOCOL_VERSIONS:
+            data = {"supported": list(MODERN_PROTOCOL_VERSIONS), "requested": version}
+            return _error(msg_id, UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version", data)
+        handler = (self._modern if modern else self._legacy).get(method)
+        if handler is None:
+            return _error(msg_id, METHOD_NOT_FOUND, f"Method not found: {method}")
         try:
             result = handler(params)
         except InvalidParams as exc:
@@ -108,7 +132,16 @@ class Server:
         except Exception:
             log.exception("%s failed", method)
             return _error(msg_id, INTERNAL_ERROR, f"Internal error in {method}; details are in the server log")
+        if modern or method == "server/discover":
+            result = self._modern_result(method, result)
         return {"jsonrpc": "2.0", "id": msg_id, "result": result}
+
+    def _modern_result(self, method: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Revision 2026-07-28 wants resultType, the server's identity and cache hints for lists."""
+        decorated = dict(result, resultType="complete", _meta={META_SERVER_INFO: self._info})
+        if method in ("server/discover", "tools/list"):
+            decorated.update(ttlMs=LIST_TTL_MS, cacheScope="private")
+        return decorated
 
     def _initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         requested = params.get("protocolVersion")
@@ -120,6 +153,13 @@ class Server:
             "protocolVersion": self.protocol_version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": self._info,
+            "instructions": INSTRUCTIONS,
+        }
+
+    def _discover(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "supportedVersions": list(MODERN_PROTOCOL_VERSIONS),
+            "capabilities": {"tools": {"listChanged": False}},
             "instructions": INSTRUCTIONS,
         }
 
@@ -138,8 +178,11 @@ class Server:
         return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
-def _error(msg_id: Any, code: int, message: str) -> Dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
+def _error(msg_id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
+    error: Dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": msg_id, "error": error}
 
 
 def _encode(payload: Any) -> bytes:

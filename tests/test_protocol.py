@@ -6,15 +6,25 @@ import support  # noqa: F401  (sets up sys.path)
 from pg_mcp import protocol
 from pg_mcp.protocol import (
     INVALID_PARAMS,
+    LIST_TTL_MS,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
     SUPPORTED_PROTOCOL_VERSIONS,
+    UNSUPPORTED_PROTOCOL_VERSION,
     InvalidParams,
     Server,
     negotiate_protocol_version,
 )
 from pg_mcp.budget import DEFAULT_BUDGET
 from pg_mcp.tools import Tool, ToolError
+
+MODERN = {
+    "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "tests", "version": "0"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+}
 
 
 def make_server() -> Server:
@@ -95,8 +105,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("echo, fail, need", error["message"])
 
     def test_unknown_method_is_method_not_found(self):
-        # Clients of revision 2026-07-28 probe with server/discover and fall back on this error.
-        self.assertEqual(call(self.server, "server/discover")["error"]["code"], METHOD_NOT_FOUND)
+        self.assertEqual(call(self.server, "resources/list")["error"]["code"], METHOD_NOT_FOUND)
 
     def test_notifications_get_no_reply(self):
         line = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode()
@@ -118,6 +127,55 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(reply.isascii())
         self.assertNotIn(b"\n", reply)
         self.assertEqual(json.loads(reply)["result"]["content"][0]["text"], "echo: таблица\nзаказы")
+
+
+class ModernProtocolTests(unittest.TestCase):
+    """Revision 2026-07-28: no handshake, the protocol version rides on every request."""
+
+    def setUp(self):
+        patcher = mock.patch("pg_mcp.tools.fit_to_budget", side_effect=lambda lines, budget: lines)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.server = make_server()
+
+    def modern(self, method, **params):
+        return call(self.server, method, dict(MODERN, **params))
+
+    def test_discover_names_the_modern_revision_and_the_server(self):
+        result = self.modern("server/discover")["result"]
+        self.assertEqual(result["resultType"], "complete")
+        self.assertEqual(result["supportedVersions"], ["2026-07-28"])
+        self.assertEqual(result["capabilities"], {"tools": {"listChanged": False}})
+        self.assertEqual(result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "pg-mcp")
+        self.assertIn("status", result["instructions"])
+        self.assertEqual((result["ttlMs"], result["cacheScope"]), (LIST_TTL_MS, "private"))
+
+    def test_tools_work_without_initialize(self):
+        listing = self.modern("tools/list")["result"]
+        self.assertEqual(listing["resultType"], "complete")
+        self.assertEqual([tool["name"] for tool in listing["tools"]], ["echo", "fail", "need"])
+        self.assertEqual((listing["ttlMs"], listing["cacheScope"]), (LIST_TTL_MS, "private"))
+        called = self.modern("tools/call", name="echo", arguments={"text": "hi"})["result"]
+        self.assertEqual(called["resultType"], "complete")
+        self.assertEqual(called["content"], [{"type": "text", "text": "echo: hi"}])
+        self.assertNotIn("ttlMs", called)
+
+    def test_unsupported_revision_lists_the_supported_ones(self):
+        meta = {"_meta": {"io.modelcontextprotocol/protocolVersion": "1900-01-01"}}
+        error = call(self.server, "tools/list", meta)["error"]
+        self.assertEqual(error["code"], UNSUPPORTED_PROTOCOL_VERSION)
+        self.assertEqual(error["data"], {"supported": ["2026-07-28"], "requested": "1900-01-01"})
+
+    def test_ping_is_gone_in_the_modern_revision(self):
+        self.assertEqual(self.modern("ping")["error"]["code"], METHOD_NOT_FOUND)
+
+    def test_legacy_requests_keep_their_old_shape(self):
+        listing = call(self.server, "tools/list")["result"]
+        self.assertNotIn("resultType", listing)
+        self.assertNotIn("ttlMs", listing)
+
+    def test_discover_without_meta_is_still_answered(self):
+        self.assertEqual(call(self.server, "server/discover")["result"]["supportedVersions"], ["2026-07-28"])
 
 
 class BudgetWiringTests(unittest.TestCase):
