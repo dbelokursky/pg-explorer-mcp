@@ -114,7 +114,9 @@ class TestStructure:
         text = tools["status"].call({})
         assert "database: connected" in text
         assert "read only = on" in text
-        assert "profile: explore (status, list_tables, describe_table, sample_rows, explain_query)" in text
+        assert (
+            "profile: explore (status, list_tables, search_schema, describe_table, sample_rows, explain_query)" in text
+        )
 
     def test_list_tables_shows_tables_views_estimates_and_comments(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["list_tables"], schema=SCHEMA) == [
@@ -184,6 +186,26 @@ class TestStructure:
     ) -> None:
         with pytest.raises(ToolError, match=message):
             tools["describe_table"].call(arguments)
+
+
+class TestSearch:
+    def test_finds_tables_by_name_or_comment_in_either_alphabet(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["search_schema"], text="заказ", schema=SCHEMA) == [
+            f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов",
+            f"{SCHEMA}.заказы | table | ~3 rows | Заказы по-русски",
+        ]
+
+    def test_finds_columns_by_name_or_comment(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["search_schema"], text="TOTAL", schema=SCHEMA) == [
+            f"{SCHEMA}.big_orders.total numeric(12,2)",
+            f"{SCHEMA}.orders.total numeric(12,2)",
+        ]
+        assert lines_of(tools["search_schema"], text="покупател", schema=SCHEMA) == [
+            f"{SCHEMA}.orders.customer_id integer NOT NULL  -- Покупатель"
+        ]
+
+    def test_wildcards_in_the_text_match_literally(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["search_schema"], text="r_d", schema=SCHEMA)[0].startswith("Nothing matches 'r_d'.")
 
 
 class TestData:
@@ -307,6 +329,9 @@ class TestRussian:
             tools["describe_table"].call({"table": "заказ", "schema": SCHEMA})
         with pytest.raises(ToolError, match="Команда DELETE запрещена"):
             analyst["run_select"].call({"query": f"DELETE FROM {SCHEMA}.заказы"})
+        assert lines_of(tools["search_schema"], text="Сумм", schema=SCHEMA) == [
+            f"{SCHEMA}.заказы.сумма numeric(10,2) NOT NULL  -- Сумма в рублях"
+        ]
         assert lines_of(analyst["run_select"], query=f"SELECT sum(сумма) FROM {SCHEMA}.заказы") == [
             "sum",
             "1350.50",
@@ -383,6 +408,13 @@ class TestRoleScript:
         assert f"as {ROLE}" in tools["status"].call({})
         assert lines_of(tools["list_tables"]) == [f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}"]
         assert lines_of(tools["run_select"], query=f"SELECT count(*) FROM {ROLE_SCHEMA}.items")[1] == "2"
+
+    def test_search_shows_only_what_the_role_can_read(self, agent: Database) -> None:
+        tools = by_name(build_tools(agent, str(ROOT)))
+        assert lines_of(tools["search_schema"], text="item") == [
+            f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}"
+        ]
+        assert lines_of(tools["search_schema"], text="orders")[0].startswith("Nothing matches 'orders'.")
 
     @pytest.mark.usefixtures("agent")
     def test_the_role_cannot_write_even_with_read_only_mode_switched_off(self) -> None:

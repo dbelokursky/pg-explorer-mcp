@@ -100,8 +100,9 @@ def _plural_form(language: str, count: int) -> str:
 EN: dict[str, str] = {
     "server.instructions": (
         "Read-only access to one PostgreSQL database. Call status first: it shows the database, the role, "
-        "the tools this profile offers and the limits in force. Then explore with list_tables and describe_table "
-        "before querying data. Reply to the user in the language they write in."
+        "the tools this profile offers and the limits in force. Then learn the structure before querying data: "
+        "list_tables for an overview, search_schema to find tables and columns by name or comment in a large "
+        "database, describe_table for the details. Reply to the user in the language they write in."
     ),
     "number.decimal": ".",
     # Tools as the model sees them in tools/list.
@@ -117,6 +118,12 @@ EN: dict[str, str] = {
         "with estimated row counts and comments. At most {limit} entries; pass schema to narrow the list."
     ),
     "tool.list_tables.schema": 'Only list objects in this schema, e.g. "public". Omit to list all schemas.',
+    "tool.search_schema.title": "Search the schema",
+    "tool.search_schema.description": (
+        "Find tables, views and columns whose name or comment contains a piece of text, in every schema the "
+        "current role can read. In a large database use it instead of paging through list_tables. "
+        "At most {limit} matches."
+    ),
     "tool.describe_table.title": "Describe a table",
     "tool.describe_table.description": (
         "Describe one table or view the current role can read: columns with types, NOT NULL, defaults and "
@@ -149,6 +156,7 @@ EN: dict[str, str] = {
     "argument.columns": 'Comma-separated column names, e.g. "id, total". Omit for all.',
     "argument.limit": "How many rows, 1 to {limit}. Default {default}.",
     "argument.query": "One SQL statement in the PostgreSQL dialect.",
+    "argument.text": 'A piece of a name or comment, e.g. "order" or "customer".',
     "argument.analyze": "Run the query to get real timings. Default false.",
     # status
     "status.version": "pg-mcp {version} on Python {python}, installed at {path}",
@@ -173,6 +181,7 @@ EN: dict[str, str] = {
     "error.schema_search": 'schema must be a non-empty string such as "public"; omit it to search every schema',
     "error.table": 'table must be a non-empty string such as "orders" or "sales.orders"',
     "error.columns": 'columns must be a comma-separated string such as "id, total"',
+    "error.text": 'text must be a non-empty string such as "order"',
     "error.whole_number": "{name} must be a whole number from {low} to {high}",
     "error.out_of_range": "{name} must be from {low} to {high}, got {number}",
     "error.flag": "{name} must be true or false",
@@ -187,6 +196,8 @@ EN: dict[str, str] = {
         "explain_query takes a SELECT, WITH ... SELECT, VALUES or TABLE statement, without EXPLAIN."
     ),
     "list.more": "... more than {limit} entries; pass schema to narrow the list",
+    "search.nothing": "Nothing matches {text!r}. Try a shorter piece of the name, another spelling, or list_tables.",
+    "search.more": "... more than {limit} matches; use a longer piece of text or pass schema",
     "describe.columns": "columns:",
     "describe.constraints": "constraints:",
     "describe.referenced_by": "referenced by:",
@@ -302,8 +313,9 @@ EN: dict[str, str] = {
 RU: dict[str, str] = {
     "server.instructions": (
         "Доступ только на чтение к одной базе PostgreSQL. Сначала вызовите status: он покажет базу, роль, "
-        "инструменты этого профиля и действующие лимиты. Затем изучите структуру через list_tables и "
-        "describe_table и только потом запрашивайте данные. Отвечайте пользователю на том языке, "
+        "инструменты этого профиля и действующие лимиты. Затем, прежде чем запрашивать данные, изучите "
+        "структуру: list_tables — для обзора, search_schema — чтобы найти таблицы и колонки по имени или "
+        "комментарию в большой базе, describe_table — для подробностей. Отвечайте пользователю на том языке, "
         "на котором он пишет."
     ),
     "number.decimal": ",",
@@ -320,6 +332,12 @@ RU: dict[str, str] = {
         "чтобы сузить список, передайте schema."
     ),
     "tool.list_tables.schema": 'Показать объекты только этой схемы, например "public". Без него — все схемы.',
+    "tool.search_schema.title": "Поиск по схеме",
+    "tool.search_schema.description": (
+        "Находит таблицы, представления и колонки, в имени или комментарии которых есть заданный фрагмент, "
+        "во всех схемах, доступных текущей роли для чтения. В большой базе используйте его вместо листания "
+        "list_tables. Не больше {limit} совпадений."
+    ),
     "tool.describe_table.title": "Описание таблицы",
     "tool.describe_table.description": (
         "Описывает одну таблицу или представление, доступные текущей роли для чтения: колонки с типами, "
@@ -354,6 +372,7 @@ RU: dict[str, str] = {
     "argument.columns": 'Имена колонок через запятую, например "id, total". Без него — все колонки.',
     "argument.limit": "Сколько строк, от 1 до {limit}. По умолчанию {default}.",
     "argument.query": "Одна SQL-команда на диалекте PostgreSQL.",
+    "argument.text": 'Фрагмент имени или комментария, например "order" или "заказ".',
     "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время. По умолчанию false.",
     "status.version": "pg-mcp {version} на Python {python}, установлен в {path}",
     "status.target": "адрес: {target}",
@@ -381,6 +400,7 @@ RU: dict[str, str] = {
     ),
     "error.table": 'Параметр table должен быть непустой строкой, например "orders" или "sales.orders"',
     "error.columns": 'Параметр columns должен быть строкой с именами через запятую, например "id, total"',
+    "error.text": 'Параметр text должен быть непустой строкой, например "заказ"',
     "error.whole_number": "Параметр {name} должен быть целым числом от {low} до {high}",
     "error.out_of_range": "Параметр {name} должен быть от {low} до {high}, а передано {number}",
     "error.flag": "Параметр {name} должен быть true или false",
@@ -402,6 +422,10 @@ RU: dict[str, str] = {
         "explain_query принимает команду SELECT, WITH ... SELECT, VALUES или TABLE без EXPLAIN."
     ),
     "list.more": "... записей больше {limit}; чтобы сузить список, передайте schema",
+    "search.nothing": (
+        "Ничего не нашлось по {text!r}. Попробуйте фрагмент покороче, другое написание или list_tables."
+    ),
+    "search.more": "... совпадений больше {limit}; уточните фрагмент или передайте schema",
     "describe.columns": "колонки:",
     "describe.constraints": "ограничения:",
     "describe.referenced_by": "на неё ссылаются:",
