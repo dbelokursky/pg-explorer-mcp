@@ -182,6 +182,12 @@ class Database:
             except pg8000.exceptions.Error as exc:
                 if number == len(attempts):
                     raise DatabaseUnavailable(_explain_connect_failure(exc, settings)) from exc
+            except AttributeError as exc:
+                # pg8000 1.31 reports a missing password for cleartext and MD5 logins,
+                # but SCRAM fails on None.decode() instead.
+                if settings.password is not None:
+                    raise
+                raise DatabaseUnavailable(_password_hint(settings, "the server asks for a password and none is set")) from exc
         try:
             # Guardrails, not the security boundary: the role's privileges are.
             conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
@@ -302,10 +308,7 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
     if isinstance(cause, (socket.timeout, TimeoutError)):
         return f"Connecting to {where} timed out. The host may be behind a firewall or a VPN."
     if code == "28P01" or (not settings.password and "password" in detail.lower()):
-        return (
-            f"Login as {settings.user!r} failed: {detail}. Put the password into {settings.passfile} "
-            "as one line host:port:database:user:password (file mode 600). Never paste it into the chat."
-        )
+        return _password_hint(settings, detail)
     if code == "3D000":
         return f"Database {settings.database!r} does not exist at {where}. Check PGDATABASE."
     if code == "28000":
@@ -313,6 +316,13 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
     if isinstance(cause, ssl.SSLError) or "SSL" in detail:
         return f"TLS with {where} failed: {cause or detail}. Check PGSSLMODE and PGSSLROOTCERT."
     return f"Cannot connect to {settings.describe()}: {detail}"
+
+
+def _password_hint(settings: Settings, detail: str) -> str:
+    return (
+        f"Login as {settings.user!r} failed: {detail}. Put the password into {settings.passfile} "
+        "as one line host:port:database:user:password (file mode 600). Never paste it into the chat."
+    )
 
 
 def _int_setting(env: Mapping[str, str], name: str, default: int) -> int:
