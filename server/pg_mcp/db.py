@@ -14,7 +14,7 @@ import ssl
 import stat
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pg8000.exceptions
 import pg8000.native
@@ -22,6 +22,7 @@ import pg8000.native
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
+CURSOR_NAME = "pg_mcp_rows"
 
 
 class DatabaseUnavailable(Exception):
@@ -100,6 +101,38 @@ class Database:
                 self.close()
                 if attempt == 2:
                     raise DatabaseUnavailable(f"Lost the connection to {self.describe_target()}: {exc}") from exc
+        raise AssertionError("unreachable")
+
+    def read_only(self, sql: str, max_rows: int, cursor: bool) -> Tuple[List[str], List[Sequence[Any]], bool]:
+        """Run one statement inside a READ ONLY transaction that is always rolled back.
+
+        The text goes to PostgreSQL as is, through the extended protocol, so it can
+        hold one statement only, and pg8000 never parses it for :name parameters.
+        With cursor=True the rows come through a cursor, never more than max_rows + 1,
+        to learn whether more exist. Returns column names, rows and that flag.
+        """
+        for attempt in (1, 2):
+            conn = self._connection()
+            try:
+                conn.execute_simple("BEGIN TRANSACTION READ ONLY")
+                try:
+                    if cursor:
+                        conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
+                        context = conn.execute_simple(f"FETCH FORWARD {int(max_rows) + 1} FROM {CURSOR_NAME}")
+                    else:
+                        context = conn.execute_unnamed(sql)
+                finally:
+                    conn.execute_simple("ROLLBACK")
+            except pg8000.exceptions.DatabaseError as exc:
+                raise QueryFailed(_server_message(exc)) from exc
+            except (pg8000.exceptions.InterfaceError, OSError) as exc:
+                self.close()
+                if attempt == 2:
+                    raise DatabaseUnavailable(f"Lost the connection to {self.describe_target()}: {exc}") from exc
+                continue
+            columns = [str(column["name"]) for column in context.columns or []]
+            rows = list(context.rows or [])
+            return columns, rows[:max_rows], len(rows) > max_rows
         raise AssertionError("unreachable")
 
     def server_info(self) -> Dict[str, str]:

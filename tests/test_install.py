@@ -64,6 +64,9 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual(entry["env"]["PGHOST"], "db.example")
         self.assertNotIn("PGPASSWORD", entry["env"])
 
+    def test_profile_option_goes_into_the_server_env(self):
+        self.assertEqual(install.server_entry("analyst")["env"]["PG_MCP_PROFILE"], "analyst")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,7 +25,10 @@ class StdioSessionTests(unittest.TestCase):
 
         initialize, tools, status, tables = (json.loads(line) for line in lines)
         self.assertEqual(initialize["result"]["protocolVersion"], "2025-06-18", stderr)
-        self.assertEqual([tool["name"] for tool in tools["result"]["tools"]], ["status", "list_tables", "describe_table"])
+        self.assertEqual(
+            [tool["name"] for tool in tools["result"]["tools"]],
+            ["status", "list_tables", "describe_table", "sample_rows", "explain_query"],
+        )
 
         status_text = status["result"]["content"][0]["text"]
         self.assertFalse(status["result"]["isError"])

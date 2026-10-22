@@ -13,7 +13,7 @@ import sys
 from .budget import budget_from_env
 from .db import Database
 from .protocol import Server
-from .tools import build_tools
+from .tools import build_tools, profile_from_env
 
 INSTALL_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,7 +25,8 @@ def main() -> int:
     logging.basicConfig(stream=sys.stderr, level=level, format="pg-mcp %(levelname)s %(message)s")
 
     db = Database()
-    server = Server(build_tools(db, INSTALL_DIR, budget_from_env(os.environ)))
+    profile, warning = profile_from_env(os.environ)
+    server = Server(build_tools(db, INSTALL_DIR, budget_from_env(os.environ), profile, warning))
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     try:
         for line in iter(stdin.readline, b""):
