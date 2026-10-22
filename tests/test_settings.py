@@ -1,62 +1,118 @@
+from __future__ import annotations
+
 import os
+import socket
+import ssl
 import sys
-import tempfile
-import unittest
-from unittest import mock
+from pathlib import Path
 
-import support  # noqa: F401  (sets up sys.path)
-from pg_mcp.db import Database, DatabaseUnavailable, Settings, read_pgpass
+import pg8000.exceptions
+import pytest
+
+from pg_mcp import db
+from pg_mcp.db import Database, DatabaseUnavailableError, Settings, read_pgpass
 
 
-class SettingsTests(unittest.TestCase):
-    def test_libpq_defaults(self):
-        settings = Settings.from_env({"PGUSER": "app", "PGPASSFILE": os.devnull})
-        self.assertEqual((settings.host, settings.port, settings.database), ("localhost", 5432, "app"))
-        self.assertEqual(settings.sslmode, "prefer")
+def settings(**overrides: str) -> Settings:
+    return Settings.from_env({"PGUSER": "app", "PGPASSFILE": os.devnull, **overrides})
 
-    def test_bad_value_is_reported_through_the_database_not_at_startup(self):
-        db = Database({"PGPORT": "five", "PGUSER": "app"})
-        self.assertIn("PGPORT='five' is not a number", db.describe_target())
 
-    def test_scram_login_without_a_password_gets_the_password_file_hint(self):
+class TestSettings:
+    def test_libpq_defaults(self) -> None:
+        s = settings()
+        assert (s.host, s.port, s.database, s.sslmode) == ("localhost", 5432, "app", "prefer")
+
+    def test_bad_value_is_reported_through_the_database_not_at_startup(self) -> None:
+        assert "PGPORT='five' is not a number" in Database({"PGPORT": "five", "PGUSER": "app"}).describe_target()
+
+    def test_bad_sslmode_is_explained(self) -> None:
+        assert "PGSSLMODE='sometimes'" in Database({"PGSSLMODE": "sometimes"}).describe_target()
+
+    def test_settings_problem_reaches_the_tools_as_a_hint(self) -> None:
+        with pytest.raises(DatabaseUnavailableError, match="Connection settings are invalid"):
+            Database({"PGPORT": "five"}).server_info()
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [("disable", [False]), ("allow", [False, True]), ("prefer", [None]), ("require", [True])],
+    )
+    def test_sslmode_maps_to_pg8000_attempts(self, mode: str, expected: list[object]) -> None:
+        assert db._ssl_attempts(settings(PGSSLMODE=mode)) == expected
+
+    @pytest.mark.parametrize(("mode", "check_hostname"), [("verify-ca", False), ("verify-full", True)])
+    def test_verifying_modes_check_certificates(self, mode: str, check_hostname: bool) -> None:  # noqa: FBT001
+        (context,) = db._ssl_attempts(settings(PGSSLMODE=mode))
+        assert isinstance(context, ssl.SSLContext)
+        assert context.verify_mode == ssl.CERT_REQUIRED
+        assert context.check_hostname is check_hostname
+
+
+class TestPgpass:
+    def write(self, tmp_path: Path, text: str, mode: int = 0o600) -> Path:
+        path = tmp_path / ".pgpass"
+        path.write_text(text, encoding="utf-8")
+        path.chmod(mode)
+        return path
+
+    def test_first_matching_line_wins_and_star_matches_anything(self, tmp_path: Path) -> None:
+        path = str(self.write(tmp_path, "# comment\n\ndb.local:5432:sales:app:first\n*:*:*:app:second\n"))
+        assert read_pgpass(path, "db.local", 5432, "sales", "app") == "first"
+        assert read_pgpass(path, "other", 6432, "hr", "app") == "second"
+        assert read_pgpass(path, "db.local", 5432, "sales", "someone") is None
+
+    def test_escaped_colon_and_backslash(self, tmp_path: Path) -> None:
+        path = str(self.write(tmp_path, r"db:5432:sales:app:pa\:ss\\word" + "\n"))
+        assert read_pgpass(path, "db", 5432, "sales", "app") == "pa:ss\\word"
+
+    def test_socket_directory_matches_localhost(self, tmp_path: Path) -> None:
+        path = str(self.write(tmp_path, "localhost:5432:sales:app:secret\n"))
+        assert read_pgpass(path, "/tmp", 5432, "sales", "app") == "secret"  # noqa: S108
+
+    def test_missing_file_gives_no_password(self, tmp_path: Path) -> None:
+        assert read_pgpass(str(tmp_path / "absent"), "db", 5432, "sales", "app") is None
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="file modes are a Unix rule")
+    def test_file_readable_by_others_is_ignored_like_libpq_does(self, tmp_path: Path) -> None:
+        path = str(self.write(tmp_path, "*:*:*:*:secret\n", mode=0o644))
+        assert read_pgpass(path, "db", 5432, "sales", "app") is None
+
+    def test_password_file_location_follows_libpq(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert db.pgpass_path({"PGPASSFILE": "/etc/custom"}) == "/etc/custom"
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert db.pgpass_path({"APPDATA": "C:/Users/a/AppData/Roaming"}).endswith("pgpass.conf")
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert db.pgpass_path({}).endswith(".pgpass")
+
+
+def failure(message: object, cause: BaseException | None = None) -> pg8000.exceptions.Error:
+    error = pg8000.exceptions.InterfaceError(message)
+    error.__cause__ = cause
+    return error
+
+
+@pytest.mark.parametrize(
+    ("error", "hint"),
+    [
+        (failure("x", ConnectionRefusedError()), "Nothing accepts connections at localhost:5432"),
+        (failure("x", socket.gaierror()), "cannot be resolved"),
+        (failure("x", TimeoutError()), "timed out"),
+        (failure({"C": "28P01", "M": "password authentication failed"}), "Put the password into"),
+        (failure({"C": "3D000", "M": "database does not exist"}), "Database 'app' does not exist"),
+        (failure({"C": "28000", "M": "no pg_hba.conf entry"}), "Check the role and pg_hba.conf"),
+        (failure("Server refuses SSL"), "Check PGSSLMODE"),
+        (failure({"C": "53300", "M": "too many connections"}), "Cannot connect to app@localhost:5432/app"),
+    ],
+)
+def test_connection_failures_become_hints(error: pg8000.exceptions.Error, hint: str) -> None:
+    assert hint in db._explain_connect_failure(error, settings(PGPASSWORD="x"))
+
+
+def test_scram_login_without_a_password_gets_the_password_file_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    def scram_without_password(**kwargs: object) -> None:  # noqa: ARG001
         # pg8000 1.31 fails on None.decode() when a SCRAM server asks for a password that is not set.
-        db = Database({"PGUSER": "app", "PGPASSFILE": os.devnull})
-        with mock.patch("pg8000.native.Connection", side_effect=AttributeError("'NoneType' object has no attribute 'decode'")):
-            with self.assertRaises(DatabaseUnavailable) as caught:
-                db.server_info()
-        self.assertIn("Put the password into", str(caught.exception))
-        self.assertIn("none is set", str(caught.exception))
+        raise AttributeError("'NoneType' object has no attribute 'decode'")
 
-
-class PgpassTests(unittest.TestCase):
-    def write_pgpass(self, text: str) -> str:
-        handle = tempfile.NamedTemporaryFile("w", suffix=".pgpass", delete=False, encoding="utf-8")
-        with handle:
-            handle.write(text)
-        os.chmod(handle.name, 0o600)
-        self.addCleanup(os.unlink, handle.name)
-        return handle.name
-
-    def test_first_matching_line_wins_and_star_matches_anything(self):
-        path = self.write_pgpass("# comment\ndb.local:5432:sales:app:first\n*:*:*:app:second\n")
-        self.assertEqual(read_pgpass(path, "db.local", 5432, "sales", "app"), "first")
-        self.assertEqual(read_pgpass(path, "other", 6432, "hr", "app"), "second")
-        self.assertIsNone(read_pgpass(path, "db.local", 5432, "sales", "someone"))
-
-    def test_escaped_colon_and_backslash(self):
-        path = self.write_pgpass(r"db:5432:sales:app:pa\:ss\\word" + "\n")
-        self.assertEqual(read_pgpass(path, "db", 5432, "sales", "app"), "pa:ss\\word")
-
-    def test_socket_directory_matches_localhost(self):
-        path = self.write_pgpass("localhost:5432:sales:app:secret\n")
-        self.assertEqual(read_pgpass(path, "/tmp", 5432, "sales", "app"), "secret")
-
-    @unittest.skipIf(sys.platform == "win32", "file modes are a Unix rule")
-    def test_file_readable_by_others_is_ignored_like_libpq_does(self):
-        path = self.write_pgpass("*:*:*:*:secret\n")
-        os.chmod(path, 0o644)
-        self.assertIsNone(read_pgpass(path, "db", 5432, "sales", "app"))
-
-
-if __name__ == "__main__":
-    unittest.main()
+    monkeypatch.setattr("pg8000.native.Connection", scram_without_password)
+    with pytest.raises(DatabaseUnavailableError, match="none is set") as caught:
+        Database({"PGUSER": "app", "PGPASSFILE": os.devnull}).server_info()
+    assert "Put the password into" in str(caught.value)

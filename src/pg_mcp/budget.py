@@ -4,10 +4,11 @@ Local models run with small context windows, and a long answer can end a
 GigaCode session outright ("API Error: terminated"). Every tool answer passes
 through fit_to_budget, so no tool can flood the context, whatever it returns.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import List, Mapping
+from collections.abc import Mapping
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ MIN_BUDGET = 500
 VALUE_LIMIT = 200  # characters per comment, default or definition inside an answer
 
 
-def fit_to_budget(lines: List[str], budget: int) -> List[str]:
+def fit_to_budget(lines: list[str], budget: int) -> list[str]:
     """Trim a tool's answer to at most `budget` characters, newlines included.
 
     `lines` is the complete answer, one entry per line, the most important
@@ -33,7 +34,7 @@ def fit_to_budget(lines: List[str], budget: int) -> List[str]:
     total = len(lines)
     # Reserve room for the longest notice this answer can get, plus its newline.
     reserved = len(_notice(budget, total, total)) + 1
-    kept: List[str] = []
+    kept: list[str] = []
     used = 0
     for line in lines:
         cost = len(line) + (1 if kept else 0)
@@ -44,7 +45,7 @@ def fit_to_budget(lines: List[str], budget: int) -> List[str]:
     if not kept and budget - reserved > 1:
         # Even the first line is too long: keep its beginning rather than nothing.
         kept = [lines[0][: budget - reserved - 1] + "…"]
-    return kept + [_notice(budget, len(kept), total)]
+    return [*kept, _notice(budget, len(kept), total)]
 
 
 def _notice(budget: int, shown: int, total: int) -> str:

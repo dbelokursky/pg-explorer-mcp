@@ -6,11 +6,12 @@ Revision 2026-07-28 has no handshake: every request names its protocol
 version in params._meta, and server/discover tells a client what this server
 speaks. Each request picks its era by itself, so both kinds of clients work.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable
 
 from . import __version__
 from .tools import Tool, ToolError
@@ -39,10 +40,10 @@ INSTRUCTIONS = (
     "Then explore with list_tables and describe_table before querying data."
 )
 
-Handler = Callable[[Dict[str, Any]], Dict[str, Any]]
+Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
 
-class InvalidParams(Exception):
+class InvalidParamsError(Exception):
     """The request's params are unusable; answered with JSON-RPC error -32602."""
 
 
@@ -68,12 +69,12 @@ def negotiate_protocol_version(requested: Any) -> str:
 class Server:
     """Turns one incoming JSON-RPC line into at most one reply line."""
 
-    def __init__(self, tools: List[Tool], name: str = "pg-mcp", version: str = __version__) -> None:
+    def __init__(self, tools: list[Tool], name: str = "pg-mcp", version: str = __version__) -> None:
         self._tools = {tool.name: tool for tool in tools}
         self._order = [tool.name for tool in tools]
         self._info = {"name": name, "version": version}
-        self.protocol_version: Optional[str] = None
-        self._legacy: Dict[str, Handler] = {
+        self.protocol_version: str | None = None
+        self._legacy: dict[str, Handler] = {
             "initialize": self._initialize,
             "ping": lambda _params: {},
             "server/discover": self._discover,
@@ -81,13 +82,13 @@ class Server:
             "tools/call": self._tools_call,
         }
         # Revision 2026-07-28 removed ping and the handshake.
-        self._modern: Dict[str, Handler] = {
+        self._modern: dict[str, Handler] = {
             "server/discover": self._discover,
             "tools/list": self._tools_list,
             "tools/call": self._tools_call,
         }
 
-    def handle_line(self, line: bytes) -> Optional[bytes]:
+    def handle_line(self, line: bytes) -> bytes | None:
         try:
             message = json.loads(line)
         except ValueError:
@@ -99,7 +100,7 @@ class Server:
         reply = self.handle(message)
         return None if reply is None else _encode(reply)
 
-    def handle(self, message: Any) -> Optional[Dict[str, Any]]:
+    def handle(self, message: Any) -> dict[str, Any] | None:
         if not isinstance(message, dict):
             return _error(None, INVALID_REQUEST, "Invalid request: expected a JSON object")
         method = message.get("method")
@@ -116,7 +117,8 @@ class Server:
         if not isinstance(params, dict):
             return _error(msg_id, INVALID_PARAMS, "params must be an object")
 
-        meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+        raw_meta = params.get("_meta")
+        meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
         version = meta.get(META_PROTOCOL_VERSION)
         modern = version is not None and method != "initialize"
         if modern and version not in MODERN_PROTOCOL_VERSIONS:
@@ -127,7 +129,7 @@ class Server:
             return _error(msg_id, METHOD_NOT_FOUND, f"Method not found: {method}")
         try:
             result = handler(params)
-        except InvalidParams as exc:
+        except InvalidParamsError as exc:
             return _error(msg_id, INVALID_PARAMS, str(exc))
         except Exception:
             log.exception("%s failed", method)
@@ -136,19 +138,24 @@ class Server:
             result = self._modern_result(method, result)
         return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
-    def _modern_result(self, method: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    def _modern_result(self, method: str, result: dict[str, Any]) -> dict[str, Any]:
         """Revision 2026-07-28 wants resultType, the server's identity and cache hints for lists."""
         decorated = dict(result, resultType="complete", _meta={META_SERVER_INFO: self._info})
         if method in ("server/discover", "tools/list"):
             decorated.update(ttlMs=LIST_TTL_MS, cacheScope="private")
         return decorated
 
-    def _initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         requested = params.get("protocolVersion")
         self.protocol_version = negotiate_protocol_version(requested)
         client = params.get("clientInfo")
         client_name = client.get("name") if isinstance(client, dict) else None
-        log.info("initialize from %s: asked for %s, answering %s", client_name or "unknown client", requested, self.protocol_version)
+        log.info(
+            "initialize from %s: asked for %s, answering %s",
+            client_name or "unknown client",
+            requested,
+            self.protocol_version,
+        )
         return {
             "protocolVersion": self.protocol_version,
             "capabilities": {"tools": {"listChanged": False}},
@@ -156,21 +163,21 @@ class Server:
             "instructions": INSTRUCTIONS,
         }
 
-    def _discover(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _discover(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {
             "supportedVersions": list(MODERN_PROTOCOL_VERSIONS),
             "capabilities": {"tools": {"listChanged": False}},
             "instructions": INSTRUCTIONS,
         }
 
-    def _tools_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _tools_list(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {"tools": [self._tools[name].describe() for name in self._order]}
 
-    def _tools_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
         name = params.get("name")
         tool = self._tools.get(name) if isinstance(name, str) else None
         if tool is None:
-            raise InvalidParams(f"Unknown tool: {name!r}. Available tools: {', '.join(self._order)}")
+            raise InvalidParamsError(f"Unknown tool: {name!r}. Available tools: {', '.join(self._order)}")
         try:
             text, is_error = tool.call(params.get("arguments")), False
         except ToolError as exc:
@@ -178,8 +185,8 @@ class Server:
         return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
-def _error(msg_id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
-    error: Dict[str, Any] = {"code": code, "message": message}
+def _error(msg_id: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         error["data"] = data
     return {"jsonrpc": "2.0", "id": msg_id, "error": error}

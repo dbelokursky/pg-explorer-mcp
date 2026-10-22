@@ -1,0 +1,111 @@
+[build-system]
+requires = ["uv_build>=0.12,<0.14"]
+build-backend = "uv_build"
+
+[project]
+name = "pg-mcp"
+version = "0.2.0"
+description = "Read-only PostgreSQL MCP server for GigaCode CLI and other agents, with no runtime dependencies"
+readme = "README.md"
+# 3.9 stays because macOS Command Line Tools ship it; see docs/adr/0001-python-stdlib-only.md.
+requires-python = ">=3.9"
+authors = [{ name = "Dmitry Belokursky" }]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+# None at run time: pg8000 and its pure-Python dependencies are vendored in
+# src/pg_mcp/_vendor, so a plain checkout runs without pip or network access.
+dependencies = []
+
+[project.scripts]
+pg-mcp = "pg_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+    # mypy 2 cannot check code for Python 3.9 any more; move on together with requires-python.
+    "mypy>=1.19,<2",
+    "pytest>=8.4",
+    "pytest-cov>=7.0",
+    "ruff>=0.17",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+extend-exclude = ["src/pg_mcp/_vendor"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "N",       # pep8-naming
+    "UP",      # pyupgrade
+    "B",       # bugbear
+    "S",       # bandit (security)
+    "SIM",     # simplify
+    "C4",      # comprehensions
+    "PIE", "RET", "ARG", "FBT", "PERF", "ERA", "T20", "PTH",
+    "PT",      # pytest style
+    "PL",      # pylint
+    "RUF",     # ruff-specific
+]
+ignore = [
+    "PLR0911", "PLR0912", "PLR0913",  # long protocol and argument checks read better in one place
+    "PLR2004",                       # literal limits are named where they matter
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, start subprocesses, build fixture SQL from constants and speak Russian on purpose.
+"tests/**" = ["S101", "S603", "S607", "S608", "PLR0915", "FBT003", "RUF001"]
+"install.py" = ["T201", "S603"]
+"scripts/**" = ["T201"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_unreachable = true
+files = ["src", "tests", "run.py", "install.py", "scripts"]
+exclude = ["src/pg_mcp/_vendor/"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# Vendored, untyped third-party code is checked by its own projects, not here.
+module = ["pg8000", "pg8000.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.pytest.ini_options]
+minversion = "8.4"
+testpaths = ["tests"]
+pythonpath = [".", "scripts"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+markers = ["integration: needs a real PostgreSQL (run with PG_MCP_IT=1 and the usual PG* variables)"]
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+source = ["pg_mcp"]
+omit = ["*/_vendor/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 95
+exclude_also = [
+    "if __name__ == .__main__.:",
+    'raise AssertionError\("unreachable"\)',
+]

@@ -5,16 +5,20 @@ file that psql uses, so a user can check access with psql and the server picks
 up the same configuration. Failures are raised with a message that tells the
 model, and through it the user, what to fix.
 """
+
 from __future__ import annotations
 
+import contextlib
 import getpass
 import os
 import socket
 import ssl
 import stat
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Any
 
 import pg8000.exceptions
 import pg8000.native
@@ -25,11 +29,11 @@ SOCKET_TIMEOUT_S = 30
 CURSOR_NAME = "pg_mcp_rows"
 
 
-class DatabaseUnavailable(Exception):
+class DatabaseUnavailableError(Exception):
     """The server cannot reach or log in to the database."""
 
 
-class QueryFailed(Exception):
+class QueryFailedError(Exception):
     """PostgreSQL rejected a statement."""
 
 
@@ -39,14 +43,14 @@ class Settings:
     port: int
     database: str
     user: str
-    password: Optional[str]
+    password: str | None
     sslmode: str
-    sslrootcert: Optional[str]
+    sslrootcert: str | None
     statement_timeout_ms: int
     passfile: str
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str]) -> "Settings":
+    def from_env(cls, env: Mapping[str, str]) -> Settings:
         """Read libpq-style settings; ValueError explains a bad value."""
         user = env.get("PGUSER") or getpass.getuser()
         host = env.get("PGHOST") or "localhost"
@@ -75,10 +79,10 @@ class Settings:
 class Database:
     """One lazily opened, read-only session that reconnects once if it drops."""
 
-    def __init__(self, env: Optional[Mapping[str, str]] = None) -> None:
-        self._conn: Optional[pg8000.native.Connection] = None
-        self.settings: Optional[Settings] = None
-        self._config_error: Optional[str] = None
+    def __init__(self, env: Mapping[str, str] | None = None) -> None:
+        self._conn: pg8000.native.Connection | None = None
+        self.settings: Settings | None = None
+        self._config_error: str | None = None
         try:
             self.settings = Settings.from_env(os.environ if env is None else env)
         except ValueError as exc:
@@ -89,21 +93,21 @@ class Database:
             return f"not configured: {self._config_error}"
         return self.settings.describe()
 
-    def query(self, sql: str, **params: Any) -> List[Sequence[Any]]:
+    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
         """Run exactly one statement; :name placeholders take values from params."""
         for attempt in (1, 2):
             conn = self._connection()
             try:
                 return _run_one_statement(conn, sql, params)
             except pg8000.exceptions.DatabaseError as exc:
-                raise QueryFailed(_server_message(exc)) from exc
+                raise QueryFailedError(_server_message(exc)) from exc
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
-                    raise DatabaseUnavailable(f"Lost the connection to {self.describe_target()}: {exc}") from exc
+                    raise DatabaseUnavailableError(f"Lost the connection to {self.describe_target()}: {exc}") from exc
         raise AssertionError("unreachable")
 
-    def read_only(self, sql: str, max_rows: int, cursor: bool) -> Tuple[List[str], List[Sequence[Any]], bool]:
+    def read_only(self, sql: str, max_rows: int, *, cursor: bool) -> tuple[list[str], list[Sequence[Any]], bool]:
         """Run one statement inside a READ ONLY transaction that is always rolled back.
 
         The text goes to PostgreSQL as is, through the extended protocol, so it can
@@ -124,18 +128,18 @@ class Database:
                 finally:
                     conn.execute_simple("ROLLBACK")
             except pg8000.exceptions.DatabaseError as exc:
-                raise QueryFailed(_server_message(exc)) from exc
+                raise QueryFailedError(_server_message(exc)) from exc
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
-                    raise DatabaseUnavailable(f"Lost the connection to {self.describe_target()}: {exc}") from exc
+                    raise DatabaseUnavailableError(f"Lost the connection to {self.describe_target()}: {exc}") from exc
                 continue
             columns = [str(column["name"]) for column in context.columns or []]
             rows = list(context.rows or [])
             return columns, rows[:max_rows], len(rows) > max_rows
         raise AssertionError("unreachable")
 
-    def server_info(self) -> Dict[str, str]:
+    def server_info(self) -> dict[str, str]:
         row = self.query(
             "SELECT current_database(), current_user, current_setting('server_version'), "
             "current_setting('transaction_read_only'), current_setting('statement_timeout')"
@@ -145,10 +149,8 @@ class Database:
 
     def close(self) -> None:
         if self._conn is not None:
-            try:
+            with contextlib.suppress(Exception):  # the session is gone either way
                 self._conn.close()
-            except Exception:
-                pass  # the session is gone either way
             self._conn = None
 
     def _connection(self) -> pg8000.native.Connection:
@@ -159,7 +161,7 @@ class Database:
     def _connect(self) -> pg8000.native.Connection:
         settings = self.settings
         if settings is None:
-            raise DatabaseUnavailable(
+            raise DatabaseUnavailableError(
                 f"Connection settings are invalid: {self._config_error}. "
                 "Fix the env block of the pg server entry in the agent settings."
             )
@@ -173,7 +175,7 @@ class Database:
                     host=None if socket_dir else settings.host,
                     port=settings.port,
                     database=settings.database,
-                    unix_sock=os.path.join(socket_dir, f".s.PGSQL.{settings.port}") if socket_dir else None,
+                    unix_sock=str(Path(socket_dir) / f".s.PGSQL.{settings.port}") if socket_dir else None,
                     ssl_context=ssl_context,
                     timeout=SOCKET_TIMEOUT_S,
                     application_name="pg-mcp",
@@ -181,49 +183,52 @@ class Database:
                 break
             except pg8000.exceptions.Error as exc:
                 if number == len(attempts):
-                    raise DatabaseUnavailable(_explain_connect_failure(exc, settings)) from exc
+                    raise DatabaseUnavailableError(_explain_connect_failure(exc, settings)) from exc
             except AttributeError as exc:
                 # pg8000 1.31 reports a missing password for cleartext and MD5 logins,
                 # but SCRAM fails on None.decode() instead.
                 if settings.password is not None:
                     raise
-                raise DatabaseUnavailable(_password_hint(settings, "the server asks for a password and none is set")) from exc
+                raise DatabaseUnavailableError(
+                    _password_hint(settings, "the server asks for a password and none is set")
+                ) from exc
         try:
             # Guardrails, not the security boundary: the role's privileges are.
             conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
             conn.run(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
         except pg8000.exceptions.Error as exc:
             conn.close()
-            raise DatabaseUnavailable(f"Connected, but could not set up a read-only session: {exc}") from exc
+            raise DatabaseUnavailableError(f"Connected, but could not set up a read-only session: {exc}") from exc
         return conn
 
 
-def _run_one_statement(conn: pg8000.native.Connection, sql: str, params: Dict[str, Any]) -> List[Sequence[Any]]:
+def _run_one_statement(conn: pg8000.native.Connection, sql: str, params: dict[str, Any]) -> list[Sequence[Any]]:
     # Always the extended query protocol, where PostgreSQL rejects a string with
     # several statements. pg8000's run() without parameters uses the simple
     # protocol instead, which executes "SELECT 1; COMMIT; DROP ..." in full.
     statement = conn.prepare(sql)
     try:
-        return statement.run(**params)
+        rows: list[Sequence[Any]] = statement.run(**params)
     finally:
         statement.close()
+    return rows
 
 
 def pgpass_path(env: Mapping[str, str]) -> str:
     if env.get("PGPASSFILE"):
         return env["PGPASSFILE"]
     if sys.platform == "win32":
-        return os.path.join(env.get("APPDATA") or os.path.expanduser("~"), "postgresql", "pgpass.conf")
-    return os.path.join(os.path.expanduser("~"), ".pgpass")
+        return str(Path(env.get("APPDATA") or Path.home()) / "postgresql" / "pgpass.conf")
+    return str(Path.home() / ".pgpass")
 
 
-def read_pgpass(path: str, host: str, port: int, database: str, user: str) -> Optional[str]:
+def read_pgpass(path: str, host: str, port: int, database: str, user: str) -> str | None:
     """Look the password up the way libpq does: the first matching line wins, * matches anything."""
+    passfile = Path(path)
     try:
-        if sys.platform != "win32" and os.stat(path).st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        if sys.platform != "win32" and passfile.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
             return None  # like libpq, ignore a password file that others can read
-        with open(path, encoding="utf-8") as handle:
-            lines = handle.read().splitlines()
+        lines = passfile.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     # libpq matches Unix-socket connections against "localhost".
@@ -237,10 +242,10 @@ def read_pgpass(path: str, host: str, port: int, database: str, user: str) -> Op
     return None
 
 
-def _split_pgpass_line(line: str) -> List[str]:
+def _split_pgpass_line(line: str) -> list[str]:
     # Fields are separated by ":"; "\:" and "\\" stand for a literal colon and backslash.
-    fields: List[str] = []
-    current: List[str] = []
+    fields: list[str] = []
+    current: list[str] = []
     escaped = False
     for char in line:
         if escaped:
@@ -257,7 +262,7 @@ def _split_pgpass_line(line: str) -> List[str]:
     return fields
 
 
-def _ssl_attempts(settings: Settings) -> List[Any]:
+def _ssl_attempts(settings: Settings) -> list[Any]:
     """ssl_context values for pg8000, in the order to try them.
 
     pg8000 reads False as plain TCP, None as TLS when the server offers it
@@ -277,7 +282,7 @@ def _ssl_attempts(settings: Settings) -> List[Any]:
     return [context]
 
 
-def _error_fields(exc: Exception) -> Dict[str, str]:
+def _error_fields(exc: Exception) -> dict[str, str]:
     # pg8000 passes the server's error message fields (C = SQLSTATE, M = text, H = hint) as a dict.
     return exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {}
 
@@ -312,7 +317,10 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
     if code == "3D000":
         return f"Database {settings.database!r} does not exist at {where}. Check PGDATABASE."
     if code == "28000":
-        return f"The server refused the login for {settings.user!r}: {detail}. Check the role and pg_hba.conf with the DBA."
+        return (
+            f"The server refused the login for {settings.user!r}: {detail}. "
+            "Check the role and pg_hba.conf with the DBA."
+        )
     if isinstance(cause, ssl.SSLError) or "SSL" in detail:
         return f"TLS with {where} failed: {cause or detail}. Check PGSSLMODE and PGSSLROOTCERT."
     return f"Cannot connect to {settings.describe()}: {detail}"
