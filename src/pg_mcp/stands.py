@@ -52,6 +52,11 @@ class Target:
         """How answers name it: stand / database / schema."""
         return f"{self.stand} / {self.database} / {self.schema}"
 
+    @property
+    def address(self) -> str:
+        """host:port, shared by the logins of one server."""
+        return f"{self.options['host']}:{self.options.get('port', '5432')}"
+
     def env(self, base: Mapping[str, str]) -> dict[str, str]:
         """PG* variables for Database: the section's settings over what the server itself got."""
         # TLS settings and timeouts of the entry apply to every stand unless a section says otherwise;

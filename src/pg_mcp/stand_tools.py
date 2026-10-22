@@ -49,6 +49,7 @@ STAND_PROFILES: dict[str, tuple[str, ...]] = {
 CATALOG_ATTEMPTS = 2  # logins tried per database for the catalog before giving up on it
 
 Arguments = Mapping[str, Any]
+Down = dict[str, str]  # host:port -> why it did not answer, remembered for the rest of one call
 
 
 def build_stand_tools(
@@ -212,23 +213,24 @@ def stand_status(
         return lines
     chosen = registry.stand(stand)
     lines.extend(list_schemas(pool, chosen))
-    # The logins in the order list_schemas shows them; a broken one is reported, and the next one tried.
+    # The logins in the order list_schemas shows them: a login the server turned down is
+    # reported and the next one tried; a host that did not answer ends the check.
     logins = [target for _, targets in by_database(registry.of_stand(chosen)) for target in targets]
     for target in logins[:CATALOG_ATTEMPTS]:
-        connected, checked = _check(pool, target, budget)
+        failure, checked = _check(pool, target, budget)
         lines.extend(checked)
-        if connected:
+        if failure is None or failure.host_down:
             break
     return lines
 
 
-def _check(pool: Pool, target: Target, budget: int) -> tuple[bool, list[str]]:
-    """Whether this login connects, and the status lines that say so."""
+def _check(pool: Pool, target: Target, budget: int) -> tuple[DatabaseUnavailableError | None, list[str]]:
+    """The status lines of connecting with this login, and the failure if it did not connect."""
     lines = [t("status.checked_with", label=target.label)]
     try:
         info = pool.database(target).server_info()
     except DatabaseUnavailableError as exc:
-        return False, [*lines, t("status.unavailable", reason=exc)]
+        return exc, [*lines, t("status.unavailable", reason=exc)]
     lines.append(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
     lines.append(
         t(
@@ -239,7 +241,7 @@ def _check(pool: Pool, target: Target, budget: int) -> tuple[bool, list[str]]:
             budget=budget,
         )
     )
-    return True, lines
+    return None, lines
 
 
 def list_schemas(pool: Pool, stand: Any) -> list[str]:
@@ -321,32 +323,52 @@ def _databases(pool: Pool, stand: str, database: Any) -> list[tuple[str, list[Ta
     return groups
 
 
-def _catalog(pool: Pool, targets: Sequence[Target], run: Callable[[Database, list[str]], list[str]]) -> list[str]:
-    """Run a catalog query through the first login of the database that connects."""
+def _catalog(
+    pool: Pool, targets: Sequence[Target], run: Callable[[Database, list[str]], list[str]], down: Down
+) -> list[str]:
+    """Run a catalog query through the first login of the database that connects.
+
+    A login the server turned down is followed by the next one. A host that did not
+    answer goes into down for the rest of the call, and nothing else on it is tried: a
+    stand behind a dropped VPN costs one timeout, not one per login and database.
+    """
     schemas = [target.schema for target in targets]
-    attempts = targets[:CATALOG_ATTEMPTS]
+    attempts = [target for target in targets if target.address not in down][:CATALOG_ATTEMPTS]
+    if not attempts:
+        raise DatabaseUnavailableError(down[targets[0].address], host_down=True)
     for target in attempts[:-1]:
-        answer = _attempt(pool, target, schemas, run)
+        answer = _attempt(pool, target, schemas, run, down, last=False)
         if answer is not None:
             return answer
-    return run(pool.database(attempts[-1]), schemas)  # the last login's failure is the answer
+    return _attempt(pool, attempts[-1], schemas, run, down, last=True) or []  # the last one raises, never None
 
 
 def _attempt(
-    pool: Pool, target: Target, schemas: list[str], run: Callable[[Database, list[str]], list[str]]
+    pool: Pool,
+    target: Target,
+    schemas: list[str],
+    run: Callable[[Database, list[str]], list[str]],
+    down: Down,
+    *,
+    last: bool,
 ) -> list[str] | None:
     try:
         return run(pool.database(target), schemas)
-    except DatabaseUnavailableError:
-        return None  # perhaps only this login is broken: the next one may connect
+    except DatabaseUnavailableError as exc:
+        if exc.host_down:
+            down[target.address] = str(exc)
+        if exc.host_down or last:
+            raise
+        return None  # the server turned this login down: the next one may do
 
 
 def _each_database(pool: Pool, stand: str, database: Any, run: Callable[[Database, list[str]], list[str]]) -> list[str]:
     lines: list[str] = []
+    down: Down = {}
     for name, targets in _databases(pool, stand, database):
         lines.append(f"{stand} / {name}")
         try:
-            lines.extend(_catalog(pool, targets, run))
+            lines.extend(_catalog(pool, targets, run, down))
         except (DatabaseUnavailableError, QueryFailedError, ToolError) as exc:
             lines.append(f"  {exc}")  # one database failing does not hide the others
     return lines
@@ -360,9 +382,10 @@ def _table_target(pool: Pool, args: Arguments) -> tuple[Target, str]:
         return pool.registry.target(stand, schema, args.get("database")), table
     found: list[tuple[str, str]] = []
     failure: DatabaseUnavailableError | None = None
+    down: Down = {}
     for name, targets in _databases(pool, stand, args.get("database")):
         try:
-            rows = _catalog(pool, targets, lambda db, schemas: _find(db, table, schemas))
+            rows = _catalog(pool, targets, lambda db, schemas: _find(db, table, schemas), down)
         except DatabaseUnavailableError as exc:
             failure = exc
             continue

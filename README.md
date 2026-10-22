@@ -383,9 +383,12 @@ schemas of the registry are shown. The data stays behind each schema's own privi
 cannot read a neighbouring schema gets `permission denied` there.
 
 A failure stays small. An unreachable stand or a broken login affects only the answers that need it,
-and `status` with `stand` tries a second login when the first one fails. Without `PG_MCP_STANDS`, or when
+and `status` with `stand` tries a second login when the server turned the first one down. Without
+`PG_MCP_STANDS`, or when
 no stand is found, the entry works with the `PG*` variables as before, and `status` says why. At most 8
-connections stay open (`PG_MCP_MAX_CONNECTIONS`), and an unreachable host is given up after 10 seconds.
+connections stay open (`PG_MCP_MAX_CONNECTIONS`). A host that does not answer is given up after 10 seconds
+and not tried again for the rest of that call, whatever else the stand has on it; a second login of a
+database is tried only when the server answered and turned the first one down.
 The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
 
 ## Group profiles
@@ -494,7 +497,7 @@ All settings are environment variables in the `env` block of the `pg` server in 
 | `PG_MCP_LOG_LEVEL` | `INFO` | detail of the stderr log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `PG_MCP_QUERY_LOG` | — (off) | absolute path of the [query log](#query-log) file |
 | `PG_MCP_NAME` | `pg` | the entry's name that `status` shows; `install.py --name` writes it |
-| `PG_MCP_SOCKET_TIMEOUT_S` | `30`, for stands `10` | seconds to wait for the network; always longer than the query timeout |
+| `PG_MCP_SOCKET_TIMEOUT_S` | `30`, for stands `10` | seconds to wait for a new connection; once connected, the socket waits at least the query timeout plus 5 seconds |
 | `PG_MCP_STANDS` | — (off) | `*` or stand name patterns such as `dev*,ift2`: one entry for [many stands](#many-stands) |
 | `PG_MCP_STANDS_FILE` | `~/.pg-mcp/stands.conf`, on Windows `%APPDATA%\pg-mcp\stands.conf` | the stands registry |
 | `PGSERVICEFILE` | `~/.pg_service.conf`, on Windows `%APPDATA%\postgresql\.pg_service.conf` | your psql services; stands are read from it too |
@@ -541,6 +544,7 @@ says what is wrong.
 | "Nothing accepts connections at …" | wrong host or port, the database is down, no VPN | check `PGHOST`, `PGPORT` and the VPN; compare with `psql` |
 | "Host … cannot be resolved" | a typo in `PGHOST`, or a VPN is needed | fix `PGHOST` |
 | "Connecting to … timed out" | a firewall or a VPN | check that the port is reachable from this machine |
+| "… is unreachable from this machine" | no route to the host: the VPN is down | connect the VPN |
 | "Login as … failed" or "the server asks for a password" | no password in the password file, a wrong line, or file permissions | check the path, the line format and `chmod 600` |
 | "Database … does not exist" | wrong database name | fix `PGDATABASE` |
 | "The server refused the login for …" | `pg_hba.conf`, or the role lacks `LOGIN`/`CONNECT` | ask the DBA |
