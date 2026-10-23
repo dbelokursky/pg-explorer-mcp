@@ -59,6 +59,13 @@ READ_ONLY_HINTS = {"readOnlyHint": True, "openWorldHint": False}
 # The SQLSTATE of a table PostgreSQL could not find, and its name in the message in any language:
 # 'relation "orders" does not exist', 'отношение "orders" не существует', 'Relation »orders« ...'.
 UNDEFINED_TABLE = "42P01"
+UNDEFINED_COLUMN = "42703"
+# The relations a statement reads: the name after FROM or JOIN, its schema and quotes as written.
+_READ_RELATION = re.compile(
+    r'\b(?:from|join)\s+("[^"]+"|[^\s,;()".]+)(?:\s*\.\s*("[^"]+"|[^\s,;()".]+))?', re.IGNORECASE
+)
+TABLES_LISTED = 5  # the tables of a statement whose columns a column error lists
+COLUMNS_LISTED = 40
 _QUOTED_NAME = re.compile(r'["«»„“]\s*([^"«»„“”]+?)\s*["«»“”]')
 
 # pg_class.relkind values the tools show; each is named by the text kind.<relkind>.
@@ -88,6 +95,17 @@ LIST_TABLES_SQL = (
 )
 
 SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1\nLIMIT 50"
+
+# A relation as the statement found it: to_regclass reads the name with its schema and quotes, or on
+# the search path of the session, as the statement did. Only one the role reads, as everywhere else:
+# PostgreSQL reports a missing column before it checks the privilege to read the table.
+RELATION_BY_NAME_SQL = """
+SELECT c.oid, n.nspname, c.relname
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.oid = to_regclass(CAST(:name AS text))
+  AND has_table_privilege(c.oid, 'SELECT')
+"""
 
 FIND_RELATION_SQL = (
     f"SELECT c.oid, n.nspname, c.relname, c.relkind, {_ESTIMATE}, obj_description(c.oid, 'pg_class')"
@@ -509,7 +527,7 @@ def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str]
     try:
         _, rows, more = db.read_only(f"EXPLAIN ({options}) {query}", PLAN_LINES_LIMIT, cursor=False)
     except QueryFailedError as exc:
-        raise QueryFailedError(missing_table_hint(db, exc, schemas)) from exc
+        raise QueryFailedError(query_hint(db, exc, query, schemas)) from exc
     return _plan_lines(rows, more=more)
 
 
@@ -527,8 +545,50 @@ def run_select(
             return _format_rows(names, rows, more=more)
         names, rows, more = db.read_only(query, PLAN_LINES_LIMIT, cursor=False)
     except QueryFailedError as exc:
-        raise QueryFailedError(missing_table_hint(db, exc, schemas)) from exc
+        raise QueryFailedError(query_hint(db, exc, query, schemas)) from exc
     return _plan_lines(rows, more=more) if kind == "explain" else _format_rows(names, rows, more=more)
+
+
+def query_hint(db: Database, error: QueryFailedError, query: Any, schemas: Sequence[str] | None) -> str:
+    """The error, and what spares the model a call: where a missing table is, the columns of the tables read."""
+    if error.code == UNDEFINED_TABLE:
+        return missing_table_hint(db, error, schemas)
+    if error.code == UNDEFINED_COLUMN:
+        return missing_column_hint(db, error, query)
+    return str(error)
+
+
+def missing_column_hint(db: Database, error: QueryFailedError, query: Any) -> str:
+    """The error, and for a column PostgreSQL could not find, the columns of the tables the statement reads.
+
+    A model tends to guess a column ("order_id" for "id"); without the list it calls describe_table next.
+    """
+    text = query if isinstance(query, str) else ""
+    names = [f"{first}.{second}" if second else first for first, second in _READ_RELATION.findall(text)]
+    tables: dict[str, str] = {}
+    try:
+        for name in list(dict.fromkeys(names))[:TABLES_LISTED]:
+            tables.update(_columns_of(db, name))
+    except DatabaseUnavailableError:
+        return str(error)  # the hint is a courtesy: the error itself still has to reach the model
+    if not tables:
+        return str(error)
+    listed = "; ".join(f"{name}: {columns}" for name, columns in tables.items())
+    return t("error.columns_of", error=error, tables=listed)
+
+
+def _columns_of(db: Database, name: str) -> dict[str, str]:
+    """The relation a name means, as schema.name with its columns; nothing when it is not a relation."""
+    try:
+        found = db.query(RELATION_BY_NAME_SQL, name=name)
+        tables = {}
+        for oid, schema, relation in found:
+            columns = [str(row[0]) for row in db.query(COLUMNS_SQL, oid=oid)]
+            more = ", …" if len(columns) > COLUMNS_LISTED else ""
+            tables[f"{schema}.{relation}"] = ", ".join(columns[:COLUMNS_LISTED]) + more
+    except QueryFailedError:
+        return {}  # not a relation name after all: "FROM 2" in substring(), say
+    return tables
 
 
 def missing_table_hint(db: Database, error: QueryFailedError, schemas: Sequence[str] | None) -> str:

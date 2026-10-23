@@ -501,11 +501,11 @@ was dropped:
 ```text
 dev7 / demo / shop  vs  dev12 / demo / shop
 only on dev12:
-  returns | table
+  shop.returns | table
 differ:
-  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
-  orders.note only on dev12: text
-  orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+  shop.order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  shop.orders.note only on dev12: text
+  shop.orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
 ```
 
 `compare_schema` with `stand_a: dev7`, `stands: dev*` and `schema: shop` — the stands that match, each
@@ -517,11 +517,11 @@ dev8 / demo / shop: same as dev7
 dev9 / demo / shop: same as dev7
 dev12 / demo / shop
 only on dev12:
-  returns | table
+  shop.returns | table
 differ:
-  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
-  orders.note only on dev12: text
-  orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+  shop.order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  shop.orders.note only on dev12: text
+  shop.orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
 same as dev7: 2; different: 1; not checked: 0
 ```
 

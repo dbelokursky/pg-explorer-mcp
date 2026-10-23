@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from pg_mcp import tools
-from pg_mcp.db import Database, QueryFailedError
-from pg_mcp.tools import PROFILES, SEARCH_LIMIT, Tool, ToolError, build_tools, missing_table_hint
+from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError
+from pg_mcp.tools import PROFILES, SEARCH_LIMIT, Tool, ToolError, build_tools, missing_table_hint, query_hint
 from tests.helpers import ROOT
 
 TABLE = ("sales", "orders", "r", 1200, "Заказы клиентов", None, None, None, None)
@@ -206,3 +206,67 @@ def test_a_schema_without_readable_tables_names_the_ones_with_them() -> None:
     assert search(SchemasOnly(["shop"]), text="zzz", schema="shop") == [
         "Nothing matches 'zzz'. Try a shorter piece of the name, another spelling, or list_tables."
     ]
+
+
+class KnownTables(Database):
+    """Finds a relation by name as to_regclass would, and gives its columns; a name it cannot read fails."""
+
+    def __init__(self, tables: dict[str, tuple[str, list[str]]], *, down: bool = False) -> None:
+        super().__init__({"PGPORT": "not-a-number"})
+        self.tables = tables  # the name as the statement writes it: (schema.relation, columns)
+        self.down = down
+
+    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
+        if self.down:
+            raise DatabaseUnavailableError("the connection is gone")
+        if sql == tools.RELATION_BY_NAME_SQL:
+            if params["name"].isdigit():
+                raise QueryFailedError("invalid name syntax", code="42602")
+            found = self.tables.get(params["name"])
+            return [(params["name"], *found[0].split("."))] if found else []
+        return [(column,) for column in self.tables[params["oid"]][1]]
+
+
+def no_column(column: str = "order_id") -> QueryFailedError:
+    message = f'column "{column}" does not exist'
+    return QueryFailedError(f"PostgreSQL: {message} (SQLSTATE 42703)", code="42703", server_message=message)
+
+
+ORDERS = ("shop.orders", ["id", "customer_id", "status", "created_at"])
+ITEMS = ("shop.order_items", ["order_id", "product_id", "quantity", "price"])
+
+
+class TestMissingColumnHint:
+    def test_the_columns_of_the_table_the_query_reads_follow_the_error(self) -> None:
+        db = KnownTables({"shop.orders": ORDERS})
+        assert query_hint(db, no_column(), "SELECT * FROM shop.orders WHERE order_id = 501", None) == (
+            'PostgreSQL: column "order_id" does not exist (SQLSTATE 42703) Columns of the tables the query reads: '
+            "shop.orders: id, customer_id, status, created_at."
+        )
+
+    def test_every_table_of_a_join_and_only_tables(self) -> None:
+        db = KnownTables({"orders": ORDERS, "shop.order_items": ITEMS})
+        query = "SELECT substring(o.note FROM 2) FROM orders o JOIN shop . order_items i ON i.order_no = o.id"
+        hint = query_hint(db, no_column("i.order_no"), query, None)
+        assert hint.endswith(
+            "shop.orders: id, customer_id, status, created_at; shop.order_items: order_id, product_id, quantity, price."
+        )
+
+    def test_a_wide_table_is_cut(self) -> None:
+        db = KnownTables({"wide": ("shop.wide", [f"c{number}" for number in range(50)])})
+        assert query_hint(db, no_column(), "SELECT x FROM wide", None).endswith(", c38, c39, ….")
+
+    @pytest.mark.parametrize(
+        ("db", "query"),
+        [
+            (KnownTables({}), "SELECT order_id FROM nowhere"),  # nothing the catalog knows
+            (KnownTables({"orders": ORDERS}), "SELECT order_id"),  # no table at all
+            (KnownTables({"orders": ORDERS}, down=True), "SELECT order_id FROM orders"),  # the connection went
+        ],
+    )
+    def test_otherwise_the_error_stays_as_it_was(self, db: KnownTables, query: str) -> None:
+        assert query_hint(db, no_column(), query, None) == str(no_column())
+
+    def test_other_errors_pass_through(self) -> None:
+        error = QueryFailedError("PostgreSQL: division by zero (SQLSTATE 22012)", code="22012")
+        assert query_hint(KnownTables({"orders": ORDERS}), error, "SELECT 1/0 FROM orders", None) == str(error)

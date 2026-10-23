@@ -234,14 +234,14 @@ class TestCompareSchema:
         assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b="ift1", schema=ORDERS) == [
             f"dev1 / shop / {ORDERS}  vs  ift1 / shop / {ORDERS}",
             "only on dev1:",
-            "  invoices | table",
+            f"  {ORDERS}.invoices | table",
             "only on ift1:",
-            "  shipments | table",
+            f"  {ORDERS}.shipments | table",
             "differ:",
-            "  orders.invoice_id: dev1 integer NOT NULL | ift1 integer",
-            "  orders.note only on ift1: text DEFAULT ''::text",
-            "  orders: constraint orders_invoice_id_check only on ift1: CHECK (invoice_id > 0)",
-            f"  orders: index orders_invoice_idx only on ift1: {index}",
+            f"  {ORDERS}.orders.invoice_id: dev1 integer NOT NULL | ift1 integer",
+            f"  {ORDERS}.orders.note only on ift1: text DEFAULT ''::text",
+            f"  {ORDERS}.orders: constraint orders_invoice_id_check only on ift1: CHECK (invoice_id > 0)",
+            f"  {ORDERS}.orders: index orders_invoice_idx only on ift1: {index}",
         ]
 
     def test_many_stands_against_a_reference(self, tools: dict[str, Tool]) -> None:
@@ -257,7 +257,7 @@ class TestCompareSchema:
         lines = lines_of(tools["compare_schema"], stand_a="dev1", stands="ift1", schema=ORDERS)
         assert lines[0] == f"dev1 / shop / {ORDERS}  vs  1 stands:"
         assert lines[1] == f"ift1 / shop / {ORDERS}"
-        assert "  orders.invoice_id: dev1 integer NOT NULL | ift1 integer" in lines
+        assert f"  {ORDERS}.orders.invoice_id: dev1 integer NOT NULL | ift1 integer" in lines
         assert lines[-1] == "same as dev1: 0; different: 1; not checked: 0"
 
     @pytest.mark.parametrize("stand_b", ["dev2", "dev4"])  # the same database, and the other one with other rows
@@ -299,6 +299,12 @@ class TestData:
     def test_a_login_reads_only_its_own_schema(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match=f"permission denied for schema {ORDERS}"):
             tools["run_select"].call({"stand": "dev1", "schema": BILLING, "query": f"SELECT * FROM {ORDERS}.orders"})
+
+    def test_a_guessed_column_and_a_guessed_schema_get_the_names_there_are(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=f"42703.* {ORDERS}\\.orders: id, invoice_id\\."):
+            tools["run_select"].call({"stand": "dev1", "schema": ORDERS, "query": "SELECT order_id FROM orders"})
+        with pytest.raises(ToolError, match=f"no schema 'public' .* Its schemas: {BILLING}, {ORDERS}\\."):
+            tools["run_select"].call({"stand": "dev1", "schema": "public", "query": "SELECT 1"})
 
     def test_a_table_of_another_schema_is_pointed_to(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match=f"42P01.* in schema {ORDERS}: call again with that schema"):

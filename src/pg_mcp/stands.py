@@ -25,6 +25,7 @@ from .i18n import plural, t
 
 DEFAULT_MAX_CONNECTIONS = 8
 DEFAULT_SOCKET_TIMEOUT_S = 10  # a dropped VPN should not hold the agent for long
+SCHEMAS_LISTED = 15  # schemas an error names before it says how many more there are
 MAX_STANDS_PER_CALL = 10  # stands one call may ask in turn: the client waits 30 seconds for an answer
 _WILDCARDS = "*?["  # what makes an item of stands a pattern rather than a name
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")
@@ -161,8 +162,9 @@ class Registry:
 
     def target(self, stand: str, schema: Any, database: Any = None) -> Target:
         """The connection for a schema of a stand; database only matters when the schema repeats."""
+        known = sorted({target.schema for target in self.of_stand(stand)})
         if not isinstance(schema, str) or not schema.strip():
-            raise StandError(t("stands.no_schema_argument", stand=stand))
+            raise StandError(t("stands.no_schema_argument", stand=stand, schemas=listed(known)))
         wanted = schema.strip().strip('"').lower()
         matches = [target for target in self.of_stand(stand) if target.schema.lower() == wanted]
         if isinstance(database, str) and database.strip():
@@ -178,11 +180,17 @@ class Registry:
         if len(matches) > 1:
             databases = ", ".join(sorted(target.database for target in matches))
             raise StandError(t("stands.schema_in_databases", stand=stand, schema=schema, databases=databases))
-        known = sorted({target.schema for target in self.of_stand(stand)})
         similar = difflib.get_close_matches(wanted, known, n=5, cutoff=0.6)
         if similar:
             raise StandError(t("stands.unknown_schema_similar", stand=stand, schema=schema, similar=", ".join(similar)))
-        raise StandError(t("stands.unknown_schema", stand=stand, schema=schema))
+        raise StandError(t("stands.unknown_schema", stand=stand, schema=schema, schemas=listed(known)))
+
+
+def listed(names: Sequence[str], limit: int = SCHEMAS_LISTED) -> str:
+    """Names for an error message: all of them, or the first ones and how many there are in all."""
+    if len(names) <= limit:
+        return ", ".join(names) or t("error.none")
+    return t("stands.more_names", names=", ".join(names[:limit]), count=len(names))
 
 
 def stands_enabled(env: Mapping[str, str]) -> list[str] | None:

@@ -193,6 +193,7 @@ EN: dict[str, str] = {
     "error.not_found": "No readable table or view named {name!r}{where}. Call list_tables to see what exists.",
     "error.not_found_similar": "No readable table or view named {name!r}{where}. Similar names: {similar}.",
     "error.table_elsewhere": "{error} A table of that name is readable as {tables}: write the name with its schema.",
+    "error.columns_of": "{error} Columns of the tables the query reads: {tables}.",
     "error.in_schema": " in schema {schema!r}",
     "error.no_column": "No column {name!r} in {relation}. Columns: {columns}.",
     "error.explain_row_sources": (
@@ -356,11 +357,12 @@ EN: dict[str, str] = {
     ),
     "stands.no_schema_argument": (
         "Pass schema: on stand {stand} the server reads data with the login of the schema you name. "
-        "list_schemas shows them."
+        "Its schemas: {schemas}."
     ),
     "stands.unknown_schema": (
-        "Stand {stand} has no schema {schema!r} that the server has a login for. Call list_schemas to see them."
+        "Stand {stand} has no schema {schema!r} that the server has a login for. Its schemas: {schemas}."
     ),
+    "stands.more_names": "{names} and more, {count} in all: list_schemas shows them",
     "stands.unknown_schema_similar": (
         "Stand {stand} has no schema {schema!r} that the server has a login for. Similar: {similar}."
     ),
@@ -653,6 +655,7 @@ RU: dict[str, str] = {
         "Среди доступных для чтения нет таблицы или представления {name!r}{where}. Похожие имена: {similar}."
     ),
     "error.table_elsewhere": "{error} Таблица с таким именем доступна как {tables}: укажите имя вместе со схемой.",
+    "error.columns_of": "{error} Колонки таблиц запроса: {tables}.",
     "error.in_schema": " в схеме {schema!r}",
     "error.no_column": "В {relation} нет колонки {name!r}. Колонки: {columns}.",
     "error.explain_row_sources": (
@@ -824,12 +827,12 @@ RU: dict[str, str] = {
     ),
     "stands.no_schema_argument": (
         "Передайте schema: на стенде {stand} сервер читает данные под учёткой схемы, которую вы назовёте. "
-        "list_schemas покажет схемы."
+        "Его схемы: {schemas}."
     ),
     "stands.unknown_schema": (
-        "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. "
-        "Вызовите list_schemas, чтобы увидеть схемы."
+        "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Его схемы: {schemas}."
     ),
+    "stands.more_names": "{names} и другие, всего {count}: list_schemas покажет все",
     "stands.unknown_schema_similar": (
         "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Похожие: {similar}."
     ),

@@ -501,11 +501,11 @@ new | 74
 ```text
 dev7 / demo / shop  vs  dev12 / demo / shop
 только на dev12:
-  returns | таблица
+  shop.returns | таблица
 отличаются:
-  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
-  orders.note только на dev12: text
-  orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+  shop.order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  shop.orders.note только на dev12: text
+  shop.orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
 ```
 
 `compare_schema` со `stand_a: dev7`, `stands: dev*` и `schema: shop` — подходящие стенды, каждый против
@@ -517,11 +517,11 @@ dev8 / demo / shop: как dev7
 dev9 / demo / shop: как dev7
 dev12 / demo / shop
 только на dev12:
-  returns | таблица
+  shop.returns | таблица
 отличаются:
-  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
-  orders.note только на dev12: text
-  orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+  shop.order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  shop.orders.note только на dev12: text
+  shop.orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
 как dev7: 2; отличаются: 1; не проверены: 0
 ```
 
