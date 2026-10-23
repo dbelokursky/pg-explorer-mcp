@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
@@ -51,6 +52,11 @@ STRICTEST_PROFILE = "schema"
 
 # MCP tool annotations: clients may run read-only tools without asking the user.
 READ_ONLY_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+
+# The SQLSTATE of a table PostgreSQL could not find, and its name in the message in any language:
+# 'relation "orders" does not exist', 'отношение "orders" не существует', 'Relation »orders« ...'.
+UNDEFINED_TABLE = "42P01"
+_QUOTED_NAME = re.compile(r'["«»„“]\s*([^"«»„“”]+?)\s*["«»“”]')
 
 # pg_class.relkind values the tools show; each is named by the text kind.<relkind>.
 RELATION_KINDS = ("r", "p", "v", "m", "f")
@@ -234,6 +240,12 @@ class Tool:
         if unknown:
             allowed = ", ".join(sorted(self.properties)) or t("error.none")
             raise ToolError(t("error.unknown_arguments", unknown=", ".join(unknown), allowed=allowed))
+        # Models often send "" for an argument they mean to leave out; take it as left out.
+        arguments = {
+            name: value
+            for name, value in arguments.items()
+            if name in self.required or not (isinstance(value, str) and not value.strip())
+        }
         missing = [name for name in self.required if arguments.get(name) in (None, "")]
         if missing:
             raise ToolError(t("error.missing_arguments", missing=", ".join(missing)))
@@ -432,6 +444,16 @@ def search_schema(
     else:
         rows = db.query(SEARCH_IN_SCHEMAS_SQL, schemas=list(schemas), **params)
     if not rows:
+        if schemas is None and params["schema"] is not None:
+            visible = [row[0] for row in db.query(SCHEMAS_SQL)]
+            if params["schema"] not in visible:  # a guessed schema, "public" most often: name the real ones
+                raise ToolError(
+                    t(
+                        "error.no_tables_in_schema",
+                        schema=params["schema"],
+                        visible=", ".join(visible) or t("error.none"),
+                    )
+                )
         return [t("search.nothing", text=fragment)]
     lines = []
     for row in rows[:limit]:
@@ -477,22 +499,62 @@ def sample_rows(db: Database, table: Any, schema: Any, columns: Any, limit: Any)
     return [f"{schema_name}.{relation}:", *_format_rows(names, rows, more=more)]
 
 
-def explain_query(db: Database, query: Any, analyze: Any) -> list[str]:
+def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str] | None = None) -> list[str]:
     if check_read_only(query) not in ROW_SOURCES:
         raise ToolError(t("error.explain_row_sources"))
     options = "ANALYZE, BUFFERS, FORMAT TEXT" if _flag(analyze, "analyze") else "FORMAT TEXT"
-    _, rows, more = db.read_only(f"EXPLAIN ({options}) {query}", PLAN_LINES_LIMIT, cursor=False)
+    try:
+        _, rows, more = db.read_only(f"EXPLAIN ({options}) {query}", PLAN_LINES_LIMIT, cursor=False)
+    except QueryFailedError as exc:
+        raise QueryFailedError(missing_table_hint(db, exc, schemas)) from exc
     return _plan_lines(rows, more=more)
 
 
-def run_select(db: Database, query: Any, limit: int = RUN_SELECT_LIMIT) -> list[str]:
-    """Rows of one read-only statement; limit is smaller when a call shares the rows among several stands."""
+def run_select(
+    db: Database, query: Any, limit: int = RUN_SELECT_LIMIT, schemas: Sequence[str] | None = None
+) -> list[str]:
+    """Rows of one read-only statement; limit is smaller when a call shares the rows among several stands.
+
+    schemas, on a stand, are the registry's schemas of the database: where to look for a missing table.
+    """
     kind = check_read_only(query)
-    if kind in ROW_SOURCES:
-        names, rows, more = db.read_only(query, limit, cursor=True)
-        return _format_rows(names, rows, more=more)
-    names, rows, more = db.read_only(query, PLAN_LINES_LIMIT, cursor=False)
+    try:
+        if kind in ROW_SOURCES:
+            names, rows, more = db.read_only(query, limit, cursor=True)
+            return _format_rows(names, rows, more=more)
+        names, rows, more = db.read_only(query, PLAN_LINES_LIMIT, cursor=False)
+    except QueryFailedError as exc:
+        raise QueryFailedError(missing_table_hint(db, exc, schemas)) from exc
     return _plan_lines(rows, more=more) if kind == "explain" else _format_rows(names, rows, more=more)
+
+
+def missing_table_hint(db: Database, error: QueryFailedError, schemas: Sequence[str] | None) -> str:
+    """The error, and for a table PostgreSQL could not find, where a table of that name can be read.
+
+    A model tends to write a table without its schema, or with "public". On a stand the answer names
+    the schemas of the registry, whose logins the next call takes.
+    """
+    found = _QUOTED_NAME.search(error.server_message or "") if error.code == UNDEFINED_TABLE else None
+    if found is None:
+        return str(error)
+    name = found.group(1).split(".")[-1]
+    try:
+        rows = _relations_named(db, name, schemas)
+        if not rows and name != name.lower():
+            rows = _relations_named(db, name.lower(), schemas)
+    except (QueryFailedError, DatabaseUnavailableError):
+        return str(error)  # the hint is a courtesy: the error itself still has to reach the model
+    if not rows:
+        return str(error)
+    if schemas is not None:
+        return t("stands.table_elsewhere", error=error, schemas=", ".join(str(row[1]) for row in rows))
+    return t("error.table_elsewhere", error=error, tables=", ".join(f"{row[1]}.{row[2]}" for row in rows))
+
+
+def _relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> list[Sequence[Any]]:
+    if schemas is None:
+        return db.query(FIND_RELATION_SQL, name=name, schema=None)
+    return db.query(FIND_RELATION_IN_SCHEMAS_SQL, name=name, schema=None, schemas=list(schemas))
 
 
 def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:

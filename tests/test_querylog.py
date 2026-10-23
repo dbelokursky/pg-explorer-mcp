@@ -63,7 +63,7 @@ def test_every_call_leaves_one_line_whatever_its_outcome(unreachable_env: dict[s
     ]
     refused = logged[1]
     assert refused["arguments"] == {"query": "DELETE FROM orders"}
-    assert refused["message"].startswith("DELETE is not allowed.")
+    assert refused["message"].startswith("DELETE is not allowed: this server only reads")
     assert (refused["role"], refused["database"]) == ("pg_mcp_test", "pg_mcp_test")
     assert refused["pid"] == os.getpid()
     assert refused["time"].endswith("Z")

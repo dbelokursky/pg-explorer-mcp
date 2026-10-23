@@ -423,7 +423,8 @@ def stand_sample(pool: Pool, args: Arguments) -> list[str]:
 
 def stand_explain(pool: Pool, args: Arguments, *, analyze: bool) -> list[str]:
     target = _required_target(pool, args)
-    plan = explain_query(pool.database(target), args.get("query"), args.get("analyze") if analyze else None)
+    analyzed = args.get("analyze") if analyze else None
+    plan = explain_query(pool.database(target), args.get("query"), analyzed, _database_schemas(pool, target))
     return [target.label, *plan]
 
 
@@ -431,14 +432,17 @@ def stand_run(pool: Pool, args: Arguments) -> list[str]:
     stands = _many_stands(pool, args)
     if stands is None:
         target = _required_target(pool, args)
-        return [target.label, *run_select(pool.database(target), args.get("query"))]
+        return [
+            target.label,
+            *run_select(pool.database(target), args.get("query"), schemas=_database_schemas(pool, target)),
+        ]
     query = args.get("query")
     check_read_only(query)  # a statement the policy refuses is refused once, before any stand is asked
     _schema_on_some(pool, stands, args)
     limit = _share(RUN_SELECT_LIMIT, len(stands))
 
     def with_login(target: Target) -> list[str]:
-        return run_select(pool.database(target), query, limit)
+        return run_select(pool.database(target), query, limit, _database_schemas(pool, target))
 
     return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
 
@@ -554,6 +558,11 @@ def _optional_target(pool: Pool, args: Arguments) -> Target | None:
     if args.get("schema") in (None, ""):
         return None
     return pool.registry.target(stand, args.get("schema"), args.get("database"))
+
+
+def _database_schemas(pool: Pool, target: Target) -> list[str]:
+    """The registry's schemas of the target's database on its stand: where a missing table may be."""
+    return [other.schema for other in pool.registry.of_stand(target.stand) if other.database == target.database]
 
 
 def _required_target(pool: Pool, args: Arguments) -> Target:

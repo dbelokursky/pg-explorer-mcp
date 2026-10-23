@@ -71,7 +71,7 @@ def test_forbidden_words_inside_literals_comments_and_quoted_names_do_not_count(
     ],
 )
 def test_statements_that_change_anything_are_refused_by_their_first_word(sql: str, word: str) -> None:
-    with pytest.raises(SqlRejectedError, match="Only read-only statements") as caught:
+    with pytest.raises(SqlRejectedError, match=r"this server only reads.*Read-only statements") as caught:
         check_read_only(sql)
     assert word in str(caught.value)
 

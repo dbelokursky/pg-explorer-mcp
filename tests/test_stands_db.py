@@ -300,6 +300,10 @@ class TestData:
         with pytest.raises(ToolError, match=f"permission denied for schema {ORDERS}"):
             tools["run_select"].call({"stand": "dev1", "schema": BILLING, "query": f"SELECT * FROM {ORDERS}.orders"})
 
+    def test_a_table_of_another_schema_is_pointed_to(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=f"42P01.* in schema {ORDERS}: call again with that schema"):
+            tools["run_select"].call({"stand": "dev1", "schema": BILLING, "query": "SELECT count(*) FROM orders"})
+
     def test_sample_rows_reads_with_the_login_of_the_table_schema(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["sample_rows"], stand="dev1", table="orders", limit=2)
         assert lines[:3] == [f"dev1 / shop / {ORDERS}", f"{ORDERS}.orders:", "id | invoice_id"]

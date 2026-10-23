@@ -31,6 +31,9 @@ _NAME = re.compile(r"[A-Za-z0-9_$-]+")
 _STAND_NUMBER = re.compile(r"(\D*)(\d*)(.*)")
 _RANGE = "\u2013"  # an en dash between the first and the last stand of a run
 _PASSWORD_LINE = re.compile(r"^\s*password\s*=", re.MULTILINE)
+# install.py export writes this line above every section it puts into a service file: such a section
+# is a copy of a stand for psql, not a stand of its own, and the next export may rewrite it.
+EXPORTED = "# pg-mcp export"
 
 
 class StandError(Exception):
@@ -227,7 +230,10 @@ def load_registry(
             registry.warnings.append(t("stands.readable_by_others", path=path))
         sections, problems = parse_service_file(text)
         registry.warnings.extend(t("stands.bad_line", path=path, problem=problem) for problem in problems)
+        copies = exported_sections(text)
         for name, options in sections.items():
+            if name in copies:
+                continue  # the stand itself is in another file, or was removed from it
             target = _target(name, options, str(path), registry.warnings)
             if target is None or target.name in seen:
                 continue
@@ -278,6 +284,18 @@ def parse_service_file(text: str) -> tuple[dict[str, dict[str, str]], list[str]]
         else:
             problems.append(t("stands.line", number=number))
     return sections, problems
+
+
+def exported_sections(text: str) -> set[str]:
+    """The sections of a service file that install.py export wrote: the EXPORTED line is right above them."""
+    found: set[str] = set()
+    previous = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]") and previous.startswith(EXPORTED):
+            found.add(line[1:-1].strip())
+        previous = line
+    return found
 
 
 class Pool:

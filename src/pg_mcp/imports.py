@@ -21,7 +21,7 @@ from pathlib import Path
 from .aes import decrypt_cbc
 from .db import pgpass_path
 from .i18n import t
-from .stands import Target, parse_service_file, registry_files
+from .stands import Target, exported_sections, parse_service_file, registry_files
 
 # DBeaver encrypts credentials-config.json with this key unless the user turned on its secure storage.
 DBEAVER_KEY = bytes.fromhex("babb4a9f774ab853c96c2d653dfe544a")
@@ -139,12 +139,13 @@ def _dbeaver_address(configuration: Mapping[str, object]) -> tuple[str, str, str
 
 
 def read_pg_service(path: Path) -> list[Connection]:
-    """Every section of a pg_service.conf file as a connection."""
+    """Every section of a pg_service.conf file as a connection, but for the copies install.py export wrote."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise ImportRefusedError(t("import.unreadable", path=path, error=exc)) from exc
     sections, _ = parse_service_file(text)
+    copies = exported_sections(text)
     extras = ("sslmode", "sslrootcert", "connect_timeout")
     return [
         Connection(
@@ -159,6 +160,7 @@ def read_pg_service(path: Path) -> list[Connection]:
             options={key: options[key] for key in extras if options.get(key)},
         )
         for name, options in sections.items()
+        if name not in copies
     ]
 
 

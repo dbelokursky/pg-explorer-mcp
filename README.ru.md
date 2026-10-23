@@ -211,6 +211,35 @@ PGDATABASE=hr PGUSER=mcp_hr python3 install.py --name hr --profile schema
 
 Тогда агент получает инструменты всех записей, а `status` каждой называет свой сервер и базу.
 
+#### Другие агенты и редакторы
+
+`--client` регистрирует сервер и в других клиентах MCP — каждому в его файл и в его формате:
+
+| `--client` | Куда попадает запись |
+|---|---|
+| `gigacode` (по умолчанию), `qwen` | `~/.gigacode/settings.json`, `~/.qwen/settings.json` |
+| `vscode` | пользовательский `mcp.json` VS Code (GitHub Copilot в режиме агента), раздел `servers` |
+| `cursor` | `~/.cursor/mcp.json` |
+| `windsurf` | Windsurf, теперь Devin Desktop: `~/.config/devin/mcp_config.json` или прежний файл, если он уже есть |
+| `cline` | `~/.cline/data/settings/cline_mcp_settings.json`, общий для Cline в VS Code, JetBrains и его CLI |
+| `roo` | файл настроек расширения Roo Code в VS Code (расширение больше не развивается) |
+| `continue` | файл-блок `~/.continue/mcpServers/pg.yaml` |
+| `lmstudio` | `~/.lmstudio/mcp.json` |
+| `claude-desktop` | `claude_desktop_config.json` приложения |
+| `junie` | `~/.junie/mcp/mcp.json` |
+| `jetbrains` | ничего не пишется: AI Assistant хранит серверы в настройках, запись печатается для вставки |
+
+```bash
+python3 install.py --client cursor            # записать в файл Cursor (с копией) и проверить
+python3 install.py --client vscode --print    # только показать запись и куда её положить
+```
+
+`--print` подходит для клиента, которого нет в списке, или если файл хочется поправить самому. Файл с
+комментариями не переписывается никогда: `install.py` печатает, что в него добавить. При запуске в
+терминале `install.py`, зарегистрировав сервер, находит другие установленные на машине клиенты и
+предлагает добавить его и туда. Расширение (контекст и команды `/pg:`) есть только для GigaCode CLI и
+Qwen Code.
+
 ### 6. Расширение
 
 ```bash
@@ -246,7 +275,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 `status`:
 
 ```text
-pg-mcp 0.5.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
+pg-mcp 0.6.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
 имя сервера: pg
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 профиль: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
@@ -395,6 +424,39 @@ python3 install.py import pg-service ~/.pg_service.conf --write
 Работающий сервер замечает изменённый реестр при следующем вызове, так что перезапуск агента не
 нужен; файл реестра со строкой `password=`, который могут читать другие пользователи, получает
 предупреждение в `status`.
+
+**Выгрузка подключений в инструменты БД.** В обратную сторону `install.py export` кладёт стенды в
+инструменты, где вы работаете с ними сами: по папке или группе на стенд, каждое подключение входит по
+файлу паролей. Пароли никуда не копируются.
+
+```bash
+python3 install.py export dbeaver                # предпросмотр: что куда попадёт, ничего не записывается
+python3 install.py export dbeaver --write
+python3 install.py export pgadmin --write --stands 'dev*,ift2'
+```
+
+| Инструмент | `export` | Что пишет | Дальше |
+|---|---|---|---|
+| DBeaver | `dbeaver` | `data-sources-pg-mcp.json` рядом с `data-sources.json` DBeaver или в папке из `--workspace` | Перезапустить DBeaver |
+| DataGrip и IDE JetBrains с инструментами БД | `datagrip` | `.idea/dataSources.xml` и `dataSources.local.xml` в `~/.pg-mcp/datagrip` или в проекте из `--project` (сначала закройте его) | Открыть папку как проект |
+| pgAdmin 4 | `pgadmin` | `~/.pg-mcp/pgadmin-servers.json` | Tools > Import/Export Servers > Import |
+| psql, pgcli | `pg-service` | Секции `~/.pg_service.conf`, схема первой в search_path | `psql "service=dev7.demo.shop"` |
+| Расширение PostgreSQL для VS Code (Microsoft) | `vscode-pgsql` | `pgsql.connections` в настройках пользователя; для Cursor и Windsurf — `--editor cursor` или `windsurf` | Перезагрузить окно |
+| SQLTools | `sqltools` | `sqltools.connections` в настройках пользователя, с пустым паролем | Перезагрузить окно |
+
+Выгрузка заменяет только свои подключения — по постоянному идентификатору или по имени — и оставляет
+остальное: сделанное вами в инструменте и выгруженное раньше для других стендов. У каждого изменённого
+файла остаётся датированная копия, права файла сохраняются, а файл-ссылка остаётся ссылкой. Подключения,
+которые уже есть в DBeaver с тем же хостом, портом, базой и пользователем, пропускаются: чаще всего
+стенды пришли как раз из DBeaver. В `~/.pg_service.conf` каждая выгруженная секция стоит под строкой
+`# pg-mcp export`: следующая выгрузка переписывает только такие секции, сервер не считает их стендами,
+а одноимённая секция, которую вы написали сами, остаётся как есть, и её стенд пропускается. Настройки
+TLS стенда, `sslmode` и `sslrootcert`, переносятся тоже. Файл настроек с комментариями не трогается:
+выгрузка печатает, что добавить в него вручную. Расширение
+PostgreSQL от Microsoft не умеет читать файл паролей: оно спросит каждый пароль один раз и сохранит его
+в системной связке ключей. Повторный импорт файла в pgAdmin добавит серверы ещё раз, поэтому старые
+сначала удалите. После `import --write`, а также после регистрации записи, если стенды уже есть,
+`install.py` в терминале ищет эти инструменты на машине и предлагает выгрузить стенды в них.
 
 **3. Работа.** Каждый инструмент принимает `stand`. Для чтения данных нужна и `schema`: сервер
 подключается под учёткой этой схемы и ищет имена без схемы сначала в ней. `database` нужна, только если
@@ -588,6 +650,59 @@ python3 install.py
 несколько сессий агента могут писать в один файл, а `logrotate` — переносить его. Если записать не
 удаётся, инструменты продолжают работать, а `status` объясняет причину.
 
+Чтобы свести журнал для того, кто отвечает за группу, запустите `scripts/querylog_report.py` с файлами,
+в том числе ротированными `.1` и `.gz`, и при необходимости окном `--since`/`--until` в UTC (дата или
+дата-время; дата без времени в `--until` включает весь день):
+
+```bash
+python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl ~/pg-mcp-queries.jsonl.1.gz --since 2026-10-20
+```
+
+Сводка считает вызовы по инструментам, по пользователям ОС и в режиме стендов по стендам (вызов на
+несколько стендов засчитывается каждому из них), медиану и 95-й процентиль `duration_ms`, десять самых
+долгих вызовов и все запросы, отклонённые проверкой SQL, — так выглядят попытки записи. Аргументы
+выводятся в одну строку, обрезанную до 80 символов, значения ключей, похожих на пароль, скрыты, а строки,
+которые не являются полными строками журнала (например, оборванные сбоем или ротацией), пропускаются и
+считаются:
+
+```text
+Files: /home/anna/pg-mcp-queries.jsonl (13 lines, 1 broken)
+Calls: 12  ok 8  error 1  refused 2  unavailable 1  failed 0
+Period: 2026-10-22 09:12:03 .. 2026-10-22 16:41:05 UTC
+Users: 2  Tools: 7
+Duration: median 11.2 ms, 95th percentile 2003.5 ms
+
+By tool
+  tool            calls  ok  error  refused  unavailable  failed  problems
+  run_select          5   2      1        2            0       0     60.0%
+  list_tables         2   1      0        0            1       0     50.0%
+  describe_table      1   1      0        0            0       0      0.0%
+  explain_query       1   1      0        0            0       0      0.0%
+  sample_rows         1   1      0        0            0       0      0.0%
+  search_schema       1   1      0        0            0       0      0.0%
+  status              1   1      0        0            0       0      0.0%
+
+By user
+  user   calls  queries  rows  refused
+  anna       7        1     4        2
+  boris      5        3    18        0
+
+Longest calls (top 10)
+  duration_ms  time                 user   tool            arguments
+       2003.5  2026-10-22 16:30:00  anna   list_tables
+         48.3  2026-10-22 14:05:11  boris  run_select      query=SELECT c.name, sum(o.total) AS total FROM shop.orders o JOIN shop.custome…
+         35.0  2026-10-22 14:02:15  boris  search_schema   pattern=customer
+  …
+
+Refused by the SQL check (2)
+  time                 user  tool        arguments
+  2026-10-22 13:54:20  anna  run_select  query=DELETE FROM shop.orders WHERE status = 'cancelled'
+  2026-10-22 16:41:05  anna  run_select  query=UPDATE shop.products SET price = price * 1.1
+```
+
+`--format json` отдаёт те же цифры машинно, `--format csv` — одну таблицу в разрезе
+`--by user|tool|stand|day`.
+
 Файл лежит на машине пользователя: это журнал, а не защищённый аудит. Аудит доступа к данным ведут на
 сервере PostgreSQL (`pgaudit` или `log_statement`); соединения сервера помечены
 `application_name = 'pg-mcp'`. Почему так — в [ADR 0005](docs/adr/0005-query-log.md).
@@ -707,9 +822,10 @@ psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owne
 который зарегистрировал `install.py`: клиент должен подключиться к серверу и увидеть расширение. Сам
 GigaCode CLI вне компании не достать, поэтому перед выпуском его проверяют вручную.
 
-**Подойдёт ли другой клиент MCP?** Да, любой, который запускает серверы через stdio. Укажите ему
-команду `python3`, аргументы `-I /путь/к/pg-mcp/run.py` и переменные `PG*` в окружении. Если
-клиент берёт формат `mcpServers`, подойдёт запись из [шага 5](#5-регистрация-в-агенте).
+**Подойдёт ли другой клиент MCP?** Да, любой, который запускает серверы через stdio. `install.py --client`
+пишет запись для VS Code, Cursor, Windsurf, Cline, Roo Code, Continue, LM Studio, Claude Desktop и
+JetBrains ([другие агенты и редакторы](#другие-агенты-и-редакторы)); для любого другого клиента
+`install.py --client cursor --print` покажет команду, аргументы и переменные `PG*`, которые ему нужны.
 
 **Почему агент отвечает не на том языке?** Язык ответа выбирает модель; сервер просит её отвечать
 на языке пользователя. Язык самих инструментов задаёт `PG_MCP_LANG`.

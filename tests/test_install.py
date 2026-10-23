@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -8,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import install
-from pg_mcp import imports
+from pg_mcp import clients, exports, imports
 from tests.helpers import ROOT
 from tests.test_imports import dbeaver_workspace, postgres
 
@@ -271,6 +273,8 @@ def test_import_write_registers_pg_stands_next_to_pg(
     use_env(monkeypatch, unreachable_env, tmp_path)
     monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
     monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+    offers: list[dict[str, object]] = []
+    monkeypatch.setattr(install, "offer_export", lambda **kwargs: offers.append(kwargs))
     assert install.main(["--client", "qwen"]) == 1  # the plain entry: its database is unreachable
     argv = [
         "import",
@@ -297,6 +301,7 @@ def test_import_write_registers_pg_stands_next_to_pg(
     assert set(servers) == {"pg", "pg-stands"}
     assert servers["pg-stands"]["env"]["PG_MCP_STANDS"] == "*"
     assert "PG_MCP_STANDS" not in servers["pg"]["env"]
+    assert offers == [{}, {"besides": "dbeaver"}]  # the stands are in DBeaver already
 
 
 def test_import_pg_service_needs_a_file_and_dbeaver_a_workspace(
@@ -343,3 +348,240 @@ def test_a_terminal_user_is_offered_the_dbeaver_preview(
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     install.offer_import("en")
     assert capsys.readouterr().out == ""
+
+
+def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]) -> None:
+    """use_env, and the folders of desktop apps under the temporary home on every system."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+
+def test_print_shows_the_entry_for_cursor_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["--client", "cursor", "--print", "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    first, _, body = out.partition("\n")
+    assert first == f"for Cursor, add this to {tmp_path / '.cursor' / 'mcp.json'}:"
+    entry = json.loads(body)["mcpServers"]["pg"]
+    assert entry["args"] == ["-I", install.RUN_PY]
+    assert "timeout" not in entry
+    assert not (tmp_path / ".cursor").exists()
+
+
+def test_print_for_jetbrains_says_where_to_paste(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["--client", "jetbrains", "--print", "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("JetBrains AI Assistant keeps its servers in the IDE: Settings | Tools | AI Assistant")
+    assert '"mcpServers"' in out
+
+
+def test_registering_with_vscode_writes_its_own_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["--client", "vscode", "--lang", "en"]) == 1  # registered; the database is unreachable
+    path = clients.CLIENTS["vscode"].path(os.environ, Path.home(), "pg")
+    assert path is not None
+    assert path.is_relative_to(tmp_path)
+    server = json.loads(path.read_text(encoding="utf-8"))["servers"]["pg"]
+    assert (server["type"], server["command"]) == ("stdio", sys.executable)
+    out = capsys.readouterr().out
+    assert f"registered MCP server 'pg' in {path}" in out
+    assert "extensions link" not in out  # only GigaCode and Qwen Code link the extension
+
+
+def test_a_client_file_with_comments_gets_the_snippet_instead(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    settings = tmp_path / ".cursor" / "mcp.json"
+    settings.parent.mkdir()
+    settings.write_text('{\n  // mine\n  "mcpServers": {}\n}\n', encoding="utf-8")
+    assert not install.install_into("cursor", "pg", install.server_entry())
+    out = capsys.readouterr().out
+    assert f"{settings} is not plain JSON" in out
+    assert '"mcpServers"' in out
+    assert settings.read_text(encoding="utf-8") == '{\n  // mine\n  "mcpServers": {}\n}\n'
+
+
+def test_the_other_installed_clients_are_offered_at_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".lmstudio").mkdir()
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    answers = iter(["n", "y"])
+    monkeypatch.setattr("builtins.input", lambda prompt: (sys.stdout.write(prompt), next(answers))[1])
+    entry = install.server_entry()
+    install.offer_clients("pg", entry, besides="gigacode")
+    out = capsys.readouterr().out
+    assert "Also found Cursor, LM Studio. Register pg there too? [y/N]" in out
+    assert "--client cursor|lmstudio" in out
+    assert not (tmp_path / ".cursor" / "mcp.json").exists()
+    install.offer_clients("pg", entry, besides="gigacode")
+    for path in (tmp_path / ".cursor" / "mcp.json", tmp_path / ".lmstudio" / "mcp.json"):
+        assert set(json.loads(path.read_text(encoding="utf-8"))["mcpServers"]) == {"pg"}
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    capsys.readouterr()
+    install.offer_clients("pg", entry, besides="gigacode")
+    assert capsys.readouterr().out == ""
+
+
+def stands_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]) -> Path:
+    """isolated(), with two stands in the registry; the path of the pg_service.conf that is not there yet."""
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    stands = tmp_path / "stands.conf"
+    stands.write_text(
+        "[dev7.orders.billing]\nhost=dev7-db.example\n\n[ift2.orders.billing]\nhost=ift2-db.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(stands))
+    monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "pg_service.conf"))
+    monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+    return tmp_path / "pg_service.conf"
+
+
+def both_stands_in_dbeaver(folder: Path) -> Path:
+    return dbeaver_workspace(
+        folder,
+        {
+            "pg-1": postgres("dev7", "dev7-db.example", "orders", user="billing"),
+            "pg-2": postgres("ift2", "ift2-db.example", "orders", user="billing"),
+        },
+        {},
+    )
+
+
+def test_export_previews_then_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    service = stands_home(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["export", "pg-service", "--lang", "en"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "psql, pgcli (pg_service.conf): 2 connections (dev7, ift2) go into:",
+        f"  {service}",
+        "This was a preview, nothing was written. Add --write to write the files.",
+    ]
+    assert not service.exists()
+    assert install.main(["export", "pg-service", "--stands", "ift*", "--write", "--lang", "ru"]) == 0
+    out = capsys.readouterr().out
+    assert f"записан {service}" in out
+    assert 'psql "service=ift2.orders.billing"' in out
+    assert service.read_text(encoding="utf-8").startswith(
+        "# pg-mcp export\n[ift2.orders.billing]\nhost=ift2-db.example\n"
+    )
+
+
+def test_export_says_why_it_cannot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "pg_service.conf"))
+    assert install.main(["export", "pgadmin", "--lang", "en"]) == 1
+    assert "no stands to export" in capsys.readouterr().out
+    stands_home(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["export", "dbeaver", "--lang", "en"]) == 1
+    assert "DBeaver's connections were not found" in capsys.readouterr().out
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where a folder should be", encoding="utf-8")
+    assert install.main(["export", "datagrip", "--project", str(blocker / "project"), "--write", "--lang", "en"]) == 1
+    assert "cannot write" in capsys.readouterr().out
+    assert install.main(["export", "datagrip", "--project", "~/new-project", "--lang", "en"]) == 0
+    assert f"  {tmp_path / 'new-project' / '.idea' / 'dataSources.xml'}" in capsys.readouterr().out.splitlines()
+
+
+def test_a_tool_with_every_connection_gets_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    stands_home(monkeypatch, tmp_path, unreachable_env)
+    folder = both_stands_in_dbeaver(tmp_path / "dbeaver")
+    assert install.main(["export", "dbeaver", "--workspace", str(folder), "--write", "--lang", "en"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "left out, already in DBeaver with the same host, port, database and user: 2",
+        "DBeaver has all of these connections already; nothing to write",
+    ]
+    assert not (folder / exports.DBEAVER_FILE).exists()
+
+
+def test_the_database_tools_found_here_are_offered_the_stands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    stands_home(monkeypatch, tmp_path, unreachable_env)
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # noqa: ARG005  (no psql on this machine)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+
+    def unexpected(prompt: str) -> str:
+        raise AssertionError(prompt)
+
+    monkeypatch.setattr("builtins.input", unexpected)
+    install.offer_export()  # no tools here: no question
+    assert capsys.readouterr().out == ""
+
+    app = clients.app_data(os.environ, Path.home())
+    both_stands_in_dbeaver(tmp_path / ".local" / "share" / "DBeaverData" / "workspace6" / "General" / ".dbeaver")
+    (tmp_path / ".vscode" / "extensions" / "ms-ossdata.vscode-pgsql-1.4.0").mkdir(parents=True)
+    (app / "Code" / "User").mkdir(parents=True)
+    (app / "Code" / "User" / "settings.json").write_text("{\n  // mine\n}\n", encoding="utf-8")
+    (tmp_path / ".pgadmin").mkdir()
+    (tmp_path / ".cursor" / "extensions" / "mtxr.sqltools-0.28.4").mkdir(parents=True)
+    (app / "Cursor" / "User").mkdir(parents=True)
+    answers = iter(["n", "y", "n"])
+    monkeypatch.setattr("builtins.input", lambda prompt: (sys.stdout.write(prompt), next(answers))[1])
+    install.offer_export()  # DBeaver has both stands, and settings with comments are not offered
+    out = capsys.readouterr().out
+    command = f"{sys.executable} {install.ROOT / 'install.py'} export"
+    assert out.startswith("Found pgAdmin 4, VS Code: SQLTools. Add the stand connections there (2)? [y/N] ")
+    assert out.endswith(f"  {command} pgadmin --write\n  {command} sqltools --editor cursor --write\n")
+    assert not (tmp_path / "pgadmin-servers.json").exists()
+    install.offer_export()
+    out = capsys.readouterr().out
+    assert "pgAdmin 4: 2 connections (dev7, ift2) go into:" in out
+    assert (tmp_path / "pgadmin-servers.json").exists()
+    settings = json.loads((app / "Cursor" / "User" / "settings.json").read_text(encoding="utf-8"))
+    assert [entry["name"] for entry in settings["sqltools.connections"]] == [
+        "dev7 / orders / billing",
+        "ift2 / orders / billing",
+    ]
+    install.offer_export(besides="pgadmin")
+    assert capsys.readouterr().out.startswith("Found VS Code: SQLTools. Add the stand connections there (2)?")
+
+    def closed(prompt: str) -> str:
+        raise EOFError(prompt)
+
+    monkeypatch.setattr("builtins.input", closed)
+    install.offer_export()
+    assert capsys.readouterr().out == ""
+    monkeypatch.setattr("builtins.input", unexpected)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    install.offer_export()
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "none.conf"))
+    install.offer_export()  # no stands: nothing to offer
+    assert capsys.readouterr().out == ""
+
+
+def test_both_extensions_of_one_editor_get_their_connections(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
+) -> None:
+    stands_home(monkeypatch, tmp_path, unreachable_env)
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # noqa: ARG005
+    user = clients.app_data(os.environ, Path.home()) / "Code" / "User"
+    user.mkdir(parents=True)
+    (user / "settings.json").write_text('{"editor.fontSize": 13}\n', encoding="utf-8")
+    for extension in ("ms-ossdata.vscode-pgsql-1.4.0", "mtxr.sqltools-0.28.4"):
+        (tmp_path / ".vscode" / "extensions" / extension).mkdir(parents=True)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")  # noqa: ARG005
+    install.offer_export()  # both change settings.json: the second must see what the first wrote
+    settings = json.loads((user / "settings.json").read_text(encoding="utf-8"))
+    assert settings["editor.fontSize"] == 13
+    assert len(settings["pgsql.connections"]) == len(settings["sqltools.connections"]) == 2
+    assert len(list(user.glob("settings.json.bak-*"))) == 2

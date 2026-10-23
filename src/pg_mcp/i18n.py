@@ -99,7 +99,9 @@ def _plural_form(language: str, count: int) -> str:
 
 EN: dict[str, str] = {
     "server.instructions": (
-        "Read-only access to one PostgreSQL database. Call status first: it shows the database, the role, "
+        "Read-only access to one PostgreSQL database: nothing can be inserted, changed or deleted through it, "
+        "so decline such requests instead of asking the user to confirm them. Call status first: it shows "
+        "the database, the role, "
         "the tools this profile offers and the limits in force. Then learn the structure before querying data: "
         "list_tables for an overview, search_schema to find tables and columns by name or comment in a large "
         "database, describe_table for the details. Reply to the user in the language they write in."
@@ -108,7 +110,7 @@ EN: dict[str, str] = {
     # Tools as the model sees them in tools/list.
     "tool.status.title": "Connection status",
     "tool.status.description": (
-        "Database, role, profile and limits of this server. Call it first, and when a tool reports a "
+        "Read-only server: database, role, profile and limits. Call it first, and when a tool reports a "
         "connection problem: it says what to fix."
     ),
     "tool.list_tables.title": "List tables",
@@ -116,7 +118,7 @@ EN: dict[str, str] = {
         "Tables, views and foreign tables the role can read, with row estimates and comments. At most "
         "{limit}; pass schema to narrow."
     ),
-    "tool.list_tables.schema": 'Only list objects in this schema, e.g. "public". Omit to list all schemas.',
+    "tool.list_tables.schema": "Only list objects in this schema; omit it to list every schema.",
     "tool.search_schema.title": "Search the schema",
     "tool.search_schema.description": (
         "Find tables, views and columns by a piece of name or comment; use it instead of paging list_tables. "
@@ -141,7 +143,7 @@ EN: dict[str, str] = {
     "tool.run_select.title": "Run a read-only query",
     "tool.run_select.description": (
         "One read-only statement: SELECT, WITH, VALUES, TABLE, EXPLAIN or SHOW. At most {limit} rows, so use "
-        "WHERE and LIMIT. Writes, settings and other sessions are refused."
+        "WHERE and LIMIT. Data cannot be changed: decline such requests."
     ),
     "argument.table": '"orders" or "sales.orders".',
     "argument.schema": "Schema to look in; omit for every readable schema.",
@@ -173,8 +175,8 @@ EN: dict[str, str] = {
     "error.unknown_arguments": "Unknown argument(s): {unknown}. Allowed: {allowed}.",
     "error.missing_arguments": "Missing argument(s): {missing}.",
     "error.none": "none",
-    "error.schema": 'schema must be a non-empty string such as "public"; omit it to list all schemas',
-    "error.schema_search": 'schema must be a non-empty string such as "public"; omit it to search every schema',
+    "error.schema": "schema must be a string with the name of a schema; omit it to list all schemas",
+    "error.schema_search": "schema must be a string with the name of a schema; omit it to search every schema",
     "error.table": 'table must be a non-empty string such as "orders" or "sales.orders"',
     "error.columns": 'columns must be a comma-separated string such as "id, total"',
     "error.text": 'text must be a non-empty string such as "order"',
@@ -186,6 +188,7 @@ EN: dict[str, str] = {
     "error.ambiguous": "{name!r} exists in several schemas: {options}. Pass schema to pick one.",
     "error.not_found": "No readable table or view named {name!r}{where}. Call list_tables to see what exists.",
     "error.not_found_similar": "No readable table or view named {name!r}{where}. Similar names: {similar}.",
+    "error.table_elsewhere": "{error} A table of that name is readable as {tables}: write the name with its schema.",
     "error.in_schema": " in schema {schema!r}",
     "error.no_column": "No column {name!r} in {relation}. Columns: {columns}.",
     "error.explain_row_sources": (
@@ -258,10 +261,15 @@ EN: dict[str, str] = {
     "sql.empty": "query must be a non-empty string with one SQL statement",
     "sql.only_comments": "The query has no statement, only comments.",
     "sql.one_statement": "Send one statement per call: the query has ';' between statements.",
-    "sql.not_allowed": "{word} is not allowed. Only read-only statements are: {allowed}.",
-    "sql.not_allowed_other": "This statement is not allowed. Only read-only statements are: {allowed}.",
+    "sql.not_allowed": (
+        "{word} is not allowed: this server only reads, so tell the user the change cannot be made here. "
+        "Read-only statements: {allowed}."
+    ),
+    "sql.not_allowed_other": "This statement is not allowed: this server only reads. Read-only statements: {allowed}.",
     "sql.explain": "EXPLAIN is allowed only for SELECT, WITH ... SELECT, VALUES and TABLE.",
-    "sql.forbidden_word": "{word} is not allowed: {reason}. This server only reads.",
+    "sql.forbidden_word": (
+        "{word} is not allowed: {reason}. This server only reads: tell the user the change cannot be made here."
+    ),
     "sql.row_locks": "Row locks (FOR SHARE, FOR KEY SHARE) are not allowed: they block other sessions.",
     "sql.function": "Function {name}() is not allowed: {reason}.",
     "sql.unterminated_dollar": "Unterminated dollar-quoted string.",
@@ -365,6 +373,9 @@ EN: dict[str, str] = {
         "No table or view {name!r} in the schemas of {stand} that the server has logins for. "
         "Call search_schema or list_schemas."
     ),
+    "stands.table_elsewhere": (
+        "{error} In this database a table of that name is in schema {schemas}: call again with that schema."
+    ),
     "stands.unreadable": "cannot read the stands registry {path}: {error}",
     "stands.bad_line": "{path}: {problem}",
     "stands.line": "line {number} is neither [section] nor key=value",
@@ -448,9 +459,74 @@ EN: dict[str, str] = {
     "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
     "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-mcp? [y/N] ",
     "import.offer_hint": "To import them, run: {command}",
+    # install.py export
+    "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
+    "export.help.tool": (
+        "the tool: dbeaver, datagrip (and the other JetBrains IDEs), pgadmin, pg-service (psql, pgcli), "
+        "vscode-pgsql or sqltools"
+    ),
+    "export.help.stands": "the stands to export: names or patterns separated by commas (default: all)",
+    "export.help.write": "write the files; without it, only show what would be written",
+    "export.help.project": (
+        "for datagrip: the project folder to add the data sources to; close the project in the IDE first "
+        "(default: {path})"
+    ),
+    "export.help.editor": "for vscode-pgsql and sqltools: the editor whose user settings get the connections",
+    "export.no_stands": "no stands to export: import them first (install.py import) or check PG_MCP_STANDS_FILE",
+    "export.no_match": "no stands match {patterns}; the registry has {stands}",
+    "export.no_dbeaver": (
+        "DBeaver's connections were not found on this machine; pass --workspace with the folder that holds "
+        "data-sources.json"
+    ),
+    "export.not_a_folder": "{path} is not a folder",
+    "export.no_editor": "the settings of {editor} were not found in {path}: is it installed?",
+    "export.unreadable": "cannot read {path}: {error}. Nothing was changed.",
+    "export.not_json": (
+        "{path} is not plain JSON (comments?), so it is left alone. Merge this into it by hand:\n{snippet}"
+    ),
+    "export.not_a_list": "{setting} in the editor's settings is not a list. Nothing was changed.",
+    "export.preview.one": "{tool}: {count} connection ({stands}) goes into:",
+    "export.preview.other": "{tool}: {count} connections ({stands}) go into:",
+    "export.present_dbeaver": "left out, already in DBeaver with the same host, port, database and user: {count}",
+    "export.present_service": "left out, already in {path}: {count}",
+    "export.nothing_new": "{tool} has all of these connections already; nothing to write",
+    "export.dry_run": "This was a preview, nothing was written. Add --write to write the files.",
+    "export.cannot_place": "cannot replace {path}: {error}. It is left as it was.",
+    "export.next_dbeaver": (
+        "Restart DBeaver: the connections are in a folder per stand and log in with the password file."
+    ),
+    "export.next_datagrip": (
+        "Open the folder {path} as a project in DataGrip or another JetBrains IDE (File | Open), or reopen the "
+        "project if it is open: the data sources are grouped by stand and log in with the password file."
+    ),
+    "export.next_pgadmin": (
+        "In pgAdmin: Tools | Import/Export Servers, Import, the file {path}. The servers are grouped by stand "
+        "and read passwords from {passfile}."
+    ),
+    "export.next_pg_service": (
+        'Connect with psql "service={service}" or pgcli "service={service}": the schema comes first on the search path.'
+    ),
+    "export.next_vscode_pgsql": (
+        "Reload the editor window: the connections are in the PostgreSQL view, a group per stand. The extension "
+        "cannot read the password file: it asks for each password once and keeps it in the system keychain."
+    ),
+    "export.next_sqltools": (
+        "Reload the editor window: the connections are in SQLTools, a group per stand, and log in with the "
+        "password file."
+    ),
+    "export.offer": "Found {tools}. Add the stand connections there ({count})? [y/N] ",
+    "export.offer_hint": "To add them later:",
     # install.py
     "install.description": "Register the pg-mcp server in the agent's settings and check it.",
-    "install.help.client": "whose settings.json to edit",
+    "install.help.client": "the agent or editor to register the server with (default: gigacode)",
+    "install.help.print": "print the entry and where it goes instead of registering it",
+    "clients.where_file": "for {client}, add this to {path}:",
+    "clients.where_paste": (
+        "{client} keeps its servers in the IDE: Settings | Tools | AI Assistant | Model Context Protocol (MCP) | "
+        "Add, then paste this into the JSON configuration field:"
+    ),
+    "clients.offer": "Also found {clients}. Register {name} there too? [y/N] ",
+    "clients.offer_hint": "To register {name} there later: {command}",
     "install.help.check": "only start the server and call status; change nothing",
     "install.help.profile": "tools for this group: schema, explore (default) or analyst (adds run_select)",
     "install.help.lang": "language of the server and of this script: en or ru (default: from the system locale)",
@@ -469,7 +545,9 @@ EN: dict[str, str] = {
 
 RU: dict[str, str] = {
     "server.instructions": (
-        "Доступ только на чтение к одной базе PostgreSQL. Сначала вызовите status: он покажет базу, роль, "
+        "Доступ только на чтение к одной базе PostgreSQL: добавить, изменить или удалить через него ничего "
+        "нельзя, поэтому от таких просьб отказывайтесь, а не просите пользователя их подтвердить. Сначала "
+        "вызовите status: он покажет базу, роль, "
         "инструменты этого профиля и действующие лимиты. Затем, прежде чем запрашивать данные, изучите "
         "структуру: list_tables — для обзора, search_schema — чтобы найти таблицы и колонки по имени или "
         "комментарию в большой базе, describe_table — для подробностей. Отвечайте пользователю на том языке, "
@@ -478,15 +556,15 @@ RU: dict[str, str] = {
     "number.decimal": ",",
     "tool.status.title": "Состояние подключения",
     "tool.status.description": (
-        "База, роль, профиль и лимиты этого сервера. Вызывайте первым и когда инструмент сообщает о проблеме "
-        "с подключением: в ответе сказано, что исправить."
+        "Сервер только читает: база, роль, профиль и лимиты. Вызывайте первым и когда инструмент сообщает о "
+        "проблеме с подключением: в ответе сказано, что исправить."
     ),
     "tool.list_tables.title": "Список таблиц",
     "tool.list_tables.description": (
         "Таблицы, представления и внешние таблицы, доступные роли, с оценкой числа строк и комментариями. Не "
         "больше {limit}; чтобы сузить, передайте schema."
     ),
-    "tool.list_tables.schema": 'Показать объекты только этой схемы, например "public". Без него — все схемы.',
+    "tool.list_tables.schema": "Показать объекты только этой схемы; без него — все схемы.",
     "tool.search_schema.title": "Поиск по схеме",
     "tool.search_schema.description": (
         "Находит таблицы, представления и колонки по фрагменту имени или комментария; в большой базе — вместо "
@@ -512,8 +590,8 @@ RU: dict[str, str] = {
     "tool.run_select.title": "Выполнить запрос на чтение",
     "tool.run_select.description": (
         "Одна команда только на чтение: SELECT, WITH, VALUES, TABLE, EXPLAIN или SHOW. Возвращает не больше "
-        "{limit} строк, поэтому отбирайте их через WHERE и LIMIT. Запись, настройки и чужие сессии "
-        "отклоняются."
+        "{limit} строк, поэтому отбирайте их через WHERE и LIMIT. Данные изменить нельзя: от таких просьб "
+        "отказывайтесь."
     ),
     "argument.table": '"orders" или "sales.orders".',
     "argument.schema": "Схема, в которой искать; без неё — все доступные схемы.",
@@ -544,12 +622,9 @@ RU: dict[str, str] = {
     "error.unknown_arguments": "Неизвестные аргументы: {unknown}. Допустимые: {allowed}.",
     "error.missing_arguments": "Не хватает аргументов: {missing}.",
     "error.none": "нет",
-    "error.schema": (
-        'Параметр schema должен быть непустой строкой, например "public"; чтобы увидеть все схемы, не передавайте его'
-    ),
+    "error.schema": ("Параметр schema должен быть строкой с именем схемы; чтобы увидеть все схемы, не передавайте его"),
     "error.schema_search": (
-        'Параметр schema должен быть непустой строкой, например "public"; чтобы искать во всех схемах, '
-        "не передавайте его"
+        "Параметр schema должен быть строкой с именем схемы; чтобы искать во всех схемах, не передавайте его"
     ),
     "error.table": 'Параметр table должен быть непустой строкой, например "orders" или "sales.orders"',
     "error.columns": 'Параметр columns должен быть строкой с именами через запятую, например "id, total"',
@@ -569,6 +644,7 @@ RU: dict[str, str] = {
     "error.not_found_similar": (
         "Среди доступных для чтения нет таблицы или представления {name!r}{where}. Похожие имена: {similar}."
     ),
+    "error.table_elsewhere": "{error} Таблица с таким именем доступна как {tables}: укажите имя вместе со схемой.",
     "error.in_schema": " в схеме {schema!r}",
     "error.no_column": "В {relation} нет колонки {name!r}. Колонки: {columns}.",
     "error.explain_row_sources": (
@@ -642,10 +718,18 @@ RU: dict[str, str] = {
     "sql.empty": "Параметр query должен быть непустой строкой с одной SQL-командой",
     "sql.only_comments": "В запросе нет команды, только комментарии.",
     "sql.one_statement": "Отправляйте одну команду за вызов: в запросе есть ';' между командами.",
-    "sql.not_allowed": "Команда {word} запрещена. Разрешены только команды на чтение: {allowed}.",
-    "sql.not_allowed_other": "Такая команда запрещена. Разрешены только команды на чтение: {allowed}.",
+    "sql.not_allowed": (
+        "Команда {word} запрещена: этот сервер только читает, поэтому скажите пользователю, что изменить "
+        "данные здесь нельзя. Разрешены команды на чтение: {allowed}."
+    ),
+    "sql.not_allowed_other": (
+        "Такая команда запрещена: этот сервер только читает. Разрешены команды на чтение: {allowed}."
+    ),
     "sql.explain": "EXPLAIN разрешён только для SELECT, WITH ... SELECT, VALUES и TABLE.",
-    "sql.forbidden_word": "Ключевое слово {word} запрещено: {reason}. Этот сервер только читает.",
+    "sql.forbidden_word": (
+        "Ключевое слово {word} запрещено: {reason}. Этот сервер только читает: скажите пользователю, что "
+        "изменить данные здесь нельзя."
+    ),
     "sql.row_locks": "Блокировки строк (FOR SHARE, FOR KEY SHARE) запрещены: они мешают другим сессиям.",
     "sql.function": "Функция {name}() запрещена: {reason}.",
     "sql.unterminated_dollar": "Строка в долларовых кавычках не закрыта.",
@@ -756,6 +840,9 @@ RU: dict[str, str] = {
         "В схемах стенда {stand}, для которых у сервера есть учётки, нет таблицы или представления {name!r}. "
         "Вызовите search_schema или list_schemas."
     ),
+    "stands.table_elsewhere": (
+        "{error} В этой базе таблица с таким именем есть в схеме {schemas}: повторите вызов с этой схемой."
+    ),
     "stands.unreadable": "не удалось прочитать реестр стендов {path}: {error}",
     "stands.bad_line": "{path}: {problem}",
     "stands.line": "строка {number} — не [секция] и не ключ=значение",
@@ -838,8 +925,76 @@ RU: dict[str, str] = {
     "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
     "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-mcp? [y/N] ",
     "import.offer_hint": "Чтобы перенести их, выполните: {command}",
+    "export.help": (
+        "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
+    ),
+    "export.help.tool": (
+        "инструмент: dbeaver, datagrip (и другие IDE JetBrains), pgadmin, pg-service (psql, pgcli), "
+        "vscode-pgsql или sqltools"
+    ),
+    "export.help.stands": "какие стенды выгрузить: имена или шаблоны через запятую (по умолчанию — все)",
+    "export.help.write": "записать файлы; без него — только показать, что будет записано",
+    "export.help.project": (
+        "для datagrip: папка проекта, куда добавить источники данных; сначала закройте проект в IDE "
+        "(по умолчанию: {path})"
+    ),
+    "export.help.editor": "для vscode-pgsql и sqltools: редактор, в чьи настройки пользователя добавить подключения",
+    "export.no_stands": (
+        "стендов для выгрузки нет: сначала импортируйте их (install.py import) или проверьте PG_MCP_STANDS_FILE"
+    ),
+    "export.no_match": "под {patterns} не подходит ни один стенд; в реестре есть {stands}",
+    "export.no_dbeaver": (
+        "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
+    ),
+    "export.not_a_folder": "{path} — не папка",
+    "export.no_editor": "настройки {editor} не найдены в {path}: редактор установлен?",
+    "export.unreadable": "не удалось прочитать {path}: {error}. Ничего не изменено.",
+    "export.not_json": (
+        "{path} — не чистый JSON (комментарии?), поэтому файл не тронут. Добавьте это в него вручную:\n{snippet}"
+    ),
+    "export.not_a_list": "{setting} в настройках редактора — не список. Ничего не изменено.",
+    "export.preview.one": "{tool}: {count} подключение ({stands}) попадёт в:",
+    "export.preview.few": "{tool}: {count} подключения ({stands}) попадут в:",
+    "export.preview.many": "{tool}: {count} подключений ({stands}) попадут в:",
+    "export.present_dbeaver": ("пропущены, уже есть в DBeaver с тем же хостом, портом, базой и пользователем: {count}"),
+    "export.present_service": "пропущены, уже есть в {path}: {count}",
+    "export.nothing_new": "в {tool} все эти подключения уже есть, записывать нечего",
+    "export.dry_run": "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы.",
+    "export.cannot_place": "не удалось заменить {path}: {error}. Файл остался прежним.",
+    "export.next_dbeaver": (
+        "Перезапустите DBeaver: подключения лежат в папках по стендам, пароли берутся из файла паролей."
+    ),
+    "export.next_datagrip": (
+        "Откройте папку {path} как проект в DataGrip или другой IDE JetBrains (File | Open), а если проект уже "
+        "открыт — откройте его заново: источники данных сгруппированы по стендам, пароли берутся из файла паролей."
+    ),
+    "export.next_pgadmin": (
+        "В pgAdmin: Tools | Import/Export Servers, Import, файл {path}. Серверы сгруппированы по стендам "
+        "и берут пароли из {passfile}."
+    ),
+    "export.next_pg_service": (
+        'Подключайтесь так: psql "service={service}" или pgcli "service={service}"; схема идёт первой в search_path.'
+    ),
+    "export.next_vscode_pgsql": (
+        "Перезагрузите окно редактора: подключения появятся в панели PostgreSQL, по группе на стенд. Расширение "
+        "не умеет читать файл паролей: оно спросит каждый пароль один раз и сохранит его в системной связке ключей."
+    ),
+    "export.next_sqltools": (
+        "Перезагрузите окно редактора: подключения появятся в SQLTools, по группе на стенд, пароли берутся "
+        "из файла паролей."
+    ),
+    "export.offer": "Найдены {tools}. Добавить туда подключения к стендам ({count})? [y/N] ",
+    "export.offer_hint": "Чтобы добавить их позже, выполните:",
     "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
-    "install.help.client": "чей settings.json править",
+    "install.help.client": "агент или редактор, где зарегистрировать сервер (по умолчанию: gigacode)",
+    "install.help.print": "напечатать запись и куда её положить, ничего не регистрируя",
+    "clients.where_file": "для {client} добавьте это в {path}:",
+    "clients.where_paste": (
+        "{client} хранит серверы в настройках IDE: Settings | Tools | AI Assistant | Model Context Protocol (MCP) | "
+        "Add, затем вставьте это в поле JSON configuration:"
+    ),
+    "clients.offer": "Найдены ещё {clients}. Зарегистрировать {name} и там? [y/N] ",
+    "clients.offer_hint": "Чтобы зарегистрировать {name} там позже: {command}",
     "install.help.check": "только запустить сервер и вызвать status, ничего не меняя",
     "install.help.profile": "инструменты для группы: schema, explore (по умолчанию) или analyst (добавляет run_select)",
     "install.help.lang": "язык сервера и этого скрипта: en или ru (по умолчанию — по локали системы)",
