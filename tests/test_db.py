@@ -195,6 +195,10 @@ class TestStructure:
 
 
 class TestSearch:
+    def test_a_schema_without_readable_tables_names_the_ones_with_them(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=f"No readable tables in schema 'no_such_schema'.*{SCHEMA}"):
+            tools["search_schema"].call({"text": "order", "schema": "no_such_schema"})
+
     def test_finds_tables_by_name_or_comment_in_either_alphabet(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["search_schema"], text="заказ", schema=SCHEMA) == [
             f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов",
@@ -295,6 +299,13 @@ class TestData:
     def test_database_errors_reach_the_model_as_text(self, analyst: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="SQLSTATE 42P01"):
             analyst["run_select"].call({"query": "SELECT * FROM no_such_table"})
+
+    def test_a_table_without_its_schema_is_pointed_to(self, analyst: dict[str, Tool]) -> None:
+        hint = rf"42P01.* readable as .*{SCHEMA}\.orders.*: write the name with its schema\."
+        with pytest.raises(ToolError, match=hint):
+            analyst["run_select"].call({"query": "SELECT count(*) FROM orders"})
+        with pytest.raises(ToolError, match=hint):
+            analyst["explain_query"].call({"query": "SELECT * FROM orders"})
 
 
 @pytest.mark.usefixtures("russian")

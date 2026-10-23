@@ -99,7 +99,9 @@ def _plural_form(language: str, count: int) -> str:
 
 EN: dict[str, str] = {
     "server.instructions": (
-        "Read-only access to one PostgreSQL database. Call status first: it shows the database, the role, "
+        "Read-only access to one PostgreSQL database: nothing can be inserted, changed or deleted through it, "
+        "so decline such requests instead of asking the user to confirm them. Call status first: it shows "
+        "the database, the role, "
         "the tools this profile offers and the limits in force. Then learn the structure before querying data: "
         "list_tables for an overview, search_schema to find tables and columns by name or comment in a large "
         "database, describe_table for the details. Reply to the user in the language they write in."
@@ -108,7 +110,7 @@ EN: dict[str, str] = {
     # Tools as the model sees them in tools/list.
     "tool.status.title": "Connection status",
     "tool.status.description": (
-        "Database, role, profile and limits of this server. Call it first, and when a tool reports a "
+        "Read-only server: database, role, profile and limits. Call it first, and when a tool reports a "
         "connection problem: it says what to fix."
     ),
     "tool.list_tables.title": "List tables",
@@ -116,7 +118,7 @@ EN: dict[str, str] = {
         "Tables, views and foreign tables the role can read, with row estimates and comments. At most "
         "{limit}; pass schema to narrow."
     ),
-    "tool.list_tables.schema": 'Only list objects in this schema, e.g. "public". Omit to list all schemas.',
+    "tool.list_tables.schema": "Only list objects in this schema; omit it to list every schema.",
     "tool.search_schema.title": "Search the schema",
     "tool.search_schema.description": (
         "Find tables, views and columns by a piece of name or comment; use it instead of paging list_tables. "
@@ -141,7 +143,7 @@ EN: dict[str, str] = {
     "tool.run_select.title": "Run a read-only query",
     "tool.run_select.description": (
         "One read-only statement: SELECT, WITH, VALUES, TABLE, EXPLAIN or SHOW. At most {limit} rows, so use "
-        "WHERE and LIMIT. Writes, settings and other sessions are refused."
+        "WHERE and LIMIT. Data cannot be changed: decline such requests."
     ),
     "argument.table": '"orders" or "sales.orders".',
     "argument.schema": "Schema to look in; omit for every readable schema.",
@@ -173,8 +175,8 @@ EN: dict[str, str] = {
     "error.unknown_arguments": "Unknown argument(s): {unknown}. Allowed: {allowed}.",
     "error.missing_arguments": "Missing argument(s): {missing}.",
     "error.none": "none",
-    "error.schema": 'schema must be a non-empty string such as "public"; omit it to list all schemas',
-    "error.schema_search": 'schema must be a non-empty string such as "public"; omit it to search every schema',
+    "error.schema": "schema must be a string with the name of a schema; omit it to list all schemas",
+    "error.schema_search": "schema must be a string with the name of a schema; omit it to search every schema",
     "error.table": 'table must be a non-empty string such as "orders" or "sales.orders"',
     "error.columns": 'columns must be a comma-separated string such as "id, total"',
     "error.text": 'text must be a non-empty string such as "order"',
@@ -186,6 +188,7 @@ EN: dict[str, str] = {
     "error.ambiguous": "{name!r} exists in several schemas: {options}. Pass schema to pick one.",
     "error.not_found": "No readable table or view named {name!r}{where}. Call list_tables to see what exists.",
     "error.not_found_similar": "No readable table or view named {name!r}{where}. Similar names: {similar}.",
+    "error.table_elsewhere": "{error} A table of that name is readable as {tables}: write the name with its schema.",
     "error.in_schema": " in schema {schema!r}",
     "error.no_column": "No column {name!r} in {relation}. Columns: {columns}.",
     "error.explain_row_sources": (
@@ -258,10 +261,15 @@ EN: dict[str, str] = {
     "sql.empty": "query must be a non-empty string with one SQL statement",
     "sql.only_comments": "The query has no statement, only comments.",
     "sql.one_statement": "Send one statement per call: the query has ';' between statements.",
-    "sql.not_allowed": "{word} is not allowed. Only read-only statements are: {allowed}.",
-    "sql.not_allowed_other": "This statement is not allowed. Only read-only statements are: {allowed}.",
+    "sql.not_allowed": (
+        "{word} is not allowed: this server only reads, so tell the user the change cannot be made here. "
+        "Read-only statements: {allowed}."
+    ),
+    "sql.not_allowed_other": "This statement is not allowed: this server only reads. Read-only statements: {allowed}.",
     "sql.explain": "EXPLAIN is allowed only for SELECT, WITH ... SELECT, VALUES and TABLE.",
-    "sql.forbidden_word": "{word} is not allowed: {reason}. This server only reads.",
+    "sql.forbidden_word": (
+        "{word} is not allowed: {reason}. This server only reads: tell the user the change cannot be made here."
+    ),
     "sql.row_locks": "Row locks (FOR SHARE, FOR KEY SHARE) are not allowed: they block other sessions.",
     "sql.function": "Function {name}() is not allowed: {reason}.",
     "sql.unterminated_dollar": "Unterminated dollar-quoted string.",
@@ -364,6 +372,9 @@ EN: dict[str, str] = {
     "stands.table_not_found": (
         "No table or view {name!r} in the schemas of {stand} that the server has logins for. "
         "Call search_schema or list_schemas."
+    ),
+    "stands.table_elsewhere": (
+        "{error} In this database a table of that name is in schema {schemas}: call again with that schema."
     ),
     "stands.unreadable": "cannot read the stands registry {path}: {error}",
     "stands.bad_line": "{path}: {problem}",
@@ -534,7 +545,9 @@ EN: dict[str, str] = {
 
 RU: dict[str, str] = {
     "server.instructions": (
-        "Доступ только на чтение к одной базе PostgreSQL. Сначала вызовите status: он покажет базу, роль, "
+        "Доступ только на чтение к одной базе PostgreSQL: добавить, изменить или удалить через него ничего "
+        "нельзя, поэтому от таких просьб отказывайтесь, а не просите пользователя их подтвердить. Сначала "
+        "вызовите status: он покажет базу, роль, "
         "инструменты этого профиля и действующие лимиты. Затем, прежде чем запрашивать данные, изучите "
         "структуру: list_tables — для обзора, search_schema — чтобы найти таблицы и колонки по имени или "
         "комментарию в большой базе, describe_table — для подробностей. Отвечайте пользователю на том языке, "
@@ -543,15 +556,15 @@ RU: dict[str, str] = {
     "number.decimal": ",",
     "tool.status.title": "Состояние подключения",
     "tool.status.description": (
-        "База, роль, профиль и лимиты этого сервера. Вызывайте первым и когда инструмент сообщает о проблеме "
-        "с подключением: в ответе сказано, что исправить."
+        "Сервер только читает: база, роль, профиль и лимиты. Вызывайте первым и когда инструмент сообщает о "
+        "проблеме с подключением: в ответе сказано, что исправить."
     ),
     "tool.list_tables.title": "Список таблиц",
     "tool.list_tables.description": (
         "Таблицы, представления и внешние таблицы, доступные роли, с оценкой числа строк и комментариями. Не "
         "больше {limit}; чтобы сузить, передайте schema."
     ),
-    "tool.list_tables.schema": 'Показать объекты только этой схемы, например "public". Без него — все схемы.',
+    "tool.list_tables.schema": "Показать объекты только этой схемы; без него — все схемы.",
     "tool.search_schema.title": "Поиск по схеме",
     "tool.search_schema.description": (
         "Находит таблицы, представления и колонки по фрагменту имени или комментария; в большой базе — вместо "
@@ -577,8 +590,8 @@ RU: dict[str, str] = {
     "tool.run_select.title": "Выполнить запрос на чтение",
     "tool.run_select.description": (
         "Одна команда только на чтение: SELECT, WITH, VALUES, TABLE, EXPLAIN или SHOW. Возвращает не больше "
-        "{limit} строк, поэтому отбирайте их через WHERE и LIMIT. Запись, настройки и чужие сессии "
-        "отклоняются."
+        "{limit} строк, поэтому отбирайте их через WHERE и LIMIT. Данные изменить нельзя: от таких просьб "
+        "отказывайтесь."
     ),
     "argument.table": '"orders" или "sales.orders".',
     "argument.schema": "Схема, в которой искать; без неё — все доступные схемы.",
@@ -609,12 +622,9 @@ RU: dict[str, str] = {
     "error.unknown_arguments": "Неизвестные аргументы: {unknown}. Допустимые: {allowed}.",
     "error.missing_arguments": "Не хватает аргументов: {missing}.",
     "error.none": "нет",
-    "error.schema": (
-        'Параметр schema должен быть непустой строкой, например "public"; чтобы увидеть все схемы, не передавайте его'
-    ),
+    "error.schema": ("Параметр schema должен быть строкой с именем схемы; чтобы увидеть все схемы, не передавайте его"),
     "error.schema_search": (
-        'Параметр schema должен быть непустой строкой, например "public"; чтобы искать во всех схемах, '
-        "не передавайте его"
+        "Параметр schema должен быть строкой с именем схемы; чтобы искать во всех схемах, не передавайте его"
     ),
     "error.table": 'Параметр table должен быть непустой строкой, например "orders" или "sales.orders"',
     "error.columns": 'Параметр columns должен быть строкой с именами через запятую, например "id, total"',
@@ -634,6 +644,7 @@ RU: dict[str, str] = {
     "error.not_found_similar": (
         "Среди доступных для чтения нет таблицы или представления {name!r}{where}. Похожие имена: {similar}."
     ),
+    "error.table_elsewhere": "{error} Таблица с таким именем доступна как {tables}: укажите имя вместе со схемой.",
     "error.in_schema": " в схеме {schema!r}",
     "error.no_column": "В {relation} нет колонки {name!r}. Колонки: {columns}.",
     "error.explain_row_sources": (
@@ -707,10 +718,18 @@ RU: dict[str, str] = {
     "sql.empty": "Параметр query должен быть непустой строкой с одной SQL-командой",
     "sql.only_comments": "В запросе нет команды, только комментарии.",
     "sql.one_statement": "Отправляйте одну команду за вызов: в запросе есть ';' между командами.",
-    "sql.not_allowed": "Команда {word} запрещена. Разрешены только команды на чтение: {allowed}.",
-    "sql.not_allowed_other": "Такая команда запрещена. Разрешены только команды на чтение: {allowed}.",
+    "sql.not_allowed": (
+        "Команда {word} запрещена: этот сервер только читает, поэтому скажите пользователю, что изменить "
+        "данные здесь нельзя. Разрешены команды на чтение: {allowed}."
+    ),
+    "sql.not_allowed_other": (
+        "Такая команда запрещена: этот сервер только читает. Разрешены команды на чтение: {allowed}."
+    ),
     "sql.explain": "EXPLAIN разрешён только для SELECT, WITH ... SELECT, VALUES и TABLE.",
-    "sql.forbidden_word": "Ключевое слово {word} запрещено: {reason}. Этот сервер только читает.",
+    "sql.forbidden_word": (
+        "Ключевое слово {word} запрещено: {reason}. Этот сервер только читает: скажите пользователю, что "
+        "изменить данные здесь нельзя."
+    ),
     "sql.row_locks": "Блокировки строк (FOR SHARE, FOR KEY SHARE) запрещены: они мешают другим сессиям.",
     "sql.function": "Функция {name}() запрещена: {reason}.",
     "sql.unterminated_dollar": "Строка в долларовых кавычках не закрыта.",
@@ -820,6 +839,9 @@ RU: dict[str, str] = {
     "stands.table_not_found": (
         "В схемах стенда {stand}, для которых у сервера есть учётки, нет таблицы или представления {name!r}. "
         "Вызовите search_schema или list_schemas."
+    ),
+    "stands.table_elsewhere": (
+        "{error} В этой базе таблица с таким именем есть в схеме {schemas}: повторите вызов с этой схемой."
     ),
     "stands.unreadable": "не удалось прочитать реестр стендов {path}: {error}",
     "stands.bad_line": "{path}: {problem}",
