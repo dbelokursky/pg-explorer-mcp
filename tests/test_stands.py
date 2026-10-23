@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from pg_mcp import __main__ as entry
-from pg_mcp import stand_tools
+from pg_mcp import i18n, stand_tools
 from pg_mcp.compare import (
     RELATIONS_SQL,
     SCHEMA_CONSTRAINTS_SQL,
@@ -39,7 +39,7 @@ from pg_mcp.stands import (
     stands_enabled,
     summarize,
 )
-from pg_mcp.tools import PROFILES, Tool, ToolError
+from pg_mcp.tools import PROFILES, Tool, ToolError, build_tools
 from tests.helpers import ROOT, rpc
 
 STANDS_ON = {"PG_MCP_STANDS": "*"}
@@ -411,7 +411,7 @@ class TestOfflineTools:
         analyst = by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
         assert "analyze" in analyst["explain_query"].properties
         assert "analyze" not in tools["explain_query"].properties
-        assert "Pass stand, and schema" in tools["describe_table"].description
+        assert "stand" not in tools["describe_table"].description  # the rule is in the instructions, once
 
     def test_status_without_a_stand_lists_the_stands_and_connects_nowhere(
         self, pool: Pool, tools: dict[str, Tool]
@@ -980,3 +980,19 @@ class TestEntry:
     ) -> None:
         status = self.answers(dict(env, PG_MCP_MAX_CONNECTIONS=raw))[2]
         assert f"at most {connections} connections stay open" in status
+
+
+# Every request to the model carries tools/list, and local models run with small contexts.
+SIZE_LIMITS = {("en", "single"): 4800, ("ru", "single"): 5200, ("en", "stands"): 7000, ("ru", "stands"): 7500}
+
+
+@pytest.mark.parametrize(("language", "mode"), list(SIZE_LIMITS))
+def test_tool_descriptions_stay_small(language: str, mode: str, tmp_path: Path) -> None:
+    with i18n.speaking(language):
+        if mode == "single":
+            tools = build_tools(Database({"PGUSER": "x"}), str(ROOT), profile="analyst")
+        else:
+            registry = loaded(STANDS_ON, [write(tmp_path / "stands.conf", sections())])
+            tools = build_stand_tools(Pool(registry, {}), str(ROOT), profile="analyst")
+    size = len(json.dumps([tool.describe() for tool in tools], ensure_ascii=False))
+    assert size <= SIZE_LIMITS[language, mode], f"tools/list in {language}, {mode}: {size} chars"

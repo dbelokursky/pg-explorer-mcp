@@ -106,59 +106,50 @@ EN: dict[str, str] = {
     ),
     "number.decimal": ".",
     # Tools as the model sees them in tools/list.
-    "tool.status.title": "Database connection status",
+    "tool.status.title": "Connection status",
     "tool.status.description": (
-        "Show which PostgreSQL database this server uses, as which role, the profile with its tools, "
-        "and the limits in force. Call it first, and again whenever another tool reports a connection "
-        "problem: its output says what to fix."
+        "Database, role, profile and limits of this server. Call it first, and when a tool reports a "
+        "connection problem: it says what to fix."
     ),
     "tool.list_tables.title": "List tables",
     "tool.list_tables.description": (
-        "List the tables, views, materialized views and foreign tables the current role can read, "
-        "with estimated row counts and comments. At most {limit} entries; pass schema to narrow the list."
+        "Tables, views and foreign tables the role can read, with row estimates and comments. At most "
+        "{limit}; pass schema to narrow."
     ),
     "tool.list_tables.schema": 'Only list objects in this schema, e.g. "public". Omit to list all schemas.',
     "tool.search_schema.title": "Search the schema",
     "tool.search_schema.description": (
-        "Find tables, views and columns whose name or comment contains a piece of text, in every schema the "
-        "current role can read. In a large database use it instead of paging through list_tables. "
+        "Find tables, views and columns by a piece of name or comment; use it instead of paging list_tables. "
         "At most {limit} matches."
     ),
     "tool.describe_table.title": "Describe a table",
     "tool.describe_table.description": (
-        "Describe one table or view the current role can read: columns with types, NOT NULL, defaults and "
-        "comments, then primary, unique and foreign keys, the tables that reference it, and its indexes. "
-        'Accepts "orders" or "sales.orders".'
+        "Columns with types, NOT NULL, defaults and comments; keys, referencing tables, indexes."
     ),
     "tool.sample_rows.title": "Sample rows",
     "tool.sample_rows.description": (
-        "Show a few rows of one table or view the current role can read, optionally only some columns. "
-        "Default {default} rows, at most {limit}, in no particular order."
+        "A few rows of a table or view, optionally some columns. Default {default}, at most {limit}, in no order."
     ),
     "tool.explain_query.title": "Explain a query",
     "tool.explain_query.description": (
-        "Show PostgreSQL's plan for one read-only query: SELECT, WITH ... SELECT, VALUES or TABLE, "
-        "passed without EXPLAIN. The query is not run."
+        "PostgreSQL's plan for one read-only query passed without EXPLAIN; the query is not run."
     ),
     "tool.explain_query.description_analyze": (
-        "Show PostgreSQL's plan for one read-only query: SELECT, WITH ... SELECT, VALUES or TABLE, "
-        "passed without EXPLAIN. The query is not run unless analyze is true: then it runs inside a "
-        "read-only transaction and the plan shows real timings."
+        "PostgreSQL's plan for one read-only query passed without EXPLAIN; with analyze it runs read-only and "
+        "the plan shows real timings."
     ),
     "tool.run_select.title": "Run a read-only query",
     "tool.run_select.description": (
-        "Run one read-only SQL statement in the PostgreSQL dialect: SELECT, WITH ... SELECT, VALUES, TABLE, "
-        "EXPLAIN or SHOW. Returns at most {limit} rows; use WHERE, ORDER BY and LIMIT to get the rows you "
-        "need. Statements that change data, structure, settings or other sessions are refused."
+        "One read-only statement: SELECT, WITH, VALUES, TABLE, EXPLAIN or SHOW. At most {limit} rows, so use "
+        "WHERE and LIMIT. Writes, settings and other sessions are refused."
     ),
-    "argument.table": 'Table or view name, optionally with its schema: "orders" or "sales.orders".',
-    "argument.schema": "Schema to look in. Omit it to search every schema the role can read.",
-    "argument.columns": 'Comma-separated column names, e.g. "id, total". Omit for all.',
+    "argument.table": '"orders" or "sales.orders".',
+    "argument.schema": "Schema to look in; omit for every readable schema.",
+    "argument.columns": 'Columns, e.g. "id, total"; omit for all.',
     "argument.limit": "How many rows, 1 to {limit}. Default {default}.",
-    "argument.query": "One SQL statement in the PostgreSQL dialect.",
-    "argument.text": 'A piece of a name or comment, e.g. "order" or "customer".',
-    "argument.analyze": "Run the query to get real timings. Default false.",
-    # status
+    "argument.query": "One SQL statement.",
+    "argument.text": 'Part of a name or comment, e.g. "order".',
+    "argument.analyze": "Run the query for real timings.",
     "status.version": "pg-mcp {version} on Python {python}, installed at {path}",
     "status.name": "server name: {name}",
     "status.target": "target: {target}",
@@ -305,30 +296,22 @@ EN: dict[str, str] = {
     "sql.reason.slots": "it changes replication slots",
     # Many stands in one server entry (ADR 0006).
     "stands.instructions": (
-        "This server reaches many stands. status lists them and list_schemas shows the schemas of one; every "
-        "tool takes stand, and reading data takes schema as well. search_schema and run_select take stands "
-        "instead of stand to ask several stands the same thing in one call. compare_schema shows how one "
-        "schema differs between two stands."
+        "This server reaches many stands. status lists them, list_schemas shows the schemas of one. Every "
+        "tool takes stand; reading data also takes schema, whose login the server uses; database only when "
+        "the schema is in several databases of the stand. search_schema and run_select take stands instead of "
+        "stand for several stands in one call; compare_schema compares one schema on two stands."
     ),
-    "stands.tool_note": "Pass stand, and schema to read data with that schema's login.",
-    "stands.tool_note_many": (
-        "Pass stand, or stands to ask several stands in one call; and schema to read data with that schema's login."
-    ),
-    "stands.status_note": "Without stand it lists the stands; with stand it also checks that stand's connection.",
+    "stands.status_note": "With stand it also checks that stand.",
     "tool.list_schemas.title": "List schemas",
     "tool.list_schemas.description": (
-        "List the databases of a stand and their schemas that this server has logins for. "
-        "Call it before working on a stand you have not used yet."
+        "Databases of a stand and the schemas the server has logins for; call it first on a new stand."
     ),
-    "argument.stand": 'Stand name, e.g. "dev7"; status lists the stands.',
-    "argument.stands": (
-        'Several stands in one call, instead of stand: names separated by commas or a pattern, e.g. "dev1,dev2" '
-        'or "dev*"; at most {limit} stands.'
-    ),
-    "argument.stand_status": 'A stand to check, e.g. "dev7". Omit it for the list of stands.',
-    "argument.database": "Database on the stand. Needed only when the schema exists in several of its databases.",
-    "argument.schema_data": "Schema to work in: the server uses its login, and unqualified names resolve in it.",
-    "argument.schema_stand": "Only this schema, read with its login. Omit it to cover every schema of the stand.",
+    "argument.stand": 'Stand, e.g. "dev7".',
+    "argument.stands": 'Instead of stand: "dev1,dev2" or "dev*", at most {limit} stands.',
+    "argument.stand_status": "Stand to check; omit for the list of stands.",
+    "argument.database": "Only when the schema is in several databases of the stand.",
+    "argument.schema_data": "Schema whose login runs the query; unqualified names resolve in it.",
+    "argument.schema_stand": "One schema; omit for the whole stand.",
     "status.stands": "stands: {count} ({stands}), connections in the registry: {connections}",
     "status.registry": "registry: {files}",
     "status.limits_stands": (
@@ -390,15 +373,13 @@ EN: dict[str, str] = {
     "stands.none_found": "PG_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings",
     "stands.more_warnings": "... and {count} more problems in the stands registry",
     # compare_schema: one schema on two stands.
-    "tool.compare_schema.title": "Compare a schema on two stands",
+    "tool.compare_schema.title": "Compare a schema",
     "tool.compare_schema.description": (
-        "Compare the structure of one schema on two stands: tables and views, columns with types, NOT NULL and "
-        "defaults, constraints and indexes. Shows what exists on one stand only and what differs; the data is "
-        "not compared. Pass database only when the schema exists in several databases of a stand."
+        "How one schema differs between two stands: tables, columns, constraints, indexes. Data is not read."
     ),
-    "argument.stand_a": 'The first stand, e.g. "dev7".',
-    "argument.stand_b": 'The second stand, to compare with the first, e.g. "dev12".',
-    "argument.schema_compare": "The schema to compare; on each stand it is read with its own login.",
+    "argument.stand_a": "First stand.",
+    "argument.stand_b": "Second stand.",
+    "argument.schema_compare": "Schema to compare.",
     "compare.header": "{a}  vs  {b}",
     "compare.only_on": "only on {stand}:",
     "compare.differ": "differ:",
@@ -443,61 +424,52 @@ RU: dict[str, str] = {
         "на котором он пишет."
     ),
     "number.decimal": ",",
-    "tool.status.title": "Состояние подключения к базе",
+    "tool.status.title": "Состояние подключения",
     "tool.status.description": (
-        "Показывает, к какой базе PostgreSQL подключён сервер и под какой ролью, какой профиль включён и какие "
-        "в нём инструменты, а также действующие лимиты. Вызывайте первым, а также каждый раз, когда другой "
-        "инструмент сообщает о проблеме с подключением: в ответе сказано, что исправить."
+        "База, роль, профиль и лимиты этого сервера. Вызывайте первым и когда инструмент сообщает о проблеме "
+        "с подключением: в ответе сказано, что исправить."
     ),
     "tool.list_tables.title": "Список таблиц",
     "tool.list_tables.description": (
-        "Перечисляет таблицы, представления, материализованные представления и внешние таблицы, которые "
-        "текущая роль может читать, с оценкой числа строк и комментариями. Не больше {limit} записей; "
-        "чтобы сузить список, передайте schema."
+        "Таблицы, представления и внешние таблицы, доступные роли, с оценкой числа строк и комментариями. Не "
+        "больше {limit}; чтобы сузить, передайте schema."
     ),
     "tool.list_tables.schema": 'Показать объекты только этой схемы, например "public". Без него — все схемы.',
     "tool.search_schema.title": "Поиск по схеме",
     "tool.search_schema.description": (
-        "Находит таблицы, представления и колонки, в имени или комментарии которых есть заданный фрагмент, "
-        "во всех схемах, доступных текущей роли для чтения. В большой базе используйте его вместо листания "
-        "list_tables. Не больше {limit} совпадений."
+        "Находит таблицы, представления и колонки по фрагменту имени или комментария; в большой базе — вместо "
+        "листания list_tables. Не больше {limit} совпадений."
     ),
     "tool.describe_table.title": "Описание таблицы",
     "tool.describe_table.description": (
-        "Описывает одну таблицу или представление, доступные текущей роли для чтения: колонки с типами, "
-        "NOT NULL, значениями по умолчанию и комментариями, затем первичный, уникальные и внешние ключи, "
-        'таблицы, которые на неё ссылаются, и индексы. Принимает "orders" или "sales.orders".'
+        "Колонки с типами, NOT NULL, значениями по умолчанию и комментариями; ключи, ссылающиеся таблицы, индексы."
     ),
     "tool.sample_rows.title": "Примеры строк",
     "tool.sample_rows.description": (
-        "Показывает несколько строк одной таблицы или представления, доступных текущей роли для чтения, — "
-        "все колонки или только выбранные. По умолчанию {default} строк, не больше {limit}, "
-        "в произвольном порядке."
+        "Несколько строк таблицы или представления, все колонки или выбранные. По умолчанию {default}, не "
+        "больше {limit}, в произвольном порядке."
     ),
     "tool.explain_query.title": "План запроса",
     "tool.explain_query.description": (
-        "Показывает план PostgreSQL для одного запроса только на чтение: SELECT, WITH ... SELECT, VALUES или "
-        "TABLE, переданного без EXPLAIN. Запрос не выполняется."
+        "План PostgreSQL для одного запроса на чтение, переданного без EXPLAIN; запрос не выполняется."
     ),
     "tool.explain_query.description_analyze": (
-        "Показывает план PostgreSQL для одного запроса только на чтение: SELECT, WITH ... SELECT, VALUES или "
-        "TABLE, переданного без EXPLAIN. Запрос не выполняется, если только analyze не равен true: тогда он "
-        "выполняется в транзакции только на чтение, и в плане видно реальное время."
+        "План PostgreSQL для одного запроса на чтение, переданного без EXPLAIN; с analyze запрос выполняется "
+        "в транзакции только на чтение, и в плане видно реальное время."
     ),
     "tool.run_select.title": "Выполнить запрос на чтение",
     "tool.run_select.description": (
-        "Выполняет одну SQL-команду только на чтение на диалекте PostgreSQL: SELECT, WITH ... SELECT, VALUES, "
-        "TABLE, EXPLAIN или SHOW. Возвращает не больше {limit} строк; нужные строки отбирайте через WHERE, "
-        "ORDER BY и LIMIT. Команды, которые меняют данные, структуру или настройки либо затрагивают другие "
-        "сессии, отклоняются."
+        "Одна команда только на чтение: SELECT, WITH, VALUES, TABLE, EXPLAIN или SHOW. Возвращает не больше "
+        "{limit} строк, поэтому отбирайте их через WHERE и LIMIT. Запись, настройки и чужие сессии "
+        "отклоняются."
     ),
-    "argument.table": 'Имя таблицы или представления, можно со схемой: "orders" или "sales.orders".',
-    "argument.schema": "Схема, в которой искать. Без неё поиск идёт по всем схемам, доступным роли.",
-    "argument.columns": 'Имена колонок через запятую, например "id, total". Без него — все колонки.',
+    "argument.table": '"orders" или "sales.orders".',
+    "argument.schema": "Схема, в которой искать; без неё — все доступные схемы.",
+    "argument.columns": 'Колонки, например "id, total"; без них — все.',
     "argument.limit": "Сколько строк, от 1 до {limit}. По умолчанию {default}.",
-    "argument.query": "Одна SQL-команда на диалекте PostgreSQL.",
-    "argument.text": 'Фрагмент имени или комментария, например "order" или "заказ".',
-    "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время. По умолчанию false.",
+    "argument.query": "Одна SQL-команда.",
+    "argument.text": 'Фрагмент имени или комментария, например "заказ".',
+    "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время.",
     "status.version": "pg-mcp {version} на Python {python}, установлен в {path}",
     "status.name": "имя сервера: {name}",
     "status.target": "адрес: {target}",
@@ -655,31 +627,23 @@ RU: dict[str, str] = {
     "sql.reason.advisory": "advisory-блокировки переживают запрос и мешают другим сессиям",
     "sql.reason.slots": "она меняет слоты репликации",
     "stands.instructions": (
-        "Этот сервер работает со многими стендами. status перечисляет их, list_schemas показывает схемы стенда; "
-        "каждый инструмент принимает stand, а для чтения данных нужна ещё и schema. search_schema и run_select "
-        "принимают вместо stand ещё и stands: один и тот же запрос к нескольким стендам за один вызов. "
-        "compare_schema показывает, чем одна схема на одном стенде отличается от другого."
+        "Этот сервер работает со многими стендами. status перечисляет их, list_schemas показывает схемы "
+        "стенда. Каждый инструмент принимает stand; для чтения данных нужна и schema — сервер берёт её "
+        "учётку; database — только если схема есть в нескольких базах стенда. search_schema и run_select "
+        "принимают вместо stand ещё и stands — несколько стендов за один вызов; compare_schema сравнивает "
+        "одну схему на двух стендах."
     ),
-    "stands.tool_note": "Передайте stand, а для чтения данных — schema: данные читаются под учёткой этой схемы.",
-    "stands.tool_note_many": (
-        "Передайте stand или stands — несколько стендов за один вызов, а для чтения данных — schema: данные "
-        "читаются под учёткой этой схемы."
-    ),
-    "stands.status_note": "Без stand перечисляет стенды; со stand ещё и проверяет подключение к этому стенду.",
+    "stands.status_note": "Со stand ещё и проверяет этот стенд.",
     "tool.list_schemas.title": "Список схем",
     "tool.list_schemas.description": (
-        "Показывает базы стенда и их схемы, для которых у сервера есть учётки. "
-        "Вызывайте перед работой со стендом, на котором ещё не были."
+        "Базы стенда и схемы, для которых у сервера есть учётки; вызывайте первым на новом стенде."
     ),
-    "argument.stand": 'Имя стенда, например "dev7"; status перечисляет стенды.',
-    "argument.stands": (
-        'Несколько стендов за один вызов, вместо stand: имена через запятую или шаблон, например "dev1,dev2" '
-        'или "dev*"; не больше {limit} стендов.'
-    ),
-    "argument.stand_status": 'Стенд, который нужно проверить, например "dev7". Без него — список стендов.',
-    "argument.database": "База на стенде. Нужна, только если схема есть в нескольких его базах.",
-    "argument.schema_data": "Схема, в которой работать: сервер берёт её учётку, а имена без схемы ищутся в ней.",
-    "argument.schema_stand": "Только эта схема, под её учёткой. Без неё — все схемы стенда.",
+    "argument.stand": 'Стенд, например "dev7".',
+    "argument.stands": 'Вместо stand: "dev1,dev2" или "dev*", не больше {limit} стендов.',
+    "argument.stand_status": "Стенд для проверки; без него — список стендов.",
+    "argument.database": "Только если схема есть в нескольких базах стенда.",
+    "argument.schema_data": "Схема, под учёткой которой идёт запрос; имена без схемы ищутся в ней.",
+    "argument.schema_stand": "Одна схема; без неё — весь стенд.",
     "status.stands": "стенды: {count} ({stands}), подключений в реестре: {connections}",
     "status.registry": "реестр: {files}",
     "status.limits_stands": (
@@ -749,16 +713,13 @@ RU: dict[str, str] = {
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
     "stands.none_found": "PG_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*",
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
-    "tool.compare_schema.title": "Сравнить схему на двух стендах",
+    "tool.compare_schema.title": "Сравнить схему",
     "tool.compare_schema.description": (
-        "Сравнивает структуру одной схемы на двух стендах: таблицы и представления, колонки с типами, NOT NULL "
-        "и значениями по умолчанию, ограничения и индексы. Показывает, что есть только на одном стенде и что "
-        "отличается; данные не сравниваются. database передавайте, только если схема есть в нескольких базах "
-        "стенда."
+        "Чем одна схема отличается на двух стендах: таблицы, колонки, ограничения, индексы. Данные не читаются."
     ),
-    "argument.stand_a": 'Первый стенд, например "dev7".',
-    "argument.stand_b": 'Второй стенд, с которым сравнивать первый, например "dev12".',
-    "argument.schema_compare": "Схема, которую сравнивать; на каждом стенде она читается под своей учёткой.",
+    "argument.stand_a": "Первый стенд.",
+    "argument.stand_b": "Второй стенд.",
+    "argument.schema_compare": "Схема для сравнения.",
     "compare.header": "{a}  vs  {b}",
     "compare.only_on": "только на {stand}:",
     "compare.differ": "отличаются:",
