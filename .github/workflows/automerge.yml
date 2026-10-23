@@ -1,0 +1,45 @@
+name: automerge
+
+# Every pull request into develop gets GitHub's auto-merge: it merges itself once the checks that the
+# branch protection requires have passed, and never before. Left alone: drafts until they are ready,
+# pull requests from forks (outside code does not merge itself, and their token could not do it
+# anyway), and main, which requires no checks, so a release pull request there would merge at once.
+#
+# A merge made with the built-in token starts no workflow, so the full run of tests.yml on develop
+# (macOS, PostgreSQL 14, 15 and 17) would not follow it. The secret AUTOMERGE_TOKEN, a fine-grained
+# token of the owner with read and write access to contents and pull requests of this repository,
+# avoids that: the merge is then the owner's own. So does turning auto-merge on right after opening the
+# pull request (gh pr merge --auto --merge): a pull request with auto-merge on already is skipped here.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    branches: [develop]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    name: turn on auto-merge
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: gh pr merge --auto
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN || github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+            echo "auto-merge is on already"
+            exit 0
+          fi
+          if out=$(gh pr merge "$PR" --auto --merge 2>&1); then
+            echo "$out"
+          else
+            case "$out" in
+              *"clean status"*) gh pr merge "$PR" --merge ;;  # every required check has passed already
+              *) echo "$out" >&2; exit 1 ;;
+            esac
+          fi
