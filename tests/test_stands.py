@@ -34,6 +34,7 @@ from pg_mcp.stands import (
     Registry,
     StandError,
     Target,
+    exported_sections,
     load_registry,
     parse_service_file,
     registry_files,
@@ -84,6 +85,13 @@ class TestServiceFile:
             {"dev1.orders.billing": {"host": "db", "options": "-c search_path=x"}, "reports": {"port": "1"}},
             [],
         )
+
+    def test_the_sections_an_export_wrote_are_known_by_the_line_above_them(self) -> None:
+        text = (
+            "# pg-mcp export\n[dev1.orders.billing]\nhost=db\n\n# mine\n[dev2.orders.billing]\nhost=db\n"
+            "# pg-mcp export\n\n[dev3.orders.billing]\nhost=db\n"
+        )
+        assert exported_sections(text) == {"dev1.orders.billing"}
 
     def test_lines_it_cannot_read_are_reported_by_number(self) -> None:
         found, problems = parse_service_file("host=orphan\n[dev1.orders.billing]\nhost=db\njust words\n")
@@ -141,6 +149,10 @@ class TestLoadRegistry:
     def test_patterns_choose_the_stands_and_names_fold_to_lower_case(self, tmp_path: Path) -> None:
         own = write(tmp_path / "stands.conf", "[DEV7.orders.billing]\nhost=db\n" + sections())
         assert loaded({"PG_MCP_STANDS": "dev*"}, [own]).stands() == ["dev1", "dev2", "dev7"]
+
+    def test_copies_an_export_wrote_are_not_stands(self, tmp_path: Path) -> None:
+        service = write(tmp_path / "service.conf", "# pg-mcp export\n[dev3.orders.billing]\nhost=db\n" + sections())
+        assert [target.name for target in loaded(STANDS_ON, [service]).targets] == list(NAMES)
 
     def test_the_import_file_wins_over_pg_service_conf(self, tmp_path: Path) -> None:
         own = write(tmp_path / "stands.conf", "[dev1.orders.billing]\nhost=imported\n")
