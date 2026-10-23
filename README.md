@@ -210,6 +210,34 @@ PGDATABASE=hr PGUSER=mcp_hr python3 install.py --name hr --profile schema
 
 The agent then gets the tools of every entry, and the `status` of each names its server and database.
 
+#### Other agents and editors
+
+`--client` registers the server with other MCP clients as well, in each one's own file and format:
+
+| `--client` | Where the entry goes |
+|---|---|
+| `gigacode` (the default), `qwen` | `~/.gigacode/settings.json`, `~/.qwen/settings.json` |
+| `vscode` | the user `mcp.json` of VS Code (GitHub Copilot agent mode), under `servers` |
+| `cursor` | `~/.cursor/mcp.json` |
+| `windsurf` | Windsurf, now Devin Desktop: `~/.config/devin/mcp_config.json`, or the older file where one is in use |
+| `cline` | `~/.cline/data/settings/cline_mcp_settings.json`, shared by Cline in VS Code, JetBrains and its CLI |
+| `roo` | the settings file of the Roo Code extension in VS Code (the extension is no longer developed) |
+| `continue` | a block file `~/.continue/mcpServers/pg.yaml` |
+| `lmstudio` | `~/.lmstudio/mcp.json` |
+| `claude-desktop` | the app's `claude_desktop_config.json` |
+| `junie` | `~/.junie/mcp/mcp.json` |
+| `jetbrains` | nothing is written: AI Assistant keeps its servers in Settings, so the entry is printed to paste |
+
+```bash
+python3 install.py --client cursor            # write into Cursor's file (with a backup) and check
+python3 install.py --client vscode --print    # only show the entry and where it goes
+```
+
+`--print` suits a client this list lacks, or a file you would rather edit yourself. A file with comments
+is never rewritten: `install.py` prints what to add instead. Run at a terminal, `install.py` notices the
+other clients installed on this machine once it has registered the server and offers to add it there
+too. The extension (the context and the `/pg:` commands) exists for GigaCode CLI and Qwen Code only.
+
 ### 6. The extension
 
 ```bash
@@ -709,10 +737,10 @@ a table PostgreSQL has never analyzed looks exactly like an empty one, so `list_
 server registered by `install.py`: the client must connect to the server and see the extension. GigaCode
 CLI itself is not available outside companies, so it is checked by hand before a release.
 
-**Will another MCP client do?** Yes, any client that starts servers over stdio. Give it the command
-`python3`, the arguments `-I /path/to/pg-mcp/run.py` and the `PG*` variables in the environment. If the
-client reads the `mcpServers` format, the entry from [step 5](#5-register-the-server-with-the-agent)
-works as is.
+**Will another MCP client do?** Yes, any client that starts servers over stdio. `install.py --client`
+writes the entry for VS Code, Cursor, Windsurf, Cline, Roo Code, Continue, LM Studio, Claude Desktop and
+JetBrains ([other agents and editors](#other-agents-and-editors)); for any other client,
+`install.py --client cursor --print` shows the command, the arguments and the `PG*` variables to give it.
 
 **Why does the agent answer in the wrong language?** The model chooses the language of its answers;
 the server asks it to use the user's language. `PG_MCP_LANG` sets the language of the tools themselves.

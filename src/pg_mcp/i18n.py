@@ -450,7 +450,15 @@ EN: dict[str, str] = {
     "import.offer_hint": "To import them, run: {command}",
     # install.py
     "install.description": "Register the pg-mcp server in the agent's settings and check it.",
-    "install.help.client": "whose settings.json to edit",
+    "install.help.client": "the agent or editor to register the server with (default: gigacode)",
+    "install.help.print": "print the entry and where it goes instead of registering it",
+    "clients.where_file": "for {client}, add this to {path}:",
+    "clients.where_paste": (
+        "{client} keeps its servers in the IDE: Settings | Tools | AI Assistant | Model Context Protocol (MCP) | "
+        "Add, then paste this into the JSON configuration field:"
+    ),
+    "clients.offer": "Also found {clients}. Register {name} there too? [y/N] ",
+    "clients.offer_hint": "To register {name} there later: {command}",
     "install.help.check": "only start the server and call status; change nothing",
     "install.help.profile": "tools for this group: schema, explore (default) or analyst (adds run_select)",
     "install.help.lang": "language of the server and of this script: en or ru (default: from the system locale)",
@@ -839,7 +847,15 @@ RU: dict[str, str] = {
     "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-mcp? [y/N] ",
     "import.offer_hint": "Чтобы перенести их, выполните: {command}",
     "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
-    "install.help.client": "чей settings.json править",
+    "install.help.client": "агент или редактор, где зарегистрировать сервер (по умолчанию: gigacode)",
+    "install.help.print": "напечатать запись и куда её положить, ничего не регистрируя",
+    "clients.where_file": "для {client} добавьте это в {path}:",
+    "clients.where_paste": (
+        "{client} хранит серверы в настройках IDE: Settings | Tools | AI Assistant | Model Context Protocol (MCP) | "
+        "Add, затем вставьте это в поле JSON configuration:"
+    ),
+    "clients.offer": "Найдены ещё {clients}. Зарегистрировать {name} и там? [y/N] ",
+    "clients.offer_hint": "Чтобы зарегистрировать {name} там позже: {command}",
     "install.help.check": "только запустить сервер и вызвать status, ничего не меняя",
     "install.help.profile": "инструменты для группы: schema, explore (по умолчанию) или analyst (добавляет run_select)",
     "install.help.lang": "язык сервера и этого скрипта: en или ru (по умолчанию — по локали системы)",

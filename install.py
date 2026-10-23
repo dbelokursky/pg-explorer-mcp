@@ -4,6 +4,7 @@
     python3 install.py            register in ~/.gigacode/settings.json, then check
     python3 install.py --check    only start the server and call status
     python3 install.py --client qwen
+    python3 install.py --client cursor --print   show the entry for Cursor and where it goes
     python3 install.py --lang ru  the server and this script speak Russian
     PGDATABASE=sales python3 install.py --name sales  another database, as pg-sales
     python3 install.py import dbeaver            show what DBeaver's connections would bring
@@ -34,7 +35,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pg_mcp import i18n, imports
+from pg_mcp import clients, i18n, imports
 from pg_mcp.i18n import t
 
 MIN_PYTHON = (3, 9)
@@ -44,6 +45,7 @@ SERVER_NAME = "pg"  # further databases register as pg-<name>
 STANDS_NAME = "stands"  # the entry an import registers: pg-stands, with PG_MCP_STANDS=*
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
 SETTINGS_FILES = {"gigacode": "~/.gigacode/settings.json", "qwen": "~/.qwen/settings.json"}
+EXTENSION_CLIENTS = ("gigacode", "qwen")  # the clients that link pg-mcp as an extension too
 COPIED_ENV = (
     "PGHOST",
     "PGPORT",
@@ -202,20 +204,77 @@ def main(argv: list[str]) -> int:
         return import_command(args, language)
 
     entry = server_entry(args.profile, language, args.name)
+    name = server_name(args.name)
+    if args.print:
+        show(clients.CLIENTS[args.client], name, entry)
+        return 0
     if not args.check:
-        register(Path(SETTINGS_FILES[args.client]).expanduser(), entry, server_name(args.name))
+        install_into(args.client, name, entry)
     ok = check(entry)
     if not args.check:
         print()
-        print(t("install.next", client=args.client, path=ROOT))
+        if args.client in EXTENSION_CLIENTS:
+            print(t("install.next", client=args.client, path=ROOT))
         print(t("install.restart"))
+        offer_clients(name, entry, besides=args.client)
         if args.name is None:
             offer_import(language)
     return 0 if ok else 1
 
 
+def install_into(key: str, name: str, entry: dict[str, Any]) -> bool:
+    """Register the entry with one client: its file, or the text to paste for a client without one."""
+    client = clients.CLIENTS[key]
+    if key in SETTINGS_FILES:
+        register(Path(SETTINGS_FILES[key]).expanduser(), entry, name)
+        return True
+    path = client.path(os.environ, Path.home(), name)
+    if path is None:
+        show(client, name, entry)
+        return True
+    try:
+        backup = clients.write(client, path, name, entry)
+    except clients.ClientConfigError as exc:
+        print(t("install.not_json", path=path, snippet=exc))
+        return False
+    if backup is not None:
+        print(t("install.backup", path=backup))
+    print(t("install.registered", name=name, path=path))
+    return True
+
+
+def show(client: clients.Client, name: str, entry: dict[str, Any]) -> None:
+    """Print the entry in the client's format and where it goes; nothing is written."""
+    path = client.path(os.environ, Path.home(), name)
+    if path is None:
+        print(t("clients.where_paste", client=client.label))
+    else:
+        print(t("clients.where_file", client=client.label, path=path))
+    print(clients.snippet(client, name, entry))
+
+
+def offer_clients(name: str, entry: dict[str, Any], *, besides: str) -> None:
+    """At a terminal: offer to register the entry with the other clients installed on this machine."""
+    found = clients.installed(os.environ, Path.home(), besides=besides)
+    if not found or not sys.stdin.isatty():
+        return
+    labels = ", ".join(client.label for client in found)
+    try:
+        answer = input(t("clients.offer", clients=labels, name=name))
+    except EOFError:
+        return
+    if answer.strip().lower() in ("y", "yes", "д", "да"):
+        for client in found:
+            print()
+            install_into(client.key, name, entry)
+        return
+    keys = "|".join(client.key for client in found)
+    print(t("clients.offer_hint", name=name, command=f"{sys.executable} {ROOT / 'install.py'} --client {keys}"))
+
+
 def _common_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--client", choices=sorted(SETTINGS_FILES), default="gigacode", help=t("install.help.client"))
+    parser.add_argument("--client", choices=list(clients.CLIENTS), default="gigacode", help=t("install.help.client"))
+    parser.add_argument("--print", action="store_true", help=t("install.help.print"))
     parser.add_argument("--profile", choices=PROFILES, help=t("install.help.profile"))
     parser.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
 
@@ -249,10 +308,11 @@ def import_command(args: argparse.Namespace, language: str) -> int:
         print(line)
     entry = server_entry(args.profile, language, STANDS_NAME)
     entry["env"]["PG_MCP_STANDS"] = "*"
-    register(Path(SETTINGS_FILES[args.client]).expanduser(), entry, server_name(STANDS_NAME))
+    install_into(args.client, server_name(STANDS_NAME), entry)
     ok = check(entry)
     print()
     print(t("install.restart"))
+    offer_clients(server_name(STANDS_NAME), entry, besides=args.client)
     return 0 if ok else 1
 
 
@@ -286,7 +346,7 @@ def offer_import(language: str) -> None:
         print()
         import_command(argparse.Namespace(source="dbeaver", file=None, workspace=None, write=False, prune=False,
                                           stand_pattern=imports.DEFAULT_STAND_PATTERN, client="gigacode",
-                                          profile=None, lang=language), language)  # fmt: skip
+                                          profile=None, lang=language, print=False), language)  # fmt: skip
     print(t("import.offer_hint", command=command))
 
 

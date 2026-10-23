@@ -1,5 +1,13 @@
 # Изменения
 
+## Не выпущено
+
+- Запись сервера для других клиентов MCP: `install.py --client` пишет её в файл и в формате VS Code
+  (GitHub Copilot), Cursor, Windsurf, Cline, Roo Code, Continue, LM Studio, Claude Desktop и Junie, а для
+  JetBrains AI Assistant печатает, что вставить в настройки; `--print` только показывает запись и куда её
+  положить. Файл с комментариями не переписывается — печатается, что добавить. В терминале `install.py`
+  находит другие установленные клиенты и предлагает зарегистрировать сервер и там.
+
 ## 0.5.0 — 2026-10-23
 
 - Импорт подключений к стендам: `install.py import dbeaver` и `install.py import pg-service <файл>` —
