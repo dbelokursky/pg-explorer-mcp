@@ -650,6 +650,59 @@ python3 install.py
 несколько сессий агента могут писать в один файл, а `logrotate` — переносить его. Если записать не
 удаётся, инструменты продолжают работать, а `status` объясняет причину.
 
+Чтобы свести журнал для того, кто отвечает за группу, запустите `scripts/querylog_report.py` с файлами,
+в том числе ротированными `.1` и `.gz`, и при необходимости окном `--since`/`--until` в UTC (дата или
+дата-время; дата без времени в `--until` включает весь день):
+
+```bash
+python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl ~/pg-mcp-queries.jsonl.1.gz --since 2026-10-20
+```
+
+Сводка считает вызовы по инструментам, по пользователям ОС и в режиме стендов по стендам (вызов на
+несколько стендов засчитывается каждому из них), медиану и 95-й процентиль `duration_ms`, десять самых
+долгих вызовов и все запросы, отклонённые проверкой SQL, — так выглядят попытки записи. Аргументы
+выводятся в одну строку, обрезанную до 80 символов, значения ключей, похожих на пароль, скрыты, а строки,
+которые не являются полными строками журнала (например, оборванные сбоем или ротацией), пропускаются и
+считаются:
+
+```text
+Files: /home/anna/pg-mcp-queries.jsonl (13 lines, 1 broken)
+Calls: 12  ok 8  error 1  refused 2  unavailable 1  failed 0
+Period: 2026-10-22 09:12:03 .. 2026-10-22 16:41:05 UTC
+Users: 2  Tools: 7
+Duration: median 11.2 ms, 95th percentile 2003.5 ms
+
+By tool
+  tool            calls  ok  error  refused  unavailable  failed  problems
+  run_select          5   2      1        2            0       0     60.0%
+  list_tables         2   1      0        0            1       0     50.0%
+  describe_table      1   1      0        0            0       0      0.0%
+  explain_query       1   1      0        0            0       0      0.0%
+  sample_rows         1   1      0        0            0       0      0.0%
+  search_schema       1   1      0        0            0       0      0.0%
+  status              1   1      0        0            0       0      0.0%
+
+By user
+  user   calls  queries  rows  refused
+  anna       7        1     4        2
+  boris      5        3    18        0
+
+Longest calls (top 10)
+  duration_ms  time                 user   tool            arguments
+       2003.5  2026-10-22 16:30:00  anna   list_tables
+         48.3  2026-10-22 14:05:11  boris  run_select      query=SELECT c.name, sum(o.total) AS total FROM shop.orders o JOIN shop.custome…
+         35.0  2026-10-22 14:02:15  boris  search_schema   pattern=customer
+  …
+
+Refused by the SQL check (2)
+  time                 user  tool        arguments
+  2026-10-22 13:54:20  anna  run_select  query=DELETE FROM shop.orders WHERE status = 'cancelled'
+  2026-10-22 16:41:05  anna  run_select  query=UPDATE shop.products SET price = price * 1.1
+```
+
+`--format json` отдаёт те же цифры машинно, `--format csv` — одну таблицу в разрезе
+`--by user|tool|stand|day`.
+
 Файл лежит на машине пользователя: это журнал, а не защищённый аудит. Аудит доступа к данным ведут на
 сервере PostgreSQL (`pgaudit` или `log_statement`); соединения сервера помечены
 `application_name = 'pg-mcp'`. Почему так — в [ADR 0005](docs/adr/0005-query-log.md).

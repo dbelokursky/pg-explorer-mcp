@@ -650,6 +650,58 @@ symlink in its place is refused. It is opened anew for every line, so several ag
 it and `logrotate` can move it away. If the file cannot be written, tool calls keep working and
 `status` says why.
 
+To sum the log up for whoever looks after the group, run `scripts/querylog_report.py` with the files,
+rotated `.1` and `.gz` ones too, and, if needed, a UTC window of `--since` and `--until` (a date or a
+date-time; a bare date in `--until` covers that whole day):
+
+```bash
+python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl ~/pg-mcp-queries.jsonl.1.gz --since 2026-10-20
+```
+
+The report counts calls by tool, by OS user and, in stands mode, by stand (a call over several stands
+counts on each), gives the median and 95th percentile of `duration_ms`, the ten longest calls and every
+call the SQL check refused, which is what an attempt to write looks like. Arguments go on one line cut to
+80 characters, values of keys that look like a password are hidden, and lines that are not complete log
+lines, say cut by a crash or by rotation, are skipped and counted:
+
+```text
+Files: /home/anna/pg-mcp-queries.jsonl (13 lines, 1 broken)
+Calls: 12  ok 8  error 1  refused 2  unavailable 1  failed 0
+Period: 2026-10-22 09:12:03 .. 2026-10-22 16:41:05 UTC
+Users: 2  Tools: 7
+Duration: median 11.2 ms, 95th percentile 2003.5 ms
+
+By tool
+  tool            calls  ok  error  refused  unavailable  failed  problems
+  run_select          5   2      1        2            0       0     60.0%
+  list_tables         2   1      0        0            1       0     50.0%
+  describe_table      1   1      0        0            0       0      0.0%
+  explain_query       1   1      0        0            0       0      0.0%
+  sample_rows         1   1      0        0            0       0      0.0%
+  search_schema       1   1      0        0            0       0      0.0%
+  status              1   1      0        0            0       0      0.0%
+
+By user
+  user   calls  queries  rows  refused
+  anna       7        1     4        2
+  boris      5        3    18        0
+
+Longest calls (top 10)
+  duration_ms  time                 user   tool            arguments
+       2003.5  2026-10-22 16:30:00  anna   list_tables
+         48.3  2026-10-22 14:05:11  boris  run_select      query=SELECT c.name, sum(o.total) AS total FROM shop.orders o JOIN shop.custome…
+         35.0  2026-10-22 14:02:15  boris  search_schema   pattern=customer
+  …
+
+Refused by the SQL check (2)
+  time                 user  tool        arguments
+  2026-10-22 13:54:20  anna  run_select  query=DELETE FROM shop.orders WHERE status = 'cancelled'
+  2026-10-22 16:41:05  anna  run_select  query=UPDATE shop.products SET price = price * 1.1
+```
+
+`--format json` gives the same figures to scripts, `--format csv` one table, the breakdown that
+`--by user|tool|stand|day` chooses.
+
 The file lives on the user's machine, so it is a journal, not a tamper-proof audit. To audit data access,
 log on the PostgreSQL server (`pgaudit` or `log_statement`); the server's connections carry
 `application_name = 'pg-mcp'`. The reasoning is in [ADR 0005](docs/adr/0005-query-log.md) (in Russian).
