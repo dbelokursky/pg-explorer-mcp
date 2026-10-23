@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """What a release needs checked: the version, the release notes and the archive.
 
-    python3 scripts/release.py version [--tag v0.3.0]   the version, once every file that holds it agrees
+    python3 scripts/release.py version [--tag v0.4.0]   the version, once every file that holds it agrees
     python3 scripts/release.py notes                    the CHANGELOG.md section of that version
-    python3 scripts/release.py check pg-mcp-0.3.0.zip   unpack the archive and start the server from it
+    python3 scripts/release.py check pg-mcp-0.4.0.zip   unpack the archive and start the server from it
 
 .github/workflows/release.yml runs these when a tag is pushed. The version lives in pyproject.toml,
 src/pg_mcp/__init__.py, both extension manifests and the first versioned heading of CHANGELOG.md
