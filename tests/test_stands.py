@@ -402,7 +402,7 @@ class TestOfflineTools:
             "list_tables": ["stand"],
             "search_schema": ["text"],
             "describe_table": ["stand", "table"],
-            "compare_schema": ["stand_a", "stand_b", "schema"],
+            "compare_schema": ["stand_a", "schema"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
             "run_select": ["schema", "query"],
@@ -713,6 +713,59 @@ class TestDifferences:
             "  orders: constraint orders_total_check only on dev12: CHECK (total > 0::numeric)",
             f"  orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
         ]
+
+    @pytest.mark.parametrize(
+        ("arguments", "message"),
+        [
+            ({"stand_a": "dev1", "schema": "billing", "database": "orders"}, "Pass stand_b, or stands for several"),
+            (
+                {"stand_a": "dev1", "stand_b": "dev2", "stands": "dev*", "schema": "billing"},
+                "Pass either stand_b or stands",
+            ),
+            ({"stand_a": "dev1", "stands": "dev1", "schema": "billing"}, "'dev1' names only 'dev1', the reference"),
+            ({"stand_a": "dev1", "stands": "prod*", "schema": "billing"}, "No stand matches 'prod*'"),
+        ],
+    )
+    def test_many_stands_need_the_right_arguments(
+        self, tools: dict[str, Tool], arguments: dict[str, Any], message: str
+    ) -> None:
+        with pytest.raises(ToolError) as caught:
+            tools["compare_schema"].call(arguments)
+        assert str(caught.value).startswith(message)
+
+    def test_many_stands_against_a_reference_detail_a_few_and_count_many(
+        self, pool: Pool, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def structure(pool_: Pool, target: Target) -> Structure:  # noqa: ARG001
+            relations = {"invoices": Relation("r", {"id": "integer NOT NULL"})}
+            if target.stand == "dev2":
+                relations["invoices"].columns["note"] = "text"
+            if target.stand == "ift1":
+                raise DatabaseUnavailableError(f"{target.label}: Connecting to ift1 timed out.", host_down=True)
+            return Structure(target, relations)
+
+        monkeypatch.setattr(stand_tools, "read_structure", structure)
+        arguments = {"stand_a": "dev1", "stands": "dev2,ift1", "schema": "billing", "database": "orders"}
+        assert tools["compare_schema"].call(arguments).splitlines() == [
+            "dev1 / orders / billing  vs  2 stands:",
+            "dev2 / orders / billing",
+            "differ:",
+            "  invoices.note only on dev2: text",
+            "ift1 / orders / billing",
+            "  ift1 / orders / billing: Connecting to ift1 timed out.",
+            "same as dev1: 0; different: 1; not checked: 1",
+        ]
+        assert pool.outcomes == {"dev2": "ok", "ift1": "unavailable"}
+        monkeypatch.setattr(stand_tools, "DETAILED_COMPARE_STANDS", 0)
+        arguments = {"stand_a": "dev1", "stands": "dev2", "schema": "billing", "database": "orders"}
+        lines = tools["compare_schema"].call(arguments).splitlines()
+        assert lines[1] == "dev2 / orders / billing: tables only on dev1: 0, only here: 0, differences: 1"
+
+    def test_the_reference_failing_fails_the_call(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match="dev1 / orders / billing: Nothing accepts connections"):
+            tools["compare_schema"].call(
+                {"stand_a": "dev1", "stands": "dev2", "schema": "billing", "database": "orders"}
+            )
 
     def test_definitions_are_compared_whole_and_shortened_only_for_display(self) -> None:
         long_check = "CHECK (" + "x" * 300 + ")"

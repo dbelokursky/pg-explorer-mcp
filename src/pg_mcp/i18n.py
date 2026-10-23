@@ -304,13 +304,13 @@ EN: dict[str, str] = {
     "stands.status_note": "With stand it also checks that stand.",
     "tool.list_schemas.title": "List schemas",
     "tool.list_schemas.description": (
-        "Databases of a stand and the schemas the server has logins for; call it first on a new stand."
+        "Databases of a stand and the schemas with logins; call it first on a new stand."
     ),
     "argument.stand": 'Stand, e.g. "dev7".',
-    "argument.stands": 'Instead of stand: "dev1,dev2" or "dev*", at most {limit} stands.',
-    "argument.stand_status": "Stand to check; omit for the list of stands.",
-    "argument.database": "Only when the schema is in several databases of the stand.",
-    "argument.schema_data": "Schema whose login runs the query; unqualified names resolve in it.",
+    "argument.stands": 'Instead of stand: "dev*" or "dev1,dev2", at most {limit}.',
+    "argument.stand_status": "Stand to check; omit for the list.",
+    "argument.database": "Only when the schema is in several databases.",
+    "argument.schema_data": "Schema whose login runs the query; names resolve in it.",
     "argument.schema_stand": "One schema; omit for the whole stand.",
     "status.stands": "stands: {count} ({stands}), connections in the registry: {connections}",
     "status.registry": "registry: {files}",
@@ -375,7 +375,8 @@ EN: dict[str, str] = {
     # compare_schema: one schema on two stands.
     "tool.compare_schema.title": "Compare a schema",
     "tool.compare_schema.description": (
-        "How one schema differs between two stands: tables, columns, constraints, indexes. Data is not read."
+        "How one schema differs between two stands, or between stand_a and several (stands): tables, columns, "
+        "constraints, indexes. Data is not read."
     ),
     "argument.stand_a": "First stand.",
     "argument.stand_b": "Second stand.",
@@ -392,6 +393,16 @@ EN: dict[str, str] = {
     "compare.index": "{table}: index {name}",
     "compare.only_here": "{what} only on {stand}: {definition}",
     "compare.same_stand": "stand_a and stand_b are both {stand!r}. Pass two different stands.",
+    "argument.stands_compare": (
+        'Instead of stand_b: several stands against stand_a, "dev*" or "dev1,dev2", at most {limit}.'
+    ),
+    "compare.many_header": "{a}  vs  {count} stands:",
+    "compare.like": "same as {a}",
+    "compare.summary": "tables only on {a}: {only_a}, only here: {only_b}, differences: {differ}",
+    "compare.totals": "same as {a}: {same}; different: {differ}; not checked: {skipped}",
+    "compare.b_or_stands": "Pass either stand_b or stands, not both.",
+    "compare.need_b": "Pass stand_b, or stands for several stands at once.",
+    "compare.no_others": "{pattern!r} names only {stand!r}, the reference itself. Name other stands.",
     "compare.no_schema": (
         "Stand {stand} has no schema {schema!r} in database {database}: the registry lists it, but the database "
         "does not have it. Nothing to compare."
@@ -676,14 +687,12 @@ RU: dict[str, str] = {
     ),
     "stands.status_note": "Со stand ещё и проверяет этот стенд.",
     "tool.list_schemas.title": "Список схем",
-    "tool.list_schemas.description": (
-        "Базы стенда и схемы, для которых у сервера есть учётки; вызывайте первым на новом стенде."
-    ),
+    "tool.list_schemas.description": "Базы стенда и схемы с учётками; вызывайте первым на новом стенде.",
     "argument.stand": 'Стенд, например "dev7".',
-    "argument.stands": 'Вместо stand: "dev1,dev2" или "dev*", не больше {limit} стендов.',
-    "argument.stand_status": "Стенд для проверки; без него — список стендов.",
-    "argument.database": "Только если схема есть в нескольких базах стенда.",
-    "argument.schema_data": "Схема, под учёткой которой идёт запрос; имена без схемы ищутся в ней.",
+    "argument.stands": 'Вместо stand: "dev*" или "dev1,dev2", не больше {limit}.',
+    "argument.stand_status": "Стенд для проверки; без него — список.",
+    "argument.database": "Только если схема есть в нескольких базах.",
+    "argument.schema_data": "Схема, под учёткой которой идёт запрос; имена ищутся в ней.",
     "argument.schema_stand": "Одна схема; без неё — весь стенд.",
     "status.stands": "стенды: {count} ({stands}), подключений в реестре: {connections}",
     "status.registry": "реестр: {files}",
@@ -756,7 +765,8 @@ RU: dict[str, str] = {
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
     "tool.compare_schema.description": (
-        "Чем одна схема отличается на двух стендах: таблицы, колонки, ограничения, индексы. Данные не читаются."
+        "Чем одна схема отличается на двух стендах — или на stand_a и нескольких (stands): таблицы, колонки, "
+        "ограничения, индексы. Данные не читаются."
     ),
     "argument.stand_a": "Первый стенд.",
     "argument.stand_b": "Второй стенд.",
@@ -775,6 +785,16 @@ RU: dict[str, str] = {
     "compare.index": "{table}: индекс {name}",
     "compare.only_here": "{what} только на {stand}: {definition}",
     "compare.same_stand": "stand_a и stand_b — один и тот же стенд {stand!r}. Передайте два разных стенда.",
+    "argument.stands_compare": (
+        'Вместо stand_b: несколько стендов против stand_a, "dev*" или "dev1,dev2", не больше {limit}.'
+    ),
+    "compare.many_header": "{a}  против стендов: {count}",
+    "compare.like": "как {a}",
+    "compare.summary": "таблиц только на {a}: {only_a}, только здесь: {only_b}, отличий: {differ}",
+    "compare.totals": "как {a}: {same}; отличаются: {differ}; не проверены: {skipped}",
+    "compare.b_or_stands": "Передайте либо stand_b, либо stands, не оба.",
+    "compare.need_b": "Передайте stand_b или stands для нескольких стендов сразу.",
+    "compare.no_others": "{pattern!r} называет только {stand!r} — сам эталон. Назовите другие стенды.",
     "compare.no_schema": (
         "На стенде {stand} в базе {database} нет схемы {schema!r}: она есть в реестре, но не в базе. Сравнивать нечего."
     ),

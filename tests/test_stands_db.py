@@ -244,6 +244,22 @@ class TestCompareSchema:
             f"  orders: index orders_invoice_idx only on ift1: {index}",
         ]
 
+    def test_many_stands_against_a_reference(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["compare_schema"], stand_a="dev1", stands="dev*", schema=BILLING)
+        assert lines[0] == f"dev1 / shop / {BILLING}  vs  4 stands:"
+        assert f"dev2 / shop / {BILLING}: same as dev1" in lines
+        assert f"dev4 / shop / {BILLING}: same as dev1" in lines
+        assert any(line.startswith("dev3") and "no schema" in line for line in lines)
+        assert any(line.startswith(f"  dev9 / shop / {BILLING}: ") for line in lines)
+        assert lines[-1] == "same as dev1: 2; different: 0; not checked: 2"
+
+    def test_a_few_stands_get_the_full_differences(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["compare_schema"], stand_a="dev1", stands="ift1", schema=ORDERS)
+        assert lines[0] == f"dev1 / shop / {ORDERS}  vs  1 stands:"
+        assert lines[1] == f"ift1 / shop / {ORDERS}"
+        assert "  orders.invoice_id: dev1 integer NOT NULL | ift1 integer" in lines
+        assert lines[-1] == "same as dev1: 0; different: 1; not checked: 0"
+
     @pytest.mark.parametrize("stand_b", ["dev2", "dev4"])  # the same database, and the other one with other rows
     def test_the_same_structure_is_one_line_whatever_the_rows(self, tools: dict[str, Tool], stand_b: str) -> None:
         assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b=stand_b, schema=BILLING) == [
