@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Pure-Python dependencies ship inside the package (see _vendor/README.md), so the
 # server runs from a plain checkout without pip or network access.
