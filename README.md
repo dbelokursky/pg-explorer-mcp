@@ -275,6 +275,7 @@ agent's interface.
 ```text
 pg-mcp 0.6.0 on Python 3.9.6, installed at /Users/me/pg-mcp
 server name: pg
+access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 language: en
@@ -633,13 +634,15 @@ python3 install.py
 Every tool call adds one JSON line. These two are real, from the demo database:
 
 ```json
-{"time": "2026-10-22T13:54:20.570Z", "os_user": "anna", "pid": 95715, "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "SELECT status, count(*) FROM shop.orders GROUP BY status"}, "outcome": "ok", "rows": 4, "duration_ms": 12.6}
-{"time": "2026-10-22T13:54:20.571Z", "os_user": "anna", "pid": 95715, "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "DELETE FROM shop.orders WHERE status = 'cancelled'"}, "outcome": "refused", "message": "DELETE is not allowed. Only read-only statements are: SELECT, WITH ... SELECT, VALUES, TABLE, EXPLAIN and SHOW.", "duration_ms": 0.0}
+{"time": "2026-10-22T13:54:20.570Z", "os_user": "anna", "pid": 95715, "python": "3.9.6", "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "SELECT status, count(*) FROM shop.orders GROUP BY status"}, "outcome": "ok", "rows": 4, "duration_ms": 12.6}
+{"time": "2026-10-22T13:54:20.571Z", "os_user": "anna", "pid": 95715, "python": "3.9.6", "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "DELETE FROM shop.orders WHERE status = 'cancelled'"}, "outcome": "refused", "message": "DELETE is not allowed. Only read-only statements are: SELECT, WITH ... SELECT, VALUES, TABLE, EXPLAIN and SHOW.", "duration_ms": 0.0}
 ```
 
 - `outcome` is `ok`, `refused` (by the SQL check), `error` (bad arguments or a PostgreSQL error),
   `unavailable` (no connection) or `failed` (a bug in the server);
 - `rows` is how many rows the agent's own statement returned (`sample_rows`, `run_select`, `explain_query`);
+- `python` is the version of Python the server runs on: the report below counts who runs which, which is
+  what raising the minimum version would cost;
 - a call over several stands (`stands`) is still one line: `stands` maps each stand to its outcome (`ok`,
   `unavailable`, `error`, or `skipped` when the call had no time left for it), `rows` is the total, and
   `role` and `database` are empty, since every stand has its own;
@@ -659,7 +662,7 @@ python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl ~/pg-mcp-queries.jsonl
 ```
 
 The report counts calls by tool, by OS user and, in stands mode, by stand (a call over several stands
-counts on each), gives the median and 95th percentile of `duration_ms`, the ten longest calls and every
+counts on each), and the users on each version of Python; it gives the median and 95th percentile of `duration_ms`, the ten longest calls and every
 call the SQL check refused, which is what an attempt to write looks like. Arguments go on one line cut to
 80 characters, values of keys that look like a password are hidden, and lines that are not complete log
 lines, say cut by a crash or by rotation, are skipped and counted:

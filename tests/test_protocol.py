@@ -80,6 +80,10 @@ class TestLegacyProtocol:
         tools = call(server, "tools/list")["result"]["tools"]
         assert [tool["name"] for tool in tools] == ["echo", "fail", "need", "crash"]
         assert all(tool["annotations"]["readOnlyHint"] for tool in tools)
+        # Only what a client acts on: the other hints mean something for tools that write, and the title
+        # sits where clients of every protocol version find it.
+        assert {key for tool in tools for key in tool} == {"name", "description", "inputSchema", "annotations"}
+        assert {key for tool in tools for key in tool["annotations"]} == {"title", "readOnlyHint", "openWorldHint"}
         assert all(tool["inputSchema"]["additionalProperties"] is False for tool in tools)
         assert tools[2]["inputSchema"]["required"] == ["x"]
         assert "required" not in tools[0]["inputSchema"]

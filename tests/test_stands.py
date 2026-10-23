@@ -431,6 +431,7 @@ class TestOfflineTools:
     ) -> None:
         lines = tools["status"].call({}).splitlines()
         assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in lines
+        assert any(line.startswith("access: read only. Nothing can be inserted") for line in lines)
         assert any(line.endswith("stands covers at most 10 stands per call") for line in lines)
         assert "pass stand to status to check that stand's connection" in lines
         assert pool.open_count() == 0

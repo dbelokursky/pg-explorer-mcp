@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import stat
 import sys
 from pathlib import Path
@@ -66,6 +67,7 @@ def test_every_call_leaves_one_line_whatever_its_outcome(unreachable_env: dict[s
     assert refused["message"].startswith("DELETE is not allowed: this server only reads")
     assert (refused["role"], refused["database"]) == ("pg_mcp_test", "pg_mcp_test")
     assert refused["pid"] == os.getpid()
+    assert refused["python"] == platform.python_version()
     assert refused["time"].endswith("Z")
     assert all("rows" not in entry for entry in logged)  # no statement reached the database
     assert all(entry["duration_ms"] >= 0 for entry in logged)

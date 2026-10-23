@@ -316,6 +316,7 @@ class TestRussian:
         text = tools["status"].call({})
         assert "база: подключено к " in text
         assert "лимиты: только чтение = on" in text
+        assert "доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя" in text
 
     def test_list_tables_names_kinds_and_estimates_in_russian(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["list_tables"], schema=SCHEMA) == [

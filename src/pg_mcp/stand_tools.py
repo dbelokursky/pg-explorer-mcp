@@ -238,6 +238,7 @@ def stand_status(
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
+        t("status.read_only"),
         t("status.stands", count=len(stands), stands=summarize(stands), connections=len(registry.targets)),
         t("status.registry", files=", ".join(registry.files) or t("error.none")),
         t("status.profile", profile=profile, tools=", ".join(names)),

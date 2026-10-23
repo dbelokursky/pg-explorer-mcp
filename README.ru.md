@@ -277,6 +277,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 ```text
 pg-mcp 0.6.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
 имя сервера: pg
+доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких просьб отказывайтесь, а не просите пользователя их подтвердить.
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 профиль: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 язык: ru
@@ -633,13 +634,15 @@ python3 install.py
 Каждый вызов инструмента добавляет строку JSON. Эти две — настоящие, с демонстрационной базы:
 
 ```json
-{"time": "2026-10-22T13:54:20.570Z", "os_user": "anna", "pid": 95715, "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "SELECT status, count(*) FROM shop.orders GROUP BY status"}, "outcome": "ok", "rows": 4, "duration_ms": 12.6}
-{"time": "2026-10-22T13:54:20.571Z", "os_user": "anna", "pid": 95715, "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "DELETE FROM shop.orders WHERE status = 'cancelled'"}, "outcome": "refused", "message": "DELETE is not allowed. Only read-only statements are: SELECT, WITH ... SELECT, VALUES, TABLE, EXPLAIN and SHOW.", "duration_ms": 0.0}
+{"time": "2026-10-22T13:54:20.570Z", "os_user": "anna", "pid": 95715, "python": "3.9.6", "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "SELECT status, count(*) FROM shop.orders GROUP BY status"}, "outcome": "ok", "rows": 4, "duration_ms": 12.6}
+{"time": "2026-10-22T13:54:20.571Z", "os_user": "anna", "pid": 95715, "python": "3.9.6", "role": "mcp_demo_agent", "database": "pg_mcp_demo", "tool": "run_select", "arguments": {"query": "DELETE FROM shop.orders WHERE status = 'cancelled'"}, "outcome": "refused", "message": "DELETE is not allowed. Only read-only statements are: SELECT, WITH ... SELECT, VALUES, TABLE, EXPLAIN and SHOW.", "duration_ms": 0.0}
 ```
 
 - `outcome` — `ok`, `refused` (отказ проверки SQL), `error` (неверные аргументы или ошибка PostgreSQL),
   `unavailable` (нет подключения) или `failed` (ошибка в самом сервере);
 - `rows` — сколько строк вернул запрос агента (`sample_rows`, `run_select`, `explain_query`);
+- `python` — версия Python, на которой работает сервер: сводка ниже считает, у кого какая, то есть во что
+  обойдётся подъём минимальной версии;
 - вызов на несколько стендов (`stands`) — по-прежнему одна строка: `stands` сопоставляет каждому стенду
   его итог (`ok`, `unavailable`, `error` или `skipped`, если на него не хватило времени), `rows` — сумма по
   стендам, а `role` и `database` пусты, потому что у каждого стенда свои;
@@ -659,7 +662,7 @@ python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl ~/pg-mcp-queries.jsonl
 ```
 
 Сводка считает вызовы по инструментам, по пользователям ОС и в режиме стендов по стендам (вызов на
-несколько стендов засчитывается каждому из них), медиану и 95-й процентиль `duration_ms`, десять самых
+несколько стендов засчитывается каждому из них), пользователей на каждой версии Python, медиану и 95-й процентиль `duration_ms`, десять самых
 долгих вызовов и все запросы, отклонённые проверкой SQL, — так выглядят попытки записи. Аргументы
 выводятся в одну строку, обрезанную до 80 символов, значения ключей, похожих на пароль, скрыты, а строки,
 которые не являются полными строками журнала (например, оборванные сбоем или ротацией), пропускаются и
