@@ -195,6 +195,10 @@ class TestStructure:
 
 
 class TestSearch:
+    def test_a_schema_without_readable_tables_names_the_ones_with_them(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=f"No readable tables in schema 'no_such_schema'.*{SCHEMA}"):
+            tools["search_schema"].call({"text": "order", "schema": "no_such_schema"})
+
     def test_finds_tables_by_name_or_comment_in_either_alphabet(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["search_schema"], text="заказ", schema=SCHEMA) == [
             f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов",

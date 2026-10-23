@@ -49,8 +49,9 @@ def test_tables_and_columns_come_back_one_per_line() -> None:
 
 def test_the_query_gets_the_spellings_the_schema_and_one_row_more_than_the_limit() -> None:
     db = CannedDatabase([])
-    search(db, text=" Заказ ", schema='"sales"')
-    assert db.params == [{"patterns": ["%Заказ%", "%заказ%", "%ЗАКАЗ%"], "schema": "sales", "limit": SEARCH_LIMIT + 1}]
+    with pytest.raises(ToolError, match="No readable tables in schema 'sales'"):  # nor any readable schema here
+        search(db, text=" Заказ ", schema='"sales"')
+    assert db.params[0] == {"patterns": ["%Заказ%", "%заказ%", "%ЗАКАЗ%"], "schema": "sales", "limit": SEARCH_LIMIT + 1}
 
 
 @pytest.mark.parametrize(
@@ -183,3 +184,25 @@ class TestMissingTableHint:
         error = QueryFailedError("PostgreSQL: …", code="42P01", server_message='отношение "orders" не существует')
         hint = missing_table_hint(NamedRelations({"orders": [("shop", "orders")]}), error, None)
         assert hint.endswith("Таблица с таким именем доступна как shop.orders: укажите имя вместе со схемой.")
+
+
+class SchemasOnly(Database):
+    """Finds nothing, and knows which schemas hold readable tables."""
+
+    def __init__(self, schemas: list[str]) -> None:
+        super().__init__({"PGPORT": "not-a-number"})
+        self.schemas = schemas
+
+    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:  # noqa: ARG002
+        return [(name,) for name in self.schemas] if sql == tools.SCHEMAS_SQL else []
+
+
+def test_a_schema_without_readable_tables_names_the_ones_with_them() -> None:
+    """The model guesses "public"; one answer that names shop saves it a call to list_tables."""
+    with pytest.raises(
+        ToolError, match=r"No readable tables in schema 'public'\. Schemas with readable tables: shop\."
+    ):
+        search(SchemasOnly(["shop"]), text="customer", schema="public")
+    assert search(SchemasOnly(["shop"]), text="zzz", schema="shop") == [
+        "Nothing matches 'zzz'. Try a shorter piece of the name, another spelling, or list_tables."
+    ]

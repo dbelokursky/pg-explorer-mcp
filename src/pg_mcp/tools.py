@@ -444,6 +444,16 @@ def search_schema(
     else:
         rows = db.query(SEARCH_IN_SCHEMAS_SQL, schemas=list(schemas), **params)
     if not rows:
+        if schemas is None and params["schema"] is not None:
+            visible = [row[0] for row in db.query(SCHEMAS_SQL)]
+            if params["schema"] not in visible:  # a guessed schema, "public" most often: name the real ones
+                raise ToolError(
+                    t(
+                        "error.no_tables_in_schema",
+                        schema=params["schema"],
+                        visible=", ".join(visible) or t("error.none"),
+                    )
+                )
         return [t("search.nothing", text=fragment)]
     lines = []
     for row in rows[:limit]:
