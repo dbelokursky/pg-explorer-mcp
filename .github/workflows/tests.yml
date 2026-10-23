@@ -1,19 +1,26 @@
 name: tests
 
-# A pull request gets the checks that catch real mistakes at a fraction of the minutes: no macOS
-# (ten Linux minutes for each, and long queues) and three PostgreSQL versions instead of six. A push
-# to develop or main runs the whole set. Windows stays in both: most users run it, and it has caught
-# code pages and a login refusal that Linux never shows.
+# A pull request gets the checks that catch real mistakes in a few minutes: no macOS (its runners
+# queue for long, and GitHub cancels them when there are none) and three PostgreSQL versions instead
+# of six. A push to develop or main runs the whole set, and so does the night run on develop: a merge
+# that auto-merge made with the workflow's own token starts no push run. Windows stays in both: most
+# users run it, and it has caught code pages and a login refusal that Linux never shows.
+#
+# GitHub takes the schedule, and workflow_dispatch, from the default branch, main: the night run
+# checks out develop itself, and it starts once a release has brought this file to main.
 on:
   push:
     branches: [main, develop]
   pull_request:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'night' || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,6 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
           enable-cache: true
@@ -37,10 +46,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        os: ${{ github.event_name != 'pull_request' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         python: ["3.9", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
           python-version: ${{ matrix.python }}
@@ -69,6 +80,8 @@ jobs:
       PGDATABASE: postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22"
@@ -87,6 +100,8 @@ jobs:
       PGDATABASE: pg_mcp_it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
           enable-cache: true
@@ -115,8 +130,8 @@ jobs:
       fail-fast: false
       matrix:
         # 13 is past its end of life but still runs in many companies; coverage is measured on 16.
-        # A pull request takes the oldest, the newest and 16; a push to develop or main takes them all.
-        postgres: ${{ github.event_name == 'push' && fromJSON('["13", "14", "15", "16", "17", "18"]') || fromJSON('["13", "16", "18"]') }}
+        # A pull request takes the oldest, the newest and 16; the whole set takes them all.
+        postgres: ${{ github.event_name != 'pull_request' && fromJSON('["13", "14", "15", "16", "17", "18"]') || fromJSON('["13", "16", "18"]') }}
     services:
       postgres:
         image: postgres:${{ matrix.postgres }}
@@ -133,6 +148,8 @@ jobs:
       PGDATABASE: postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         with:
           enable-cache: true
@@ -143,3 +160,52 @@ jobs:
       - name: integration tests
         if: matrix.postgres != '16'
         run: uv run pytest -m integration
+
+  pgadmin:
+    # What install.py export pgadmin writes, loaded by pgAdmin itself on its first start and read
+    # back: every field of the export has to come back as written, under its own server.
+    name: export to pgAdmin
+    runs-on: ubuntu-latest
+    env:
+      PGADMIN_IMAGE: dpage/pgadmin4:9.18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: servers.json as the export writes it
+        run: |
+          uv run python - <<'EOF'
+          from pg_mcp.exports import Connection, pgadmin
+          items = [
+              Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orders", "billing", None),
+              Connection("dev7", "orders", "shipping", "dev7-db.example", 5432, "orders", "shipping_ro", "verify-full", "/certs/ca.pem"),
+              Connection("ift2", "orders", "billing", "ift2-db.example", 6432, "orders_ift", "billing", "require"),
+          ]
+          open("servers.json", "w", encoding="utf-8").write(pgadmin(items, "/var/lib/pgadmin/pgpass"))
+          EOF
+          chmod 644 servers.json
+      - name: pgAdmin loads it, then dumps what it holds
+        run: |
+          docker run -d --name pgadmin -e PGADMIN_DEFAULT_EMAIL=ci@example.com -e PGADMIN_DEFAULT_PASSWORD=ci-only \
+            -e PGADMIN_SERVER_JSON_FILE=/servers.json -v "$PWD/servers.json:/servers.json:ro" "$PGADMIN_IMAGE"
+          for attempt in $(seq 120); do docker logs pgadmin 2>&1 | grep -q "Listening at" && break; sleep 2; done
+          docker logs pgadmin 2>&1 | grep "Added 2 Server Group(s) and 3 Server(s)."
+          docker exec pgadmin /venv/bin/python3 /pgadmin4/setup.py dump-servers /tmp/dumped.json --user ci@example.com
+          docker exec pgadmin cat /tmp/dumped.json > dumped.json
+      - name: every field comes back as the export wrote it
+        run: |
+          python3 - <<'EOF'
+          import json
+          written = json.load(open("servers.json", encoding="utf-8"))["Servers"].values()
+          dumped = {server["Name"]: server for server in json.load(open("dumped.json", encoding="utf-8"))["Servers"].values()}
+          for server in written:
+              back = dumped[server["Name"]]
+              for key, value in server.items():
+                  got = {k: back[key].get(k) for k in value} if isinstance(value, dict) else back.get(key)
+                  assert got == value, f"{server['Name']}: {key} is {got!r}, the export wrote {value!r}"
+          print(f"pgAdmin holds the {len(written)} servers as written")
+          EOF

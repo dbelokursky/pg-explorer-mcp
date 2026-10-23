@@ -1,9 +1,9 @@
 name: automerge
 
-# Every pull request into develop gets GitHub's auto-merge: it merges itself once the checks that the
-# branch protection requires have passed, and never before. Left alone: drafts until they are ready,
-# pull requests from forks (outside code does not merge itself, and their token could not do it
-# anyway), and main, which requires no checks, so a release pull request there would merge at once.
+# Every pull request into develop or main gets GitHub's auto-merge: it merges itself once the checks
+# that the branch protection requires have passed, and never before; both branches require the same
+# checks. Left alone: drafts until they are ready, and pull requests from forks (outside code does not
+# merge itself, and their token could not do it anyway). The tag of a release is still set by hand.
 #
 # A merge made with the built-in token starts no workflow, so the full run of tests.yml on develop
 # (macOS, PostgreSQL 14, 15 and 17) would not follow it. The secret AUTOMERGE_TOKEN, a fine-grained
@@ -13,7 +13,7 @@ name: automerge
 on:
   pull_request:
     types: [opened, reopened, ready_for_review]
-    branches: [develop]
+    branches: [develop, main]
 
 permissions:
   contents: write
