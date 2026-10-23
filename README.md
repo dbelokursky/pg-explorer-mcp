@@ -2,6 +2,10 @@
 
 **English** | [Русский](README.ru.md)
 
+[![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 An MCP server that gives an agent **read-only** access to a PostgreSQL database, or through one entry to
 [dozens of stands](#many-stands). The agent sees the database structure, can look at sample rows and
 query plans, and analysts can run their own `SELECT`s.
@@ -15,6 +19,7 @@ English or Russian.
 
 - [What it does](#what-it-does)
 - [Quick start](#quick-start)
+- [Try it on the demo database](#try-it-on-the-demo-database)
 - [Installation step by step](#installation-step-by-step)
 - [Usage](#usage)
 - [Many stands](#many-stands)
@@ -63,6 +68,23 @@ GigaCode and ask the agent: "Check the database connection".
 There is a shorter way too: link the extension (`gigacode extensions link`), restart GigaCode and run
 `/pg:setup` in it. The agent finds Python, runs `install.py` and works through the hints itself.
 
+## Try it on the demo database
+
+The answers shown in [Usage](#usage) come from a small demo database: a shop the agent may read and an
+`hr` schema it may not. `scripts/demo.py` makes it on any PostgreSQL where your `PG*` variables may
+create a database and a role (a fresh local PostgreSQL will do):
+
+```bash
+python3 scripts/demo.py                                     # pg_mcp_demo and the role mcp_demo_agent, password demo
+echo "localhost:5432:pg_mcp_demo:mcp_demo_agent:demo" >> ~/.pgpass && chmod 600 ~/.pgpass
+PGDATABASE=pg_mcp_demo PGUSER=mcp_demo_agent python3 install.py --profile analyst
+```
+
+Restart the agent and ask it: "How many orders are there per status?", "Describe the orders table",
+"What is in the hr schema?". The data is the same on every copy (`docs/demo.sql` builds it with
+arithmetic, not `random()`), so the agent's answers match the examples in this README.
+`python3 scripts/demo.py --drop` removes the database and the role.
+
 ## Installation step by step
 
 ### 1. The code
@@ -73,8 +95,10 @@ git clone https://github.com/dbelokursky/pg-mcp.git
 
 Without git, take `pg-mcp-<version>.zip` from the latest release on the
 [Releases page](https://github.com/dbelokursky/pg-mcp/releases) and unpack it anywhere: inside is a `pg-mcp` folder
-with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. Do not move
-the folder afterwards: its path goes into the agent settings. If you do move it, repeat step 5.
+with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. The archive
+carries a provenance attestation: `gh attestation verify pg-mcp-<version>.zip --repo dbelokursky/pg-mcp`
+confirms that GitHub built it from this repository's tag. Do not move the folder afterwards: its path
+goes into the agent settings. If you do move it, repeat step 5.
 
 ### 2. Python 3.9 or newer
 
@@ -193,7 +217,8 @@ gigacode extensions link /path/to/pg-mcp     # Qwen Code: qwen extensions link �
 ```
 
 The extension gives the agent a short context (where to start, never to ask for passwords in the chat,
-to answer in the user's language) and the `/pg:setup` command for installing and repairing the server.
+to answer in the user's language), the `/pg:setup` command for installing and repairing the server and
+`/pg:import` for bringing stand connections in from DBeaver or `pg_service.conf`.
 
 ### 7. Check
 
@@ -220,7 +245,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-mcp 0.4.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+pg-mcp 0.5.0 on Python 3.9.6, installed at /Users/me/pg-mcp
 server name: pg
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
@@ -274,9 +299,9 @@ The comments come from the database itself, so they stay in whatever language th
 ```text
 shop.orders:
 id | status | created_at
-1 | paid | 2026-05-03 16:49:13.795859+02:00
-2 | cancelled | 2026-09-13 17:03:59.690907+02:00
-3 | paid | 2026-05-22 21:08:31.308385+02:00
+1 | shipped | 2026-01-01 09:00:00+02:00
+2 | paid | 2026-01-01 16:00:00+02:00
+3 | cancelled | 2026-01-01 23:00:00+02:00
 (3 rows shown, there are more: narrow the query with WHERE, ORDER BY or LIMIT)
 ```
 
@@ -349,6 +374,28 @@ This registers `pg-stands` next to `pg`. `PG_MCP_STANDS` switches stands on: `*`
 patterns such as `dev*,ift2` take some. The check succeeds once the stands are found: a stand behind a
 VPN is reached only when a tool needs it.
 
+**Importing connections.** When the connections already live in DBeaver, or in a `pg_service.conf`
+file, let `install.py` bring them in:
+
+```bash
+python3 install.py import dbeaver            # a preview: what would go where; nothing is written
+python3 install.py import dbeaver --write    # write the registry and the password file, register pg-stands
+python3 install.py import pg-service ~/.pg_service.conf --write
+```
+
+The stand comes from the DBeaver folder, then the connection name, then the host, matched with the
+regular expression `(dev|ift)\d+` (`--stand-pattern` changes it); the database is the connection's and
+the schema is its login, since on a stand every schema has a login of its own name. The preview lists
+what would be written and what is left out and why; passwords are never shown. `--write` rewrites
+`~/.pg-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`), adds the passwords
+to the password file without touching its other lines, keeps a dated backup of both files and
+registers `pg-stands`; when anything fails, nothing is changed. DBeaver's saved passwords are read
+from its own files while DBeaver keeps them under its default key; with its secure storage switched
+on they stay unknown, and the preview says which logins need a line in the password file by hand.
+The agent does the same with `/pg:import`, writing only after you confirm. A running server notices
+a changed registry on its next call, so an import needs no restart; a registry file that holds a
+`password=` line and is readable by other users gets a warning in `status`.
+
 **3. Use.** Every tool takes `stand`. Reading data also takes `schema`: the server connects with that
 schema's login and looks for unqualified names in it first. `database` is needed only when the schema
 exists in several databases of the stand.
@@ -363,6 +410,7 @@ exists in several databases of the stand.
 | "On which dev stand is there an order 123?" | `run_select` with `stands` and `schema` |
 | "Which stands have a discount column in shop?" | `search_schema` with `stands` and `text` |
 | "How does shop on dev7 differ from dev12?" | `compare_schema` with `stand_a`, `stand_b` and `schema` |
+| "Which dev stands differ from dev7 in shop?" | `compare_schema` with `stand_a`, `stands` and `schema` |
 
 Every answer starts with where it came from. Real answers on the demo database:
 
@@ -396,6 +444,23 @@ differ:
   order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
   orders.note only on dev12: text
   orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+```
+
+`compare_schema` with `stand_a: dev7`, `stands: dev*` and `schema: shop` — the stands that match, each
+against dev7; up to three stands get the full differences, more stands get one line of counts each:
+
+```text
+dev7 / demo / shop  vs  3 stands:
+dev8 / demo / shop: same as dev7
+dev9 / demo / shop: same as dev7
+dev12 / demo / shop
+only on dev12:
+  returns | table
+differ:
+  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  orders.note only on dev12: text
+  orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+same as dev7: 2; different: 1; not checked: 0
 ```
 
 The structure comes from the system catalog of each stand, read with the schema's own login in three
@@ -656,4 +721,9 @@ the server asks it to use the user's language. `PG_MCP_LANG` sets the language o
 
 Environment, checks, code layout and rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Decisions and
 their reasons are in [docs/adr/](docs/adr/), the version history is in [CHANGELOG.md](CHANGELOG.md).
-These documents are in Russian.
+These documents are in Russian. How to report a vulnerability is in [SECURITY.md](SECURITY.md).
+
+## License
+
+pg-mcp is under the MIT license ([LICENSE](LICENSE)). The packages it ships unchanged in
+`src/pg_mcp/_vendor` keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

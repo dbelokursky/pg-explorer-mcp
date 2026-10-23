@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import socket
 import sys
 import time
@@ -401,7 +402,7 @@ class TestOfflineTools:
             "list_tables": ["stand"],
             "search_schema": ["text"],
             "describe_table": ["stand", "table"],
-            "compare_schema": ["stand_a", "stand_b", "schema"],
+            "compare_schema": ["stand_a", "schema"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
             "run_select": ["schema", "query"],
@@ -713,6 +714,59 @@ class TestDifferences:
             f"  orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
         ]
 
+    @pytest.mark.parametrize(
+        ("arguments", "message"),
+        [
+            ({"stand_a": "dev1", "schema": "billing", "database": "orders"}, "Pass stand_b, or stands for several"),
+            (
+                {"stand_a": "dev1", "stand_b": "dev2", "stands": "dev*", "schema": "billing"},
+                "Pass either stand_b or stands",
+            ),
+            ({"stand_a": "dev1", "stands": "dev1", "schema": "billing"}, "'dev1' names only 'dev1', the reference"),
+            ({"stand_a": "dev1", "stands": "prod*", "schema": "billing"}, "No stand matches 'prod*'"),
+        ],
+    )
+    def test_many_stands_need_the_right_arguments(
+        self, tools: dict[str, Tool], arguments: dict[str, Any], message: str
+    ) -> None:
+        with pytest.raises(ToolError) as caught:
+            tools["compare_schema"].call(arguments)
+        assert str(caught.value).startswith(message)
+
+    def test_many_stands_against_a_reference_detail_a_few_and_count_many(
+        self, pool: Pool, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def structure(pool_: Pool, target: Target) -> Structure:  # noqa: ARG001
+            relations = {"invoices": Relation("r", {"id": "integer NOT NULL"})}
+            if target.stand == "dev2":
+                relations["invoices"].columns["note"] = "text"
+            if target.stand == "ift1":
+                raise DatabaseUnavailableError(f"{target.label}: Connecting to ift1 timed out.", host_down=True)
+            return Structure(target, relations)
+
+        monkeypatch.setattr(stand_tools, "read_structure", structure)
+        arguments = {"stand_a": "dev1", "stands": "dev2,ift1", "schema": "billing", "database": "orders"}
+        assert tools["compare_schema"].call(arguments).splitlines() == [
+            "dev1 / orders / billing  vs  2 stands:",
+            "dev2 / orders / billing",
+            "differ:",
+            "  invoices.note only on dev2: text",
+            "ift1 / orders / billing",
+            "  ift1 / orders / billing: Connecting to ift1 timed out.",
+            "same as dev1: 0; different: 1; not checked: 1",
+        ]
+        assert pool.outcomes == {"dev2": "ok", "ift1": "unavailable"}
+        monkeypatch.setattr(stand_tools, "DETAILED_COMPARE_STANDS", 0)
+        arguments = {"stand_a": "dev1", "stands": "dev2", "schema": "billing", "database": "orders"}
+        lines = tools["compare_schema"].call(arguments).splitlines()
+        assert lines[1] == "dev2 / orders / billing: tables only on dev1: 0, only here: 0, differences: 1"
+
+    def test_the_reference_failing_fails_the_call(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match="dev1 / orders / billing: Nothing accepts connections"):
+            tools["compare_schema"].call(
+                {"stand_a": "dev1", "stands": "dev2", "schema": "billing", "database": "orders"}
+            )
+
     def test_definitions_are_compared_whole_and_shortened_only_for_display(self) -> None:
         long_check = "CHECK (" + "x" * 300 + ")"
         a = structure("dev7", orders=Relation("r", constraints={"c": long_check}))
@@ -1012,3 +1066,49 @@ def test_tool_descriptions_stay_small(language: str, mode: str, tmp_path: Path) 
             tools = build_stand_tools(Pool(registry, {}), str(ROOT), profile="analyst")
     size = len(json.dumps([tool.describe() for tool in tools], ensure_ascii=False))
     assert size <= SIZE_LIMITS[language, mode], f"tools/list in {language}, {mode}: {size} chars"
+
+
+class TestReload:
+    """The registry is re-read when its files change, so an import shows up without a restart."""
+
+    @pytest.fixture
+    def stands_file(self, tmp_path: Path) -> Path:
+        return write(tmp_path / "stands.conf", "[dev1.orders.billing]\nhost=127.0.0.1\nport=1\n")
+
+    @pytest.fixture
+    def tools(self, stands_file: Path, unreachable_env: dict[str, str]) -> dict[str, Tool]:
+        return by_name(build_stand_tools(Pool(loaded(STANDS_ON, [stands_file]), unreachable_env), str(ROOT)))
+
+    def test_a_new_stand_in_the_file_is_seen_by_the_next_call(self, stands_file: Path, tools: dict[str, Tool]) -> None:
+        assert "stands: 1 (dev1)" in tools["status"].call({})
+        write(
+            stands_file,
+            "[dev1.orders.billing]\nhost=127.0.0.1\nport=1\n\n[dev2.orders.billing]\nhost=127.0.0.1\nport=1\n",
+        )
+        os.utime(stands_file, (time.time() + 5, time.time() + 5))  # a change within the same tick still counts
+        assert "stands: 2 (dev1–dev2)" in tools["status"].call({})
+
+    def test_a_change_that_leaves_no_stands_keeps_the_old_ones(self, stands_file: Path, tools: dict[str, Tool]) -> None:
+        tools["status"].call({})
+        write(stands_file, "[dev1.orders.billing]\nport=1\n")
+        os.utime(stands_file, (time.time() + 5, time.time() + 5))
+        lines = tools["status"].call({}).splitlines()
+        assert "stands: 1 (dev1), connections in the registry: 1" in lines
+        assert any(
+            "warning: the stands registry changed" in line and "keeping the stands read before" in line
+            for line in lines
+        )
+        assert any("has no host, skipped" in line for line in lines)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no mode bits on Windows")
+def test_a_registry_with_a_password_that_others_can_read_is_a_warning(tmp_path: Path) -> None:
+    own = write(tmp_path / "stands.conf", "[dev1.orders.billing]\nhost=db\npassword=secret\n")
+    own.chmod(0o644)
+    registry = loaded(STANDS_ON, [own])
+    assert registry.warnings == [f"{own} holds a password, and other users can read it: chmod 600 {own}"]
+    own.chmod(0o600)
+    assert loaded(STANDS_ON, [own]).warnings == []
+    plain = write(tmp_path / "plain.conf", "[dev1.orders.billing]\nhost=db\n")
+    plain.chmod(0o644)
+    assert loaded(STANDS_ON, [plain]).warnings == []  # no password, nothing to protect

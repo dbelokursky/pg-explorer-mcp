@@ -304,13 +304,13 @@ EN: dict[str, str] = {
     "stands.status_note": "With stand it also checks that stand.",
     "tool.list_schemas.title": "List schemas",
     "tool.list_schemas.description": (
-        "Databases of a stand and the schemas the server has logins for; call it first on a new stand."
+        "Databases of a stand and the schemas with logins; call it first on a new stand."
     ),
     "argument.stand": 'Stand, e.g. "dev7".',
-    "argument.stands": 'Instead of stand: "dev1,dev2" or "dev*", at most {limit} stands.',
-    "argument.stand_status": "Stand to check; omit for the list of stands.",
-    "argument.database": "Only when the schema is in several databases of the stand.",
-    "argument.schema_data": "Schema whose login runs the query; unqualified names resolve in it.",
+    "argument.stands": 'Instead of stand: "dev*" or "dev1,dev2", at most {limit}.',
+    "argument.stand_status": "Stand to check; omit for the list.",
+    "argument.database": "Only when the schema is in several databases.",
+    "argument.schema_data": "Schema whose login runs the query; names resolve in it.",
     "argument.schema_stand": "One schema; omit for the whole stand.",
     "status.stands": "stands: {count} ({stands}), connections in the registry: {connections}",
     "status.registry": "registry: {files}",
@@ -375,7 +375,8 @@ EN: dict[str, str] = {
     # compare_schema: one schema on two stands.
     "tool.compare_schema.title": "Compare a schema",
     "tool.compare_schema.description": (
-        "How one schema differs between two stands: tables, columns, constraints, indexes. Data is not read."
+        "How one schema differs between two stands, or between stand_a and several (stands): tables, columns, "
+        "constraints, indexes. Data is not read."
     ),
     "argument.stand_a": "First stand.",
     "argument.stand_b": "Second stand.",
@@ -392,10 +393,61 @@ EN: dict[str, str] = {
     "compare.index": "{table}: index {name}",
     "compare.only_here": "{what} only on {stand}: {definition}",
     "compare.same_stand": "stand_a and stand_b are both {stand!r}. Pass two different stands.",
+    "argument.stands_compare": (
+        'Instead of stand_b: several stands against stand_a, "dev*" or "dev1,dev2", at most {limit}.'
+    ),
+    "compare.many_header": "{a}  vs  {count} stands:",
+    "compare.like": "same as {a}",
+    "compare.summary": "tables only on {a}: {only_a}, only here: {only_b}, differences: {differ}",
+    "compare.totals": "same as {a}: {same}; different: {differ}; not checked: {skipped}",
+    "compare.b_or_stands": "Pass either stand_b or stands, not both.",
+    "compare.need_b": "Pass stand_b, or stands for several stands at once.",
+    "compare.no_others": "{pattern!r} names only {stand!r}, the reference itself. Name other stands.",
     "compare.no_schema": (
         "Stand {stand} has no schema {schema!r} in database {database}: the registry lists it, but the database "
         "does not have it. Nothing to compare."
     ),
+    "stands.readable_by_others": "{path} holds a password, and other users can read it: chmod 600 {path}",
+    "stands.reload_kept": (
+        "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
+    ),
+    # install.py import
+    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-mcp",
+    "install.help.source": "where the connections come from: dbeaver or pg-service",
+    "install.help.file": "the pg_service.conf file to read (for pg-service)",
+    "install.help.workspace": "DBeaver's folder with data-sources.json (default: the usual place for this OS)",
+    "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
+    "install.help.prune": "with --write: replace the registry instead of adding to it",
+    "install.help.stand_pattern": (
+        "regular expression that finds the stand in a folder, connection name or host (default: {pattern})"
+    ),
+    "import.unreadable": "cannot read {path}: {error}",
+    "import.bad_pattern": "the stand pattern {pattern!r} is not a regular expression: {error}",
+    "import.duplicate": "the same stand, database and user as {other!r}: [{name}] is already taken",
+    "import.no_host": "no host",
+    "import.no_database": "no database",
+    "import.no_user": "no user: pg-mcp reads a schema with the login of the same name",
+    "import.no_stand": "no stand in the folder, the name or the host",
+    "import.bad_name": "{part!r} cannot be a part of a section name (letters, digits, _ $ - only)",
+    "import.reading": "reading {source}",
+    "import.preview_header": "{count} connections go into {registry}:",
+    "import.preview_no_password": "no saved password: add a line to the password file",
+    "import.preview_passwords": "{count} passwords go into {passfile}",
+    "import.preview_skipped": "left out: {count}",
+    "import.nothing": "nothing to import",
+    "import.dry_run": (
+        "This was a preview, nothing was written. Add --write to write the files and register pg-stands."
+    ),
+    "import.cannot_write": "cannot write {path}: {error}. Nothing was changed.",
+    "import.written": "written {path}",
+    "import.written_backup": "written {path}; the old file is kept as {backup}",
+    "import.no_dbeaver": (
+        "DBeaver's connections were not found on this machine; pass --workspace with the folder that holds "
+        "data-sources.json"
+    ),
+    "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
+    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-mcp? [y/N] ",
+    "import.offer_hint": "To import them, run: {command}",
     # install.py
     "install.description": "Register the pg-mcp server in the agent's settings and check it.",
     "install.help.client": "whose settings.json to edit",
@@ -635,14 +687,12 @@ RU: dict[str, str] = {
     ),
     "stands.status_note": "Со stand ещё и проверяет этот стенд.",
     "tool.list_schemas.title": "Список схем",
-    "tool.list_schemas.description": (
-        "Базы стенда и схемы, для которых у сервера есть учётки; вызывайте первым на новом стенде."
-    ),
+    "tool.list_schemas.description": "Базы стенда и схемы с учётками; вызывайте первым на новом стенде.",
     "argument.stand": 'Стенд, например "dev7".',
-    "argument.stands": 'Вместо stand: "dev1,dev2" или "dev*", не больше {limit} стендов.',
-    "argument.stand_status": "Стенд для проверки; без него — список стендов.",
-    "argument.database": "Только если схема есть в нескольких базах стенда.",
-    "argument.schema_data": "Схема, под учёткой которой идёт запрос; имена без схемы ищутся в ней.",
+    "argument.stands": 'Вместо stand: "dev*" или "dev1,dev2", не больше {limit}.',
+    "argument.stand_status": "Стенд для проверки; без него — список.",
+    "argument.database": "Только если схема есть в нескольких базах.",
+    "argument.schema_data": "Схема, под учёткой которой идёт запрос; имена ищутся в ней.",
     "argument.schema_stand": "Одна схема; без неё — весь стенд.",
     "status.stands": "стенды: {count} ({stands}), подключений в реестре: {connections}",
     "status.registry": "реестр: {files}",
@@ -715,7 +765,8 @@ RU: dict[str, str] = {
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
     "tool.compare_schema.description": (
-        "Чем одна схема отличается на двух стендах: таблицы, колонки, ограничения, индексы. Данные не читаются."
+        "Чем одна схема отличается на двух стендах — или на stand_a и нескольких (stands): таблицы, колонки, "
+        "ограничения, индексы. Данные не читаются."
     ),
     "argument.stand_a": "Первый стенд.",
     "argument.stand_b": "Второй стенд.",
@@ -734,9 +785,59 @@ RU: dict[str, str] = {
     "compare.index": "{table}: индекс {name}",
     "compare.only_here": "{what} только на {stand}: {definition}",
     "compare.same_stand": "stand_a и stand_b — один и тот же стенд {stand!r}. Передайте два разных стенда.",
+    "argument.stands_compare": (
+        'Вместо stand_b: несколько стендов против stand_a, "dev*" или "dev1,dev2", не больше {limit}.'
+    ),
+    "compare.many_header": "{a}  против стендов: {count}",
+    "compare.like": "как {a}",
+    "compare.summary": "таблиц только на {a}: {only_a}, только здесь: {only_b}, отличий: {differ}",
+    "compare.totals": "как {a}: {same}; отличаются: {differ}; не проверены: {skipped}",
+    "compare.b_or_stands": "Передайте либо stand_b, либо stands, не оба.",
+    "compare.need_b": "Передайте stand_b или stands для нескольких стендов сразу.",
+    "compare.no_others": "{pattern!r} называет только {stand!r} — сам эталон. Назовите другие стенды.",
     "compare.no_schema": (
         "На стенде {stand} в базе {database} нет схемы {schema!r}: она есть в реестре, но не в базе. Сравнивать нечего."
     ),
+    "stands.readable_by_others": "в {path} есть пароль, а читать файл могут другие пользователи: chmod 600 {path}",
+    "stands.reload_kept": (
+        "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
+        "раньше"
+    ),
+    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-mcp",
+    "install.help.source": "откуда брать подключения: dbeaver или pg-service",
+    "install.help.file": "файл pg_service.conf, который читать (для pg-service)",
+    "install.help.workspace": "папка DBeaver с data-sources.json (по умолчанию — обычное место для этой ОС)",
+    "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
+    "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
+    "install.help.stand_pattern": (
+        "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern})"
+    ),
+    "import.unreadable": "не удалось прочитать {path}: {error}",
+    "import.bad_pattern": "шаблон стенда {pattern!r} — не регулярное выражение: {error}",
+    "import.duplicate": "тот же стенд, база и пользователь, что у {other!r}: [{name}] уже занята",
+    "import.no_host": "нет хоста",
+    "import.no_database": "нет базы",
+    "import.no_user": "нет пользователя: pg-mcp читает схему под одноимённой учёткой",
+    "import.no_stand": "стенд не найден ни в папке, ни в имени, ни в хосте",
+    "import.bad_name": "{part!r} не годится в имя секции (только буквы, цифры, _ $ -)",
+    "import.reading": "читаю {source}",
+    "import.preview_header": "в {registry} попадут подключения: {count}",
+    "import.preview_no_password": "пароль не сохранён: добавьте строку в файл паролей",
+    "import.preview_passwords": "в {passfile} попадут пароли: {count}",
+    "import.preview_skipped": "пропущено: {count}",
+    "import.nothing": "импортировать нечего",
+    "import.dry_run": (
+        "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы и зарегистрировать pg-stands."
+    ),
+    "import.cannot_write": "не удалось записать {path}: {error}. Ничего не изменено.",
+    "import.written": "записан {path}",
+    "import.written_backup": "записан {path}; прежний файл сохранён как {backup}",
+    "import.no_dbeaver": (
+        "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
+    ),
+    "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
+    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-mcp? [y/N] ",
+    "import.offer_hint": "Чтобы перенести их, выполните: {command}",
     "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
     "install.help.client": "чей settings.json править",
     "install.help.check": "только запустить сервер и вызвать status, ничего не меняя",

@@ -2,6 +2,10 @@
 
 [English](README.md) | **Русский**
 
+[![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 MCP-сервер, который даёт агенту доступ **только на чтение** к базе PostgreSQL, а через одну запись — и к
 [десяткам стендов](#много-стендов). Агент видит структуру базы, может посмотреть примеры строк и
 планы запросов, а аналитики — выполнять свои `SELECT`.
@@ -15,6 +19,7 @@ stdio. Работает на Python 3.9+ без установки пакето�
 
 - [Что умеет](#что-умеет)
 - [Быстрый старт](#быстрый-старт)
+- [Попробовать на демо-базе](#попробовать-на-демо-базе)
 - [Установка по шагам](#установка-по-шагам)
 - [Как пользоваться](#как-пользоваться)
 - [Много стендов](#много-стендов)
@@ -63,6 +68,23 @@ gigacode extensions link "$(pwd)"                                # контек�
 Можно и короче: подключите расширение (`gigacode extensions link`), перезапустите GigaCode и
 выполните в нём `/pg:setup`. Агент сам найдёт Python, запустит `install.py` и разберёт подсказки.
 
+## Попробовать на демо-базе
+
+Ответы в разделе [Как пользоваться](#как-пользоваться) взяты с маленькой демо-базы: магазин, который
+агент читает, и схема `hr`, которую не читает. `scripts/demo.py` создаёт её на любом PostgreSQL, где
+ваши переменные `PG*` могут создать базу и роль (подойдёт свежий локальный PostgreSQL):
+
+```bash
+python3 scripts/demo.py                                     # pg_mcp_demo и роль mcp_demo_agent с паролем demo
+echo "localhost:5432:pg_mcp_demo:mcp_demo_agent:demo" >> ~/.pgpass && chmod 600 ~/.pgpass
+PGDATABASE=pg_mcp_demo PGUSER=mcp_demo_agent python3 install.py --profile analyst
+```
+
+Перезапустите агента и спросите: «Сколько заказов в каждом статусе?», «Опиши таблицу заказов», «Что
+в схеме hr?». Данные одинаковы на любой копии (`docs/demo.sql` строит их арифметикой, без `random()`),
+поэтому ответы агента совпадут с примерами в этом README. `python3 scripts/demo.py --drop` удаляет базу
+и роль.
+
 ## Установка по шагам
 
 ### 1. Код
@@ -74,8 +96,9 @@ git clone https://github.com/dbelokursky/pg-mcp.git
 Без git: возьмите `pg-mcp-<версия>.zip` из последнего выпуска на
 [странице Releases](https://github.com/dbelokursky/pg-mcp/releases) и распакуйте его в любую папку: внутри папка
 `pg-mcp` со всем, что нужно серверу, а рядом с архивом лежит `SHA256SUMS` с его контрольной суммой.
-Папку потом не переносите: путь к ней записывается в настройки агента. Если всё же перенесли —
-повторите шаг 5.
+У архива есть аттестация происхождения: `gh attestation verify pg-mcp-<версия>.zip --repo
+dbelokursky/pg-mcp` подтверждает, что его собрал GitHub из тега этого репозитория. Папку потом не
+переносите: путь к ней записывается в настройки агента. Если всё же перенесли — повторите шаг 5.
 
 ### 2. Python 3.9 или новее
 
@@ -195,7 +218,8 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 ```
 
 Расширение даёт агенту короткий контекст (с чего начинать, что пароль в чат не просят, отвечать на
-языке пользователя) и команду `/pg:setup` для установки и починки.
+языке пользователя), команду `/pg:setup` для установки и починки и `/pg:import` для переноса
+подключений к стендам из DBeaver или `pg_service.conf`.
 
 ### 7. Проверка
 
@@ -222,7 +246,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 `status`:
 
 ```text
-pg-mcp 0.4.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
+pg-mcp 0.5.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
 имя сервера: pg
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 профиль: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
@@ -273,9 +297,9 @@ shop.orders | таблица | ~500 строк | Заказы
 ```text
 shop.orders:
 id | status | created_at
-1 | paid | 2026-05-03 16:49:13.795859+02:00
-2 | cancelled | 2026-09-13 17:03:59.690907+02:00
-3 | paid | 2026-05-22 21:08:31.308385+02:00
+1 | shipped | 2026-01-01 09:00:00+02:00
+2 | paid | 2026-01-01 16:00:00+02:00
+3 | cancelled | 2026-01-01 23:00:00+02:00
 (показаны 3 строки, есть ещё: сузьте запрос через WHERE, ORDER BY или LIMIT)
 ```
 
@@ -349,6 +373,29 @@ PG_MCP_STANDS='*' python3 install.py --name stands
 `dev*,ift2` — некоторые. Проверка проходит, когда стенды найдены: к стенду за VPN сервер подключается,
 только когда он нужен инструменту.
 
+**Импорт подключений.** Если подключения уже есть в DBeaver или в файле `pg_service.conf`, их
+перенесёт `install.py`:
+
+```bash
+python3 install.py import dbeaver            # предпросмотр: что куда попадёт, ничего не записывается
+python3 install.py import dbeaver --write    # записать реестр и файл паролей, зарегистрировать pg-stands
+python3 install.py import pg-service ~/.pg_service.conf --write
+```
+
+Стенд берётся из папки DBeaver, затем из имени подключения, затем из хоста — по регулярному
+выражению `(dev|ift)\d+` (`--stand-pattern` его меняет); база — та, что в подключении, схема — его
+учётка, ведь на стенде у каждой схемы учётка с тем же именем. Предпросмотр перечисляет, что будет
+записано и что пропущено и почему; пароли не показываются никогда. `--write` переписывает
+`~/.pg-mcp/stands.conf` (дополняя то, что там есть, или заменяя с `--prune`), добавляет пароли в файл
+паролей, не трогая остальные его строки, оставляет датированную копию обоих файлов и регистрирует
+`pg-stands`; при любом сбое ничего не меняется. Сохранённые пароли DBeaver читаются из его файлов,
+пока DBeaver хранит их под своим ключом по умолчанию; при включённом защищённом хранилище они
+остаются неизвестны, и предпросмотр называет учётки, которым строку в файл паролей нужно добавить
+вручную. Агент делает то же командой `/pg:import` и записывает только после вашего подтверждения.
+Работающий сервер замечает изменённый реестр при следующем вызове, так что перезапуск агента не
+нужен; файл реестра со строкой `password=`, который могут читать другие пользователи, получает
+предупреждение в `status`.
+
 **3. Работа.** Каждый инструмент принимает `stand`. Для чтения данных нужна и `schema`: сервер
 подключается под учёткой этой схемы и ищет имена без схемы сначала в ней. `database` нужна, только если
 схема есть в нескольких базах стенда.
@@ -363,6 +410,7 @@ PG_MCP_STANDS='*' python3 install.py --name stands
 | «На каком dev-стенде есть заказ 123?» | `run_select` со `stands` и `schema` |
 | «На каких стендах в shop есть колонка со скидкой?» | `search_schema` со `stands` и `text` |
 | «Чем shop на dev7 отличается от dev12?» | `compare_schema` со `stand_a`, `stand_b` и `schema` |
+| «Какие dev-стенды отличаются от dev7 в shop?» | `compare_schema` со `stand_a`, `stands` и `schema` |
 
 Каждый ответ начинается с того, откуда он. Настоящие ответы на демо-базе:
 
@@ -395,6 +443,23 @@ dev7 / demo / shop  vs  dev12 / demo / shop
   order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
   orders.note только на dev12: text
   orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+```
+
+`compare_schema` со `stand_a: dev7`, `stands: dev*` и `schema: shop` — подходящие стенды, каждый против
+dev7; до трёх стендов получают полные различия, больше — по строке с числами:
+
+```text
+dev7 / demo / shop  против стендов: 3
+dev8 / demo / shop: как dev7
+dev9 / demo / shop: как dev7
+dev12 / demo / shop
+только на dev12:
+  returns | таблица
+отличаются:
+  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  orders.note только на dev12: text
+  orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+как dev7: 2; отличаются: 1; не проверены: 0
 ```
 
 Структура берётся из системного каталога каждого стенда под учёткой схемы, тремя запросами на стенд при
@@ -653,3 +718,10 @@ GigaCode CLI вне компании не достать, поэтому пер�
 
 Окружение, проверки, раскладка кода и правила — в [CONTRIBUTING.md](CONTRIBUTING.md). Принятые
 решения и их причины — в [docs/adr/](docs/adr/), история версий — в [CHANGELOG.md](CHANGELOG.md).
+Как сообщить об уязвимости — в [SECURITY.md](SECURITY.md).
+
+## Лицензия
+
+pg-mcp распространяется под лицензией MIT ([LICENSE](LICENSE)). Пакеты, которые он несёт в
+`src/pg_mcp/_vendor` без изменений, остаются под своими лицензиями — они перечислены в
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

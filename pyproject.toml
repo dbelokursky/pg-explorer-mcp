@@ -4,12 +4,14 @@ build-backend = "uv_build"
 
 [project]
 name = "pg-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "Read-only PostgreSQL MCP server for GigaCode CLI and other agents, with no runtime dependencies"
 readme = "README.md"
 # 3.9 stays because macOS Command Line Tools ship it; see docs/adr/0001-python-stdlib-only.md.
 requires-python = ">=3.9"
 authors = [{ name = "Dmitry Belokursky" }]
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 classifiers = [
     "Private :: Do Not Upload",
     "Development Status :: 4 - Beta",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import difflib
 import fnmatch
 import re
+import stat
 import sys
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -29,6 +30,7 @@ _WILDCARDS = "*?["  # what makes an item of stands a pattern rather than a name
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")
 _STAND_NUMBER = re.compile(r"(\D*)(\d*)(.*)")
 _RANGE = "\u2013"  # an en dash between the first and the last stand of a run
+_PASSWORD_LINE = re.compile(r"^\s*password\s*=", re.MULTILINE)
 
 
 class StandError(Exception):
@@ -95,6 +97,13 @@ class Registry:
     targets: list[Target] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    paths: list[Path] = field(default_factory=list)  # every file looked at, present or not
+    state: dict[str, tuple[int, int] | None] = field(default_factory=dict)  # mtime and size per path
+    patterns: list[str] = field(default_factory=list)  # the PG_MCP_STANDS patterns the stands were chosen by
+
+    def changed(self) -> bool:
+        """Whether any of the files looked at has changed since the registry was read."""
+        return _state(self.paths) != self.state
 
     def stands(self) -> list[str]:
         return sorted({target.stand for target in self.targets}, key=_natural)
@@ -195,14 +204,17 @@ def registry_files(env: Mapping[str, str]) -> list[Path]:
     return [Path(own).expanduser(), Path(service).expanduser()]
 
 
-def load_registry(env: Mapping[str, str], files: Sequence[Path] | None = None) -> Registry | None:
+def load_registry(
+    env: Mapping[str, str], files: Sequence[Path] | None = None, patterns: Sequence[str] | None = None
+) -> Registry | None:
     """Read the stands; None when PG_MCP_STANDS is off. Never raises: problems become warnings."""
-    patterns = stands_enabled(env)
+    patterns = stands_enabled(env) if patterns is None else list(patterns)
     if patterns is None:
         return None
-    registry = Registry()
+    paths = list(registry_files(env) if files is None else files)
+    registry = Registry(paths=paths, state=_state(paths), patterns=list(patterns))
     seen: set[str] = set()
-    for path in registry_files(env) if files is None else files:
+    for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -211,6 +223,8 @@ def load_registry(env: Mapping[str, str], files: Sequence[Path] | None = None) -
             registry.warnings.append(t("stands.unreadable", path=path, error=exc))
             continue
         registry.files.append(str(path))
+        if _PASSWORD_LINE.search(text) and _readable_by_others(path):
+            registry.warnings.append(t("stands.readable_by_others", path=path))
         sections, problems = parse_service_file(text)
         registry.warnings.extend(t("stands.bad_line", path=path, problem=problem) for problem in problems)
         for name, options in sections.items():
@@ -224,6 +238,27 @@ def load_registry(env: Mapping[str, str], files: Sequence[Path] | None = None) -
         where = ", ".join(str(path) for path in (registry_files(env) if files is None else files))
         registry.warnings.append(t("stands.none_found", files=where))
     return registry
+
+
+def _state(paths: Sequence[Path]) -> dict[str, tuple[int, int] | None]:
+    return {str(path): _stamp(path) for path in paths}
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        found = path.stat()
+    except OSError:
+        return None
+    return found.st_mtime_ns, found.st_size
+
+
+def _readable_by_others(path: Path) -> bool:
+    if sys.platform == "win32":
+        return False  # no mode bits to speak of; the file lives under the user's profile
+    try:
+        return bool(path.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO))
+    except OSError:
+        return False
 
 
 def parse_service_file(text: str) -> tuple[dict[str, dict[str, str]], list[str]]:
@@ -277,6 +312,25 @@ class Pool:
         for database in self._open.values():
             database.close()
         self._open.clear()
+
+    def refresh(self) -> bool:
+        """Re-read the registry when its files changed, so an import shows up without a restart.
+
+        A change that leaves no stands readable keeps the stands read before, with a warning.
+        """
+        if not self.registry.changed():
+            return False
+        fresh = load_registry(self._env, self.registry.paths, self.registry.patterns)
+        if fresh is not None and fresh.targets:
+            self.registry = fresh
+            return True
+        self.registry.state = _state(self.registry.paths)  # noted: no point re-reading until the next change
+        kept = [
+            *(fresh.warnings if fresh else []),
+            t("stands.reload_kept", files=", ".join(map(str, self.registry.paths))),
+        ]
+        self.registry.warnings = kept
+        return False
 
     # The query log reads these, as it does from a single Database.
     @property
