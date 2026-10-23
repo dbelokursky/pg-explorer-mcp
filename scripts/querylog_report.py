@@ -458,7 +458,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"cannot read {report.files[-1]}: {exc}")
 
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="replace")  # SQL in the log may not fit a narrow console code page
+        # UTF-8 wherever the report goes: a file or pipe on Windows would get the console code page otherwise.
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if args.format == "json":
         text = render_json(report)
     elif args.format == "csv":

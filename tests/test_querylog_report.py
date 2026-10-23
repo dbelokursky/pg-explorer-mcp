@@ -8,7 +8,6 @@ import datetime as dt
 import gzip
 import io
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -461,7 +460,6 @@ def test_the_script_runs_on_its_own(log_files: list[str]) -> None:
         text=True,
         encoding="utf-8",
         timeout=60,
-        env=dict(os.environ, PYTHONIOENCODING="utf-8"),  # a pipe on Windows would get the console code page instead
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
