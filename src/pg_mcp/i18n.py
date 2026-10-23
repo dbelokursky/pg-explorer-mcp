@@ -448,6 +448,63 @@ EN: dict[str, str] = {
     "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
     "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-mcp? [y/N] ",
     "import.offer_hint": "To import them, run: {command}",
+    # install.py export
+    "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
+    "export.help.tool": (
+        "the tool: dbeaver, datagrip (and the other JetBrains IDEs), pgadmin, pg-service (psql, pgcli), "
+        "vscode-pgsql or sqltools"
+    ),
+    "export.help.stands": "the stands to export: names or patterns separated by commas (default: all)",
+    "export.help.write": "write the files; without it, only show what would be written",
+    "export.help.project": (
+        "for datagrip: the project folder to add the data sources to; close the project in the IDE first "
+        "(default: {path})"
+    ),
+    "export.help.editor": "for vscode-pgsql and sqltools: the editor whose user settings get the connections",
+    "export.no_stands": "no stands to export: import them first (install.py import) or check PG_MCP_STANDS_FILE",
+    "export.no_match": "no stands match {patterns}; the registry has {stands}",
+    "export.no_dbeaver": (
+        "DBeaver's connections were not found on this machine; pass --workspace with the folder that holds "
+        "data-sources.json"
+    ),
+    "export.not_a_folder": "{path} is not a folder",
+    "export.no_editor": "the settings of {editor} were not found in {path}: is it installed?",
+    "export.unreadable": "cannot read {path}: {error}. Nothing was changed.",
+    "export.not_json": (
+        "{path} is not plain JSON (comments?), so it is left alone. Merge this into it by hand:\n{snippet}"
+    ),
+    "export.not_a_list": "{setting} in the editor's settings is not a list. Nothing was changed.",
+    "export.preview.one": "{tool}: {count} connection ({stands}) goes into:",
+    "export.preview.other": "{tool}: {count} connections ({stands}) go into:",
+    "export.present_dbeaver": "left out, already in DBeaver with the same host, port, database and user: {count}",
+    "export.present_service": "left out, already in {path}: {count}",
+    "export.nothing_new": "{tool} has all of these connections already; nothing to write",
+    "export.dry_run": "This was a preview, nothing was written. Add --write to write the files.",
+    "export.cannot_place": "cannot replace {path}: {error}. It is left as it was.",
+    "export.next_dbeaver": (
+        "Restart DBeaver: the connections are in a folder per stand and log in with the password file."
+    ),
+    "export.next_datagrip": (
+        "Open the folder {path} as a project in DataGrip or another JetBrains IDE (File | Open), or reopen the "
+        "project if it is open: the data sources are grouped by stand and log in with the password file."
+    ),
+    "export.next_pgadmin": (
+        "In pgAdmin: Tools | Import/Export Servers, Import, the file {path}. The servers are grouped by stand "
+        "and read passwords from {passfile}."
+    ),
+    "export.next_pg_service": (
+        'Connect with psql "service={service}" or pgcli "service={service}": the schema comes first on the search path.'
+    ),
+    "export.next_vscode_pgsql": (
+        "Reload the editor window: the connections are in the PostgreSQL view, a group per stand. The extension "
+        "cannot read the password file: it asks for each password once and keeps it in the system keychain."
+    ),
+    "export.next_sqltools": (
+        "Reload the editor window: the connections are in SQLTools, a group per stand, and log in with the "
+        "password file."
+    ),
+    "export.offer": "Found {tools}. Add the stand connections there ({count})? [y/N] ",
+    "export.offer_hint": "To add them later:",
     # install.py
     "install.description": "Register the pg-mcp server in the agent's settings and check it.",
     "install.help.client": "the agent or editor to register the server with (default: gigacode)",
@@ -846,6 +903,66 @@ RU: dict[str, str] = {
     "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
     "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-mcp? [y/N] ",
     "import.offer_hint": "Чтобы перенести их, выполните: {command}",
+    "export.help": (
+        "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
+    ),
+    "export.help.tool": (
+        "инструмент: dbeaver, datagrip (и другие IDE JetBrains), pgadmin, pg-service (psql, pgcli), "
+        "vscode-pgsql или sqltools"
+    ),
+    "export.help.stands": "какие стенды выгрузить: имена или шаблоны через запятую (по умолчанию — все)",
+    "export.help.write": "записать файлы; без него — только показать, что будет записано",
+    "export.help.project": (
+        "для datagrip: папка проекта, куда добавить источники данных; сначала закройте проект в IDE "
+        "(по умолчанию: {path})"
+    ),
+    "export.help.editor": "для vscode-pgsql и sqltools: редактор, в чьи настройки пользователя добавить подключения",
+    "export.no_stands": (
+        "стендов для выгрузки нет: сначала импортируйте их (install.py import) или проверьте PG_MCP_STANDS_FILE"
+    ),
+    "export.no_match": "под {patterns} не подходит ни один стенд; в реестре есть {stands}",
+    "export.no_dbeaver": (
+        "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
+    ),
+    "export.not_a_folder": "{path} — не папка",
+    "export.no_editor": "настройки {editor} не найдены в {path}: редактор установлен?",
+    "export.unreadable": "не удалось прочитать {path}: {error}. Ничего не изменено.",
+    "export.not_json": (
+        "{path} — не чистый JSON (комментарии?), поэтому файл не тронут. Добавьте это в него вручную:\n{snippet}"
+    ),
+    "export.not_a_list": "{setting} в настройках редактора — не список. Ничего не изменено.",
+    "export.preview.one": "{tool}: {count} подключение ({stands}) попадёт в:",
+    "export.preview.few": "{tool}: {count} подключения ({stands}) попадут в:",
+    "export.preview.many": "{tool}: {count} подключений ({stands}) попадут в:",
+    "export.present_dbeaver": ("пропущены, уже есть в DBeaver с тем же хостом, портом, базой и пользователем: {count}"),
+    "export.present_service": "пропущены, уже есть в {path}: {count}",
+    "export.nothing_new": "в {tool} все эти подключения уже есть, записывать нечего",
+    "export.dry_run": "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы.",
+    "export.cannot_place": "не удалось заменить {path}: {error}. Файл остался прежним.",
+    "export.next_dbeaver": (
+        "Перезапустите DBeaver: подключения лежат в папках по стендам, пароли берутся из файла паролей."
+    ),
+    "export.next_datagrip": (
+        "Откройте папку {path} как проект в DataGrip или другой IDE JetBrains (File | Open), а если проект уже "
+        "открыт — откройте его заново: источники данных сгруппированы по стендам, пароли берутся из файла паролей."
+    ),
+    "export.next_pgadmin": (
+        "В pgAdmin: Tools | Import/Export Servers, Import, файл {path}. Серверы сгруппированы по стендам "
+        "и берут пароли из {passfile}."
+    ),
+    "export.next_pg_service": (
+        'Подключайтесь так: psql "service={service}" или pgcli "service={service}"; схема идёт первой в search_path.'
+    ),
+    "export.next_vscode_pgsql": (
+        "Перезагрузите окно редактора: подключения появятся в панели PostgreSQL, по группе на стенд. Расширение "
+        "не умеет читать файл паролей: оно спросит каждый пароль один раз и сохранит его в системной связке ключей."
+    ),
+    "export.next_sqltools": (
+        "Перезагрузите окно редактора: подключения появятся в SQLTools, по группе на стенд, пароли берутся "
+        "из файла паролей."
+    ),
+    "export.offer": "Найдены {tools}. Добавить туда подключения к стендам ({count})? [y/N] ",
+    "export.offer_hint": "Чтобы добавить их позже, выполните:",
     "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
     "install.help.client": "агент или редактор, где зарегистрировать сервер (по умолчанию: gigacode)",
     "install.help.print": "напечатать запись и куда её положить, ничего не регистрируя",

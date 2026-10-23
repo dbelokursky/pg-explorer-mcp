@@ -10,6 +10,8 @@
     python3 install.py import dbeaver            show what DBeaver's connections would bring
     python3 install.py import dbeaver --write    write the stands registry, the password file, register pg-stands
     python3 install.py import pg-service ~/.pg_service.conf --write
+    python3 install.py export dbeaver            show which stand connections DBeaver would get
+    python3 install.py export pgadmin --write    write servers.json for pgAdmin to import
 
 Uses only the standard library and registers the very interpreter that runs it,
 so the agent later starts the server on a Python that is known to work. PG*
@@ -35,7 +37,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pg_mcp import clients, i18n, imports
+from pg_mcp import clients, exports, i18n, imports
 from pg_mcp.i18n import t
 
 MIN_PYTHON = (3, 9)
@@ -66,6 +68,7 @@ COPIED_ENV = (
     "PG_MCP_MAX_CONNECTIONS",
 )
 PROFILES = ("schema", "explore", "analyst")
+YES = ("y", "yes", "д", "да")
 
 
 def server_name(name: str | None = None) -> str:
@@ -199,9 +202,19 @@ def main(argv: list[str]) -> int:
         default=imports.DEFAULT_STAND_PATTERN,
         help=t("install.help.stand_pattern", pattern=imports.DEFAULT_STAND_PATTERN),
     )
+    exporter = commands.add_parser("export", help=t("export.help"), description=t("export.help"))
+    exporter.add_argument("tool", choices=list(exports.TOOLS), help=t("export.help.tool"))
+    exporter.add_argument("--stands", default="*", help=t("export.help.stands"))
+    exporter.add_argument("--write", action="store_true", help=t("export.help.write"))
+    exporter.add_argument("--workspace", help=t("install.help.workspace"))
+    exporter.add_argument("--project", help=t("export.help.project", path=exports.default_project(os.environ)))
+    exporter.add_argument("--editor", choices=list(exports.EDITORS), default="vscode", help=t("export.help.editor"))
+    exporter.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
     args = parser.parse_args(argv)
     if args.command == "import":
         return import_command(args, language)
+    if args.command == "export":
+        return export_command(args)
 
     entry = server_entry(args.profile, language, args.name)
     name = server_name(args.name)
@@ -219,6 +232,7 @@ def main(argv: list[str]) -> int:
         offer_clients(name, entry, besides=args.client)
         if args.name is None:
             offer_import(language)
+        offer_export()  # pg-stands is registered with --name stands
     return 0 if ok else 1
 
 
@@ -263,7 +277,7 @@ def offer_clients(name: str, entry: dict[str, Any], *, besides: str) -> None:
         answer = input(t("clients.offer", clients=labels, name=name))
     except EOFError:
         return
-    if answer.strip().lower() in ("y", "yes", "д", "да"):
+    if answer.strip().lower() in YES:
         for client in found:
             print()
             install_into(client.key, name, entry)
@@ -313,6 +327,7 @@ def import_command(args: argparse.Namespace, language: str) -> int:
     print()
     print(t("install.restart"))
     offer_clients(server_name(STANDS_NAME), entry, besides=args.client)
+    offer_export(besides=args.source)  # the stands are in the tool they came from already
     return 0 if ok else 1
 
 
@@ -342,12 +357,106 @@ def offer_import(language: str) -> None:
     except EOFError:
         return
     command = f"{sys.executable} {ROOT / 'install.py'} import dbeaver --write --lang {language}"
-    if answer.strip().lower() in ("y", "yes", "д", "да"):
+    if answer.strip().lower() in YES:
         print()
         import_command(argparse.Namespace(source="dbeaver", file=None, workspace=None, write=False, prune=False,
                                           stand_pattern=imports.DEFAULT_STAND_PATTERN, client="gigacode",
                                           profile=None, lang=language, print=False), language)  # fmt: skip
     print(t("import.offer_hint", command=command))
+
+
+def export_command(args: argparse.Namespace) -> int:
+    """Preview, or with --write make, the stand connections in a database tool."""
+    try:
+        items, warnings = exports.connections(os.environ, args.stands.split(","))
+        export = exports.prepare(
+            args.tool,
+            items,
+            os.environ,
+            Path.home(),
+            workspace=_folder(args.workspace),
+            project=_folder(args.project),
+            editor=args.editor,
+        )
+    except exports.ExportRefusedError as exc:
+        print(exc)
+        return 1
+    for line in [*warnings, *exports.preview(export)]:
+        print(line)
+    if not export.files:
+        return 0
+    if not args.write:
+        print(t("export.dry_run"))
+        return 0
+    return _write_export(export)
+
+
+def _write_export(export: exports.Export) -> int:
+    try:
+        lines = exports.write(export)
+    except exports.ExportRefusedError as exc:
+        print(exc)
+        return 1
+    for line in lines:
+        print(line)
+    return 0
+
+
+def _folder(value: str | None) -> Path | None:
+    return Path(value).expanduser() if value else None
+
+
+def offer_export(*, besides: str | None = None) -> None:
+    """At a terminal, when stands are registered and database tools are here: offer to add the stands to them.
+
+    besides is the tool the stands were just imported from. A tool that has every connection already,
+    or whose settings cannot be changed safely, is not offered; the export command says why.
+    """
+    if not sys.stdin.isatty():
+        return
+    try:
+        items, _ = exports.connections(os.environ)
+    except exports.ExportRefusedError:
+        return
+    ready: list[tuple[exports.Export, str]] = []
+    for tool, editor in exports.installed(os.environ, Path.home()):
+        if tool == besides:
+            continue
+        try:
+            export = exports.prepare(tool, items, os.environ, Path.home(), editor=editor or "vscode")
+        except exports.ExportRefusedError:
+            continue
+        if export.files:
+            ready.append((export, editor))
+    if not ready:
+        return
+    tools = ", ".join(exports.TOOLS[export.tool] for export, _ in ready)
+    try:
+        answer = input(t("export.offer", tools=tools, count=len(items)))
+    except EOFError:
+        return
+    if answer.strip().lower() in YES:
+        for export, editor in ready:
+            print()
+            _export_now(export.tool, items, editor)
+        return
+    print(t("export.offer_hint"))
+    for export, editor in ready:
+        option = f" --editor {editor}" if editor and editor != "vscode" else ""
+        print(f"  {sys.executable} {ROOT / 'install.py'} export {export.tool}{option} --write")
+
+
+def _export_now(tool: str, items: list[exports.Connection], editor: str) -> None:
+    """Prepare one export and write it. It is prepared only now: both VS Code extensions change one file."""
+    try:
+        export = exports.prepare(tool, items, os.environ, Path.home(), editor=editor or "vscode")
+    except exports.ExportRefusedError as exc:
+        print(exc)
+        return
+    for line in exports.preview(export):
+        print(line)
+    if export.files:
+        _write_export(export)
 
 
 if __name__ == "__main__":

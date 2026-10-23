@@ -424,6 +424,39 @@ The agent does the same with `/pg:import`, writing only after you confirm. A run
 a changed registry on its next call, so an import needs no restart; a registry file that holds a
 `password=` line and is readable by other users gets a warning in `status`.
 
+**Exporting connections to database tools.** The other way round, `install.py export` puts the stands
+into the tools you query them with yourself: a folder or group per stand, every connection logging in
+with the password file. No password is copied anywhere.
+
+```bash
+python3 install.py export dbeaver                # a preview: what would go where; nothing is written
+python3 install.py export dbeaver --write
+python3 install.py export pgadmin --write --stands 'dev*,ift2'
+```
+
+| Tool | `export` | What it writes | Then |
+|---|---|---|---|
+| DBeaver | `dbeaver` | `data-sources-pg-mcp.json` next to DBeaver's `data-sources.json`, or in the folder `--workspace` names | Restart DBeaver |
+| DataGrip and the JetBrains IDEs with database tools | `datagrip` | `.idea/dataSources.xml` and `dataSources.local.xml` in `~/.pg-mcp/datagrip`, or in the project `--project` names (close it first) | Open the folder as a project |
+| pgAdmin 4 | `pgadmin` | `~/.pg-mcp/pgadmin-servers.json` | Tools > Import/Export Servers > Import |
+| psql, pgcli | `pg-service` | Sections of `~/.pg_service.conf`, the schema first on the search path | `psql "service=dev7.demo.shop"` |
+| PostgreSQL extension of VS Code (Microsoft) | `vscode-pgsql` | `pgsql.connections` in the user settings; `--editor cursor` or `windsurf` for those editors | Reload the window |
+| SQLTools | `sqltools` | `sqltools.connections` in the user settings, with an empty password | Reload the window |
+
+An export replaces only the connections it brings, found by a stable id or by name, and keeps the
+rest: what you made in the tool, and what an earlier export brought for other stands. Each changed
+file keeps a dated copy and its permissions, and a file that is a link stays a link. Connections
+DBeaver already has with the same host, port, database and user are left out, since the stands most
+often come from DBeaver in the first place. In `~/.pg_service.conf` every exported section sits under
+the line `# pg-mcp export`: the next export rewrites only such sections, the server does not take them
+for stands, and a section of the same name that you wrote yourself stays as it is while its stand is
+left out. The TLS settings of a stand, `sslmode` and `sslrootcert`, go along. A settings file with
+comments is left alone, and the export prints what to add to it by hand. The PostgreSQL extension of
+Microsoft cannot read the password file: it asks for each password once and keeps it in the system
+keychain. Importing the file into pgAdmin again adds the servers again, so remove the old ones first.
+After `import --write`, and after registering an entry while stands exist, `install.py` at a terminal
+looks for these tools on the machine and offers to export into them.
+
 **3. Use.** Every tool takes `stand`. Reading data also takes `schema`: the server connects with that
 schema's login and looks for unqualified names in it first. `database` is needed only when the schema
 exists in several databases of the stand.
