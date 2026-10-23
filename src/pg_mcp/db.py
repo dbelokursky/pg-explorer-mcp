@@ -51,7 +51,12 @@ class DatabaseUnavailableError(Exception):
 
 
 class QueryFailedError(Exception):
-    """PostgreSQL rejected a statement."""
+    """PostgreSQL rejected a statement: code is its SQLSTATE and server_message its own text, when it sent them."""
+
+    def __init__(self, text: str, code: str | None = None, server_message: str | None = None) -> None:
+        super().__init__(text)
+        self.code = code
+        self.server_message = server_message
 
 
 @dataclass
@@ -138,7 +143,7 @@ class Database:
             try:
                 return _run_one_statement(conn, sql, params)
             except pg8000.exceptions.DatabaseError as exc:
-                raise QueryFailedError(_server_message(exc)) from exc
+                raise _query_failed(exc) from exc
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
@@ -166,7 +171,7 @@ class Database:
                 finally:
                     conn.execute_simple("ROLLBACK")
             except pg8000.exceptions.DatabaseError as exc:
-                raise QueryFailedError(_server_message(exc)) from exc
+                raise _query_failed(exc) from exc
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
@@ -367,6 +372,11 @@ def _ssl_attempts(settings: Settings) -> list[Any]:
 def _error_fields(exc: Exception) -> dict[str, str]:
     # pg8000 passes the server's error message fields (C = SQLSTATE, M = text, H = hint) as a dict.
     return exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {}
+
+
+def _query_failed(exc: Exception) -> QueryFailedError:
+    fields = _error_fields(exc)
+    return QueryFailedError(_server_message(exc), code=fields.get("C"), server_message=fields.get("M"))
 
 
 def _server_message(exc: Exception) -> str:

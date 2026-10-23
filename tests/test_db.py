@@ -296,6 +296,13 @@ class TestData:
         with pytest.raises(ToolError, match="SQLSTATE 42P01"):
             analyst["run_select"].call({"query": "SELECT * FROM no_such_table"})
 
+    def test_a_table_without_its_schema_is_pointed_to(self, analyst: dict[str, Tool]) -> None:
+        hint = rf"42P01.* readable as .*{SCHEMA}\.orders.*: write the name with its schema\."
+        with pytest.raises(ToolError, match=hint):
+            analyst["run_select"].call({"query": "SELECT count(*) FROM orders"})
+        with pytest.raises(ToolError, match=hint):
+            analyst["explain_query"].call({"query": "SELECT * FROM orders"})
+
 
 @pytest.mark.usefixtures("russian")
 class TestRussian:

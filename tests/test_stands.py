@@ -1080,6 +1080,18 @@ def test_tool_descriptions_stay_small(language: str, mode: str, tmp_path: Path) 
     assert size <= SIZE_LIMITS[language, mode], f"tools/list in {language}, {mode}: {size} chars"
 
 
+@pytest.mark.parametrize(("language", "mode"), list(SIZE_LIMITS))
+def test_no_description_offers_public_as_an_example(language: str, mode: str, tmp_path: Path) -> None:
+    """A model copies an example into the argument: list_tables {"schema": "public"} where no public is."""
+    with i18n.speaking(language):
+        if mode == "single":
+            tools = build_tools(Database({"PGUSER": "x"}), str(ROOT), profile="analyst")
+        else:
+            registry = loaded(STANDS_ON, [write(tmp_path / "stands.conf", sections())])
+            tools = build_stand_tools(Pool(registry, {}), str(ROOT), profile="analyst")
+        assert "public" not in json.dumps([tool.describe() for tool in tools], ensure_ascii=False)
+
+
 class TestReload:
     """The registry is re-read when its files change, so an import shows up without a restart."""
 
