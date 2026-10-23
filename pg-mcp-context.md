@@ -15,7 +15,8 @@ reaches dozens of stands through the same tools.
   names separated by commas or a pattern (`dev1,dev2`, `dev*`), at most 10 per call. The answer has a
   section per stand, and a stand that did not answer says why under its line.
 - To learn how a schema differs between two stands (tables, columns, constraints, indexes), call
-  `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand.
+  `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand; with
+  `stands` instead of `stand_b` it sets several stands against `stand_a` (at most 10) and says which differ.
 - To bring the user's DBeaver or `pg_service.conf` connections into pg-mcp, run `/pg:import`: it previews
   first and writes only after the user confirms.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.

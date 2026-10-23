@@ -249,7 +249,7 @@ class TestCompareSchema:
         assert lines[0] == f"dev1 / shop / {BILLING}  vs  4 stands:"
         assert f"dev2 / shop / {BILLING}: same as dev1" in lines
         assert f"dev4 / shop / {BILLING}: same as dev1" in lines
-        assert any(line.startswith("dev3") and "no schema" in line for line in lines)
+        assert "no schema" in lines[lines.index("dev3") + 1]  # the registry has no login for billing there
         assert any(line.startswith(f"  dev9 / shop / {BILLING}: ") for line in lines)
         assert lines[-1] == "same as dev1: 2; different: 0; not checked: 2"
 

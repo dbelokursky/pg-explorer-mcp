@@ -410,6 +410,7 @@ exists in several databases of the stand.
 | "On which dev stand is there an order 123?" | `run_select` with `stands` and `schema` |
 | "Which stands have a discount column in shop?" | `search_schema` with `stands` and `text` |
 | "How does shop on dev7 differ from dev12?" | `compare_schema` with `stand_a`, `stand_b` and `schema` |
+| "Which dev stands differ from dev7 in shop?" | `compare_schema` with `stand_a`, `stands` and `schema` |
 
 Every answer starts with where it came from. Real answers on the demo database:
 
@@ -443,6 +444,23 @@ differ:
   order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
   orders.note only on dev12: text
   orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+```
+
+`compare_schema` with `stand_a: dev7`, `stands: dev*` and `schema: shop` — the stands that match, each
+against dev7; up to three stands get the full differences, more stands get one line of counts each:
+
+```text
+dev7 / demo / shop  vs  3 stands:
+dev8 / demo / shop: same as dev7
+dev9 / demo / shop: same as dev7
+dev12 / demo / shop
+only on dev12:
+  returns | table
+differ:
+  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  orders.note only on dev12: text
+  orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+same as dev7: 2; different: 1; not checked: 0
 ```
 
 The structure comes from the system catalog of each stand, read with the schema's own login in three
