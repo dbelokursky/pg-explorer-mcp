@@ -7,6 +7,19 @@ on:
   push:
     tags: ["v*"]
   pull_request:
+    # Only when what the archive is made of or checked by changes: the build costs minutes too.
+    paths:
+      - .github/workflows/release.yml
+      - .gitattributes
+      - scripts/release.py
+      - tests/test_release.py
+      - pyproject.toml
+      - src/pg_mcp/__init__.py
+      - gigacode-extension.json
+      - qwen-extension.json
+      - CHANGELOG.md
+      - install.py
+      - run.py
   workflow_dispatch:
     inputs:
       build_only:
