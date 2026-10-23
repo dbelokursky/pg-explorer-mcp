@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .db import Counters, Database, Settings
+from .db import DEFAULT_STATEMENT_TIMEOUT_MS, Counters, Database, Settings
 from .i18n import plural, t
 
 DEFAULT_MAX_CONNECTIONS = 8
@@ -308,6 +308,12 @@ class Pool:
         """Seconds a connection to the target may wait for an answer: the section's, else the entry's."""
         raw = target.env(self._env)["PG_MCP_SOCKET_TIMEOUT_S"]
         return int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_SOCKET_TIMEOUT_S
+
+    def statement_timeout(self, target: Target) -> int:
+        """Seconds a statement on the target may run before PostgreSQL stops it, rounded up."""
+        raw = target.env(self._env).get("PG_MCP_STATEMENT_TIMEOUT_MS", "")
+        milliseconds = int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_STATEMENT_TIMEOUT_MS
+        return -(-milliseconds // 1000)
 
 
 def summarize(stands: Sequence[str]) -> str:

@@ -513,6 +513,14 @@ class TestOfflineTools:
         assert pool.current is not None
         assert pool.current.name == "dev1.orders.shipping"
 
+    def test_a_call_over_several_stands_logs_how_it_ended_on_each(self, pool: Pool, tmp_path: Path) -> None:
+        log = tmp_path / "queries.jsonl"
+        tools = by_name(build_stand_tools(pool, str(ROOT), query_log=QueryLog(str(log), pool)))
+        tools["search_schema"].call({"stands": "dev*", "text": "parcel"})
+        entry = json.loads(log.read_text(encoding="utf-8"))
+        assert entry["stands"] == {"dev1": "unavailable", "dev2": "unavailable"}
+        assert "stand" not in entry  # the stands' outcomes replace the one login's name
+
     def test_the_query_log_names_the_stand_and_schema_of_each_call(self, pool: Pool, tmp_path: Path) -> None:
         log = tmp_path / "queries.jsonl"
         tools = by_name(build_stand_tools(pool, str(ROOT), query_log=QueryLog(str(log), pool)))
@@ -980,6 +988,14 @@ class TestEntry:
     ) -> None:
         status = self.answers(dict(env, PG_MCP_MAX_CONNECTIONS=raw))[2]
         assert f"at most {connections} connections stay open" in status
+
+
+def test_the_time_reserve_of_a_stand_covers_a_silent_host_and_a_slow_statement(tmp_path: Path) -> None:
+    text = "[dev1.orders.billing]\nhost=db\n\n[dev1.orders.shipping]\nhost=db\nconnect_timeout=3\n"
+    registry = loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)])
+    assert stand_tools._reserve(Pool(registry, {}), "dev1") == 15  # 10 seconds to connect, 5 for the statement
+    pool = Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "2", "PG_MCP_STATEMENT_TIMEOUT_MS": "1500"})
+    assert stand_tools._reserve(pool, "dev1") == 5  # the section's 3 seconds over the entry's 2, plus 2 rounded up
 
 
 # Every request to the model carries tools/list, and local models run with small contexts.

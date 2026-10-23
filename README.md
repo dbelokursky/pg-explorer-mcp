@@ -435,12 +435,11 @@ dev3 / demo / shop
 
 A failure stays small. An unreachable stand or a broken login affects only the answers that need it,
 and `status` with `stand` tries a second login when the server turned the first one down. Without
-`PG_MCP_STANDS`, or when
-no stand is found, the entry works with the `PG*` variables as before, and `status` says why. At most 8
-connections stay open (`PG_MCP_MAX_CONNECTIONS`). A host that does not answer is given up after 10 seconds
-and not tried again for the rest of that call, whatever else the stand has on it; a second login of a
-database is tried only when the server answered and turned the first one down.
-The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
+`PG_MCP_STANDS`, or when no stand is found, the entry works with the `PG*` variables as before, and
+`status` says why. At most 8 connections stay open (`PG_MCP_MAX_CONNECTIONS`). A host that does not
+answer is given up after 10 seconds and not tried again for the rest of that call, whatever else the
+stand has on it; a second login of a database is tried only when the server answered and turned the
+first one down. The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
 
 ## Group profiles
 

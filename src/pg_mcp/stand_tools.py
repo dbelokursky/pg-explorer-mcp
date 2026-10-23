@@ -428,8 +428,10 @@ def _each_stand(pool: Pool, stands: Sequence[str], run: Callable[[str], list[str
 
 
 def _reserve(pool: Pool, stand: str) -> int:
-    """Seconds the stand may take to answer at all: the longest connect timeout among its logins."""
-    return max(pool.connect_timeout(target) for target in pool.registry.of_stand(stand))
+    """Seconds the stand may take: a silent host costs the connect timeout, then a slow statement its own."""
+    return max(
+        pool.connect_timeout(target) + pool.statement_timeout(target) for target in pool.registry.of_stand(stand)
+    )
 
 
 def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target], list[str]]) -> list[str]:
