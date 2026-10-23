@@ -210,6 +210,34 @@ PGDATABASE=hr PGUSER=mcp_hr python3 install.py --name hr --profile schema
 
 The agent then gets the tools of every entry, and the `status` of each names its server and database.
 
+#### Other agents and editors
+
+`--client` registers the server with other MCP clients as well, in each one's own file and format:
+
+| `--client` | Where the entry goes |
+|---|---|
+| `gigacode` (the default), `qwen` | `~/.gigacode/settings.json`, `~/.qwen/settings.json` |
+| `vscode` | the user `mcp.json` of VS Code (GitHub Copilot agent mode), under `servers` |
+| `cursor` | `~/.cursor/mcp.json` |
+| `windsurf` | Windsurf, now Devin Desktop: `~/.config/devin/mcp_config.json`, or the older file where one is in use |
+| `cline` | `~/.cline/data/settings/cline_mcp_settings.json`, shared by Cline in VS Code, JetBrains and its CLI |
+| `roo` | the settings file of the Roo Code extension in VS Code (the extension is no longer developed) |
+| `continue` | a block file `~/.continue/mcpServers/pg.yaml` |
+| `lmstudio` | `~/.lmstudio/mcp.json` |
+| `claude-desktop` | the app's `claude_desktop_config.json` |
+| `junie` | `~/.junie/mcp/mcp.json` |
+| `jetbrains` | nothing is written: AI Assistant keeps its servers in Settings, so the entry is printed to paste |
+
+```bash
+python3 install.py --client cursor            # write into Cursor's file (with a backup) and check
+python3 install.py --client vscode --print    # only show the entry and where it goes
+```
+
+`--print` suits a client this list lacks, or a file you would rather edit yourself. A file with comments
+is never rewritten: `install.py` prints what to add instead. Run at a terminal, `install.py` notices the
+other clients installed on this machine once it has registered the server and offers to add it there
+too. The extension (the context and the `/pg:` commands) exists for GigaCode CLI and Qwen Code only.
+
 ### 6. The extension
 
 ```bash
@@ -245,7 +273,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-mcp 0.4.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+pg-mcp 0.5.0 on Python 3.9.6, installed at /Users/me/pg-mcp
 server name: pg
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
@@ -395,6 +423,39 @@ on they stay unknown, and the preview says which logins need a line in the passw
 The agent does the same with `/pg:import`, writing only after you confirm. A running server notices
 a changed registry on its next call, so an import needs no restart; a registry file that holds a
 `password=` line and is readable by other users gets a warning in `status`.
+
+**Exporting connections to database tools.** The other way round, `install.py export` puts the stands
+into the tools you query them with yourself: a folder or group per stand, every connection logging in
+with the password file. No password is copied anywhere.
+
+```bash
+python3 install.py export dbeaver                # a preview: what would go where; nothing is written
+python3 install.py export dbeaver --write
+python3 install.py export pgadmin --write --stands 'dev*,ift2'
+```
+
+| Tool | `export` | What it writes | Then |
+|---|---|---|---|
+| DBeaver | `dbeaver` | `data-sources-pg-mcp.json` next to DBeaver's `data-sources.json`, or in the folder `--workspace` names | Restart DBeaver |
+| DataGrip and the JetBrains IDEs with database tools | `datagrip` | `.idea/dataSources.xml` and `dataSources.local.xml` in `~/.pg-mcp/datagrip`, or in the project `--project` names (close it first) | Open the folder as a project |
+| pgAdmin 4 | `pgadmin` | `~/.pg-mcp/pgadmin-servers.json` | Tools > Import/Export Servers > Import |
+| psql, pgcli | `pg-service` | Sections of `~/.pg_service.conf`, the schema first on the search path | `psql "service=dev7.demo.shop"` |
+| PostgreSQL extension of VS Code (Microsoft) | `vscode-pgsql` | `pgsql.connections` in the user settings; `--editor cursor` or `windsurf` for those editors | Reload the window |
+| SQLTools | `sqltools` | `sqltools.connections` in the user settings, with an empty password | Reload the window |
+
+An export replaces only the connections it brings, found by a stable id or by name, and keeps the
+rest: what you made in the tool, and what an earlier export brought for other stands. Each changed
+file keeps a dated copy and its permissions, and a file that is a link stays a link. Connections
+DBeaver already has with the same host, port, database and user are left out, since the stands most
+often come from DBeaver in the first place. In `~/.pg_service.conf` every exported section sits under
+the line `# pg-mcp export`: the next export rewrites only such sections, the server does not take them
+for stands, and a section of the same name that you wrote yourself stays as it is while its stand is
+left out. The TLS settings of a stand, `sslmode` and `sslrootcert`, go along. A settings file with
+comments is left alone, and the export prints what to add to it by hand. The PostgreSQL extension of
+Microsoft cannot read the password file: it asks for each password once and keeps it in the system
+keychain. Importing the file into pgAdmin again adds the servers again, so remove the old ones first.
+After `import --write`, and after registering an entry while stands exist, `install.py` at a terminal
+looks for these tools on the machine and offers to export into them.
 
 **3. Use.** Every tool takes `stand`. Reading data also takes `schema`: the server connects with that
 schema's login and looks for unqualified names in it first. `database` is needed only when the schema
@@ -709,10 +770,10 @@ a table PostgreSQL has never analyzed looks exactly like an empty one, so `list_
 server registered by `install.py`: the client must connect to the server and see the extension. GigaCode
 CLI itself is not available outside companies, so it is checked by hand before a release.
 
-**Will another MCP client do?** Yes, any client that starts servers over stdio. Give it the command
-`python3`, the arguments `-I /path/to/pg-mcp/run.py` and the `PG*` variables in the environment. If the
-client reads the `mcpServers` format, the entry from [step 5](#5-register-the-server-with-the-agent)
-works as is.
+**Will another MCP client do?** Yes, any client that starts servers over stdio. `install.py --client`
+writes the entry for VS Code, Cursor, Windsurf, Cline, Roo Code, Continue, LM Studio, Claude Desktop and
+JetBrains ([other agents and editors](#other-agents-and-editors)); for any other client,
+`install.py --client cursor --print` shows the command, the arguments and the `PG*` variables to give it.
 
 **Why does the agent answer in the wrong language?** The model chooses the language of its answers;
 the server asks it to use the user's language. `PG_MCP_LANG` sets the language of the tools themselves.
