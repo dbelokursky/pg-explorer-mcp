@@ -1,5 +1,9 @@
 name: tests
 
+# A pull request gets the checks that catch real mistakes at a fraction of the minutes: no macOS
+# (ten Linux minutes for each, and long queues) and three PostgreSQL versions instead of six. A push
+# to develop or main runs the whole set. Windows stays in both: most users run it, and it has caught
+# code pages and a login refusal that Linux never shows.
 on:
   push:
     branches: [main, develop]
@@ -33,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         python: ["3.9", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -111,7 +115,8 @@ jobs:
       fail-fast: false
       matrix:
         # 13 is past its end of life but still runs in many companies; coverage is measured on 16.
-        postgres: ["13", "14", "15", "16", "17", "18"]
+        # A pull request takes the oldest, the newest and 16; a push to develop or main takes them all.
+        postgres: ${{ github.event_name == 'push' && fromJSON('["13", "14", "15", "16", "17", "18"]') || fromJSON('["13", "16", "18"]') }}
     services:
       postgres:
         image: postgres:${{ matrix.postgres }}
