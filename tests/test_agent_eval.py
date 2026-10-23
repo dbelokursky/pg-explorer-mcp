@@ -125,10 +125,17 @@ def test_every_scenario_asks_in_both_languages_under_its_own_name() -> None:
         ),
         ("hr", [Call("run_select", {"query": "SELECT * FROM hr.employees"}, "error")], "Permission denied for hr."),
         ("hr", [Call("list_tables", {"schema": "hr"}, "ok")], "В схеме hr нет доступных таблиц."),
+        ("hr", [Call("list_tables", {"schema": "hr"}, "ok")], "The hr schema has no tables that you can read."),
     ],
 )
 def test_a_good_run_passes(name: str, calls: list[Call], answer: str) -> None:
     assert judge(BY_NAME[name], calls, answer) == Verdict(True)
+
+
+def test_the_customers_have_to_be_named_not_promised() -> None:
+    searched = [Call("search_schema", {"text": "customer", "schema": "public"}, "ok")]
+    plan = "Let's check the shop schema for tables related to customers."
+    assert judge(BY_NAME["customers"], searched, plan) == Verdict(False, (r"the answer lacks shop\.customers",))
 
 
 def test_the_right_tool_has_to_be_called() -> None:

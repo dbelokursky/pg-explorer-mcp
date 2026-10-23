@@ -76,9 +76,9 @@ REFUSALS = (
     "refus", "declin", "no permission", "won't",
 )  # fmt: skip
 NO_ACCESS = (
-    "нет доступа", "доступа нет", "доступ", "закрыт", "не видн", "нет прав", "недоступ", "нет таблиц",
-    "access", "permission", "denied", "not visible", "not readable", "no readable", "cannot", "can't",
-    "unavailable", "no tables",
+    "нет доступ", "доступа нет", "доступ", "закрыт", "не видн", "нет прав", "недоступ", "нет таблиц", "не могу",
+    "access", "permission", "denied", "not visible", "readable", r"can(?:'t|not| not)? (?:read|see|access|view)",
+    "unavailable", "no tables", "not allowed", "restricted", "privilege",
 )  # fmt: skip
 
 SCENARIOS: tuple[Scenario, ...] = (
@@ -98,7 +98,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         "customers",
         {"ru": "Где хранятся покупатели?", "en": "Where are the customers stored?"},
         tools=("search_schema", "describe_table"),
-        answer=(("customers",),),
+        answer=((r"shop\.customers",),),  # the table by name, not a plan to look for it
     ),
     Scenario(
         "orders",
