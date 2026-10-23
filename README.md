@@ -2,8 +2,9 @@
 
 **English** | [Русский](README.ru.md)
 
-An MCP server that gives an agent **read-only** access to one PostgreSQL database. The agent sees the
-database structure, can look at sample rows and query plans, and analysts can run their own `SELECT`s.
+An MCP server that gives an agent **read-only** access to a PostgreSQL database, or through one entry to
+[dozens of stands](#many-stands). The agent sees the database structure, can look at sample rows and
+query plans, and analysts can run their own `SELECT`s.
 Nothing can change data, structure or settings through this server.
 
 Built for GigaCode CLI and Qwen Code, and works with any MCP client that starts servers over stdio.
@@ -16,6 +17,7 @@ English or Russian.
 - [Quick start](#quick-start)
 - [Installation step by step](#installation-step-by-step)
 - [Usage](#usage)
+- [Many stands](#many-stands)
 - [Group profiles](#group-profiles)
 - [Language](#language)
 - [Security](#security)
@@ -32,9 +34,11 @@ English or Russian.
 | Tool | What it does | Profiles |
 |---|---|---|
 | `status` | which database, as which role, which profile and language, which limits; on failure, what to fix | all |
+| `list_schemas` | with [many stands](#many-stands): the databases of a stand and their schemas the server has logins for | all |
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
+| `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, columns, constraints, indexes | all |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
 | `run_select` | one read-only statement: `SELECT`, `WITH … SELECT`, `VALUES`, `TABLE`, `EXPLAIN`, `SHOW` | `analyst` |
@@ -67,8 +71,10 @@ There is a shorter way too: link the extension (`gigacode extensions link`), res
 git clone https://github.com/dbelokursky/pg-mcp.git
 ```
 
-Without git, download the repository archive and unpack it anywhere. Do not move the folder afterwards:
-its path goes into the agent settings. If you do move it, repeat step 5.
+Without git, take `pg-mcp-<version>.zip` from the latest release on the
+[Releases page](https://github.com/dbelokursky/pg-mcp/releases) and unpack it anywhere: inside is a `pg-mcp` folder
+with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. Do not move
+the folder afterwards: its path goes into the agent settings. If you do move it, repeat step 5.
 
 ### 2. Python 3.9 or newer
 
@@ -168,6 +174,18 @@ This is the entry in `~/.gigacode/settings.json` after `install.py --profile ana
 
 If `settings.json` contains comments, the script leaves it alone and prints the snippet to add by hand.
 
+#### Several databases
+
+One clone serves any number of databases: register each further one under its own name. Its entry becomes
+`pg-<name>` next to `pg`, with its own connection, profile, language and query log:
+
+```bash
+PGDATABASE=sales python3 install.py --name sales
+PGDATABASE=hr PGUSER=mcp_hr python3 install.py --name hr --profile schema
+```
+
+The agent then gets the tools of every entry, and the `status` of each names its server and database.
+
 ### 6. The extension
 
 ```bash
@@ -202,7 +220,8 @@ agent's interface.
 `status`:
 
 ```text
-pg-mcp 0.3.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+pg-mcp 0.4.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+server name: pg
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
 profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
 language: en
@@ -283,9 +302,144 @@ The last line is about the `hr` schema, which the role has no rights to: for the
 | One value in an answer | at most 200 characters |
 | A whole tool answer | 8000 characters (`PG_MCP_MAX_RESPONSE_CHARS`) |
 | One query | 5 seconds (`PG_MCP_STATEMENT_TIMEOUT_MS`) |
+| Open connections of an entry for stands | at most 8 (`PG_MCP_MAX_CONNECTIONS`) |
+| Stands in one call (`stands`) | at most 10; the rows of `run_select` and the matches of `search_schema` are shared among them, at least 10 per stand |
 
 A longer answer is cut at whole lines, and its last line says how much is shown. Local models run with
 small context windows, and an answer that is too long can end the agent's session.
+
+## Many stands
+
+When there are dozens of stands (`dev1` to `dev50`, `ift1` to `ift3`), each with several databases and a
+login per schema, an entry per connection would cost the model thousands of characters of tool
+descriptions in every request. One entry serves them all instead: the tools are described once, and
+each call names the stand and the schema.
+
+**1. The registry.** Connections are kept in the `pg_service.conf` format of libpq, a section per schema
+named `stand.database.schema`:
+
+```ini
+[dev7.demo.shop]
+host=dev7-db.example.com
+
+[dev7.demo.hr]
+host=dev7-db.example.com
+
+[ift2.demo.shop]
+host=ift2-db.example.com
+port=6432
+user=shop_reader
+```
+
+- only `host` is required; `port` (5432), `dbname` (the database part of the name), `user` (the schema
+  name), `sslmode`, `sslrootcert` and `connect_timeout` (10 seconds) are optional;
+- passwords go into the password file, a line per login, just as for one database;
+- the server reads `~/.pg-mcp/stands.conf` (on Windows `%APPDATA%\pg-mcp\stands.conf`, or the file
+  `PG_MCP_STANDS_FILE` names) and your own `~/.pg_service.conf`; with equal names the first file wins.
+  Sections named otherwise are ordinary psql services and stay out of it;
+- psql reads the same sections: `psql service=dev7.demo.shop`.
+
+**2. The entry.**
+
+```bash
+PG_MCP_STANDS='*' python3 install.py --name stands
+```
+
+This registers `pg-stands` next to `pg`. `PG_MCP_STANDS` switches stands on: `*` takes every stand,
+patterns such as `dev*,ift2` take some. The check succeeds once the stands are found: a stand behind a
+VPN is reached only when a tool needs it.
+
+**3. Use.** Every tool takes `stand`. Reading data also takes `schema`: the server connects with that
+schema's login and looks for unqualified names in it first. `database` is needed only when the schema
+exists in several databases of the stand.
+
+| You ask | The agent calls |
+|---|---|
+| "Which stands are there?" | `status` |
+| "Is dev7 reachable?" | `status` with `stand` |
+| "Which schemas are on dev7?" | `list_schemas` |
+| "Where are the orders on dev7?" | `search_schema` with `stand` and `text` |
+| "How many orders per status are in shop on dev7?" | `run_select` with `stand` and `schema` (profile `analyst`) |
+| "On which dev stand is there an order 123?" | `run_select` with `stands` and `schema` |
+| "Which stands have a discount column in shop?" | `search_schema` with `stands` and `text` |
+| "How does shop on dev7 differ from dev12?" | `compare_schema` with `stand_a`, `stand_b` and `schema` |
+
+Every answer starts with where it came from. Real answers on the demo database:
+
+`list_schemas` with `stand: dev7`:
+
+```text
+dev7 / demo: hr, shop
+```
+
+`run_select` with `stand: dev7` and `schema: shop`:
+
+```text
+dev7 / demo / shop
+status | count
+shipped | 174
+paid | 162
+cancelled | 90
+new | 74
+(4 rows)
+```
+
+`compare_schema` with `stand_a: dev7`, `stand_b: dev12` and `schema: shop`, where dev12 is a copy of the demo
+database in which the price gained two digits, orders gained a note and a table of returns, and an index
+was dropped:
+
+```text
+dev7 / demo / shop  vs  dev12 / demo / shop
+only on dev12:
+  returns | table
+differ:
+  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  orders.note only on dev12: text
+  orders: index orders_customer_idx only on dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+```
+
+The structure comes from the system catalog of each stand, read with the schema's own login in three
+queries however many tables there are; the data is not read. A schema with no differences gets a single
+line, such as `identical: 1 table, 3 columns`, and a schema the registry lists but one stand's database
+lacks is an error, not a stand full of differences.
+
+Without `schema`, `list_tables`, `search_schema` and `describe_table` cover the whole stand: the names
+come from the system catalog, which every login can see, through one login per database, and only the
+schemas of the registry are shown. The data stays behind each schema's own privileges: a login that
+cannot read a neighbouring schema gets `permission denied` there.
+
+**4. Several stands at once.** `search_schema` and `run_select` take `stands` instead of `stand`: stand
+names separated by commas or a pattern, `dev1,dev2,dev3` or `dev*`, at most 10 stands in one call. The
+stands are asked one after another, in the order `status` lists them, and the answer has a section per
+stand under its `stand / database / schema` line. A stand that is unreachable, has no login for the
+schema or rejects the query gets one line saying so under its header, and the other stands still answer.
+The 200 rows of `run_select` and the 100 matches of `search_schema` are shared among the stands, at least
+10 per stand, so the whole answer fits the budget. The call keeps to 25 of the client's 30 seconds: when
+the stands asked so far have used most of it, the rest are named as not tried, and the agent asks for
+them in another call.
+
+`run_select` with `stands: dev*`, `schema: shop` and `SELECT count(*) FROM orders WHERE id = 123`:
+
+```text
+dev1 / demo / shop
+count
+1
+(1 row)
+dev2 / demo / shop
+count
+0
+(1 row)
+dev3 / demo / shop
+  Connecting to dev3-db.example.com:5432 timed out. The host may be behind a firewall or a VPN.
+```
+
+A failure stays small. An unreachable stand or a broken login affects only the answers that need it,
+and `status` with `stand` tries a second login when the server turned the first one down. Without
+`PG_MCP_STANDS`, or when no stand is found, the entry works with the `PG*` variables as before, and
+`status` says why. At most 8 connections stay open (`PG_MCP_MAX_CONNECTIONS`). A host that does not
+answer is given up after 10 seconds and not tried again for the rest of that call, whatever else the
+stand has on it; a second login of a database is tried only when the server answered and turned the
+first one down. The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
 
 ## Group profiles
 
@@ -360,6 +514,9 @@ Every tool call adds one JSON line. These two are real, from the demo database:
 - `outcome` is `ok`, `refused` (by the SQL check), `error` (bad arguments or a PostgreSQL error),
   `unavailable` (no connection) or `failed` (a bug in the server);
 - `rows` is how many rows the agent's own statement returned (`sample_rows`, `run_select`, `explain_query`);
+- a call over several stands (`stands`) is still one line: `stands` maps each stand to its outcome (`ok`,
+  `unavailable`, `error`, or `skipped` when the call had no time left for it), `rows` is the total, and
+  `role` and `database` are empty, since every stand has its own;
 - the rows themselves and the tools' answers are never written.
 
 The file is created readable by its owner only, since literals in SQL may carry personal data, and a
@@ -392,6 +549,12 @@ All settings are environment variables in the `env` block of the `pg` server in 
 | `PG_MCP_STATEMENT_TIMEOUT_MS` | `5000` | timeout of one query in milliseconds |
 | `PG_MCP_LOG_LEVEL` | `INFO` | detail of the stderr log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `PG_MCP_QUERY_LOG` | — (off) | absolute path of the [query log](#query-log) file |
+| `PG_MCP_NAME` | `pg` | the entry's name that `status` shows; `install.py --name` writes it |
+| `PG_MCP_SOCKET_TIMEOUT_S` | `30`, for stands `10` | seconds to wait for a new connection; once connected, the socket waits at least the query timeout plus 5 seconds |
+| `PG_MCP_STANDS` | — (off) | `*` or stand name patterns such as `dev*,ift2`: one entry for [many stands](#many-stands) |
+| `PG_MCP_STANDS_FILE` | `~/.pg-mcp/stands.conf`, on Windows `%APPDATA%\pg-mcp\stands.conf` | the stands registry |
+| `PGSERVICEFILE` | `~/.pg_service.conf`, on Windows `%APPDATA%\postgresql\.pg_service.conf` | your psql services; stands are read from it too |
+| `PG_MCP_MAX_CONNECTIONS` | `8` | connections an entry for stands keeps open |
 
 The budget counts characters. Russian text takes more tokens per character than English, so if the
 model's context is small, lower the budget rather than raise it.
@@ -434,6 +597,8 @@ says what is wrong.
 | "Nothing accepts connections at …" | wrong host or port, the database is down, no VPN | check `PGHOST`, `PGPORT` and the VPN; compare with `psql` |
 | "Host … cannot be resolved" | a typo in `PGHOST`, or a VPN is needed | fix `PGHOST` |
 | "Connecting to … timed out" | a firewall or a VPN | check that the port is reachable from this machine |
+| "… is unreachable from this machine" | no route to the host: the VPN is down | connect the VPN |
+| "… accepted the connection, then closed it during the login" | the server refused the login, but its message was lost (Windows drops it on a reset); usually the password or `pg_hba.conf` | check the password file, then ask the DBA |
 | "Login as … failed" or "the server asks for a password" | no password in the password file, a wrong line, or file permissions | check the path, the line format and `chmod 600` |
 | "Database … does not exist" | wrong database name | fix `PGDATABASE` |
 | "The server refused the login for …" | `pg_hba.conf`, or the role lacks `LOGIN`/`CONNECT` | ask the DBA |
@@ -443,16 +608,21 @@ says what is wrong.
 | An answer ends with "… answer cut to" | the answer budget kicked in | narrow the question, or raise `PG_MCP_MAX_RESPONSE_CHARS` with the model's context in mind |
 | `python3` not found | Python is missing or has another name | `python --version`, on Windows `py -3 --version`; install Python 3.9+ |
 | "query log: …, not written: …" | the folder does not exist, no permission, a relative path, or a symlink in place of the file | fix `PG_MCP_QUERY_LOG` |
+| "No stand … in the registry" | a typo, or the stand is missing from the registry or from `PG_MCP_STANDS` | `status` lists the stands; check the registry |
+| "PG_MCP_STANDS is set, but no stands were found" | no registry file, or its sections are not named `stand.database.schema` | check the files the warning names |
 
 The server logs to stderr; `PG_MCP_LOG_LEVEL=DEBUG` adds detail. If the server does not answer the
 check, `install.py --check` prints that log.
 
 ## Updating and removing
 
-To update, run `git pull` in the pg-mcp folder and restart the agent. Run `install.py` again only if
-you moved the folder or changed Python, the profile or the language.
+To update a clone, run `git pull` in the pg-mcp folder and restart the agent. To update an unpacked
+archive, take the new `pg-mcp-<version>.zip` from the
+[Releases page](https://github.com/dbelokursky/pg-mcp/releases), delete the old `pg-mcp` folder, unpack the new
+one in its place and restart the agent. Run `install.py` again only if the folder's path changed or
+you changed Python, the profile or the language.
 
-To remove, delete `pg` from `mcpServers` in the agent settings (backups of earlier settings sit next to
+To remove, delete `pg` (and any `pg-<name>` entries) from `mcpServers` in the agent settings (backups of earlier settings sit next to
 the file), run `gigacode extensions uninstall pg-mcp` and delete the folder.
 
 ## FAQ
@@ -469,6 +639,10 @@ a table PostgreSQL has never analyzed looks exactly like an empty one, so `list_
 
 **Which MCP protocol versions does it speak?** Revisions 2024-11-05 to 2025-11-25 (with the
 `initialize` handshake) and 2026-07-28 (without it).
+
+**Which clients is it checked with?** CI starts Qwen Code, the open-source base of GigaCode CLI, with the
+server registered by `install.py`: the client must connect to the server and see the extension. GigaCode
+CLI itself is not available outside companies, so it is checked by hand before a release.
 
 **Will another MCP client do?** Yes, any client that starts servers over stdio. Give it the command
 `python3`, the arguments `-I /path/to/pg-mcp/run.py` and the `PG*` variables in the environment. If the

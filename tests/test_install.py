@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 import install
+from tests.helpers import ROOT
 
 ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-mcp/run.py"]}
 
@@ -140,14 +142,93 @@ def test_language_comes_from_the_locale_and_is_written_into_the_entry(
     ],
 )
 def test_a_connection_is_recognised_in_either_language(line: str) -> None:
-    assert install.connected(f"pg-mcp 0.3.0 on Python 3.9.6\n{line}\nlimits: read only = on")
+    assert install.ready(f"pg-mcp 0.3.0 on Python 3.9.6\n{line}\nlimits: read only = on")
 
 
 def test_an_unavailable_database_is_not_a_connection() -> None:
-    assert not install.connected("database: unavailable. Nothing accepts connections at db:5432.")
+    assert not install.ready("database: unavailable. Nothing accepts connections at db:5432.")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "stands: 53 (dev1–dev50, ift1–ift3), connections in the registry: 2100",
+        "стенды: 2 (dev1–dev2), подключений в реестре: 3",
+    ],
+)
+def test_an_entry_for_stands_is_ready_once_it_finds_them(line: str) -> None:
+    assert install.ready(f"pg-mcp 0.3.0 on Python 3.9.6\nserver name: pg-stands\n{line}")
+
+
+@pytest.mark.parametrize("codepage", ["cp1252", "cp866"])
+def test_a_code_page_without_cyrillic_or_dashes_does_not_crash_the_output(
+    codepage: str, unreachable_env: dict[str, str]
+) -> None:
+    # An agent reads install.py through a pipe, where Python uses the system code page: cp1252 on
+    # English Windows has no Cyrillic, and cp866 has no dash, which the profile warning contains.
+    env = dict(unreachable_env, PYTHONIOENCODING=codepage, PG_MCP_PROFILE="admin")
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "install.py"), "--check", "--lang", "ru"],
+        capture_output=True,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    output = proc.stdout.decode(codepage) + proc.stderr.decode(codepage, "replace")
+    assert "Traceback" not in output
+    assert proc.returncode == 1  # the database is unreachable, and the script says so
+    assert "PG_MCP_PROFILE='admin'" in output
 
 
 def test_old_python_is_refused_in_the_chosen_language(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "version_info", (3, 8, 18))
     with pytest.raises(SystemExit, match=r"pg-mcp нужен Python 3\.9 или новее"):
         install.main(["--lang", "ru", "--check"])
+
+
+def test_the_entry_names_the_server() -> None:
+    assert install.server_entry()["env"]["PG_MCP_NAME"] == "pg"
+    assert install.server_entry(name="sales")["env"]["PG_MCP_NAME"] == "pg-sales"
+
+
+def test_a_further_database_registers_next_to_pg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    assert install.main(["--client", "qwen"]) == 1
+    monkeypatch.setenv("PGDATABASE", "sales")
+    assert install.main(["--client", "qwen", "--name", "sales"]) == 1
+    settings = read(tmp_path / ".qwen" / "settings.json")
+    assert isinstance(settings, dict)
+    servers = settings["mcpServers"]
+    assert set(servers) == {"pg", "pg-sales"}
+    assert (servers["pg"]["env"]["PGDATABASE"], servers["pg"]["env"]["PG_MCP_NAME"]) == ("pg_mcp_test", "pg")
+    assert (servers["pg-sales"]["env"]["PGDATABASE"], servers["pg-sales"]["env"]["PG_MCP_NAME"]) == (
+        "sales",
+        "pg-sales",
+    )
+    assert "registered MCP server 'pg-sales'" in capsys.readouterr().out
+
+
+def test_an_entry_for_many_stands_is_ready_without_reaching_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    stands = tmp_path / "stands.conf"
+    stands.write_text(f"[dev1.orders.billing]\nhost=127.0.0.1\nport={unreachable_env['PGPORT']}\n", encoding="utf-8")
+    monkeypatch.setenv("PG_MCP_STANDS", "*")
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(stands))
+    monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "absent.conf"))
+    assert install.main(["--client", "qwen", "--name", "stands"]) == 0
+    settings = read(tmp_path / ".qwen" / "settings.json")
+    assert isinstance(settings, dict)
+    env = settings["mcpServers"]["pg-stands"]["env"]
+    assert (env["PG_MCP_STANDS"], env["PG_MCP_STANDS_FILE"], env["PG_MCP_NAME"]) == ("*", str(stands), "pg-stands")
+    assert "stands: 1 (dev1), connections in the registry: 1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("name", ["Sales", "sales_db", "-sales", "", "x" * 31])
+def test_names_that_would_not_make_a_clean_entry_are_refused(name: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        install.main(["--check", "--lang", "en", f"--name={name}"])  # = keeps "-sales" from looking like an option
+    assert "cannot be a server name" in capsys.readouterr().err

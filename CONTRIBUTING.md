@@ -28,16 +28,60 @@ uvx pre-commit install
 | `uv run ruff format` | форматирование |
 | `uv run mypy` | проверка типов в режиме strict |
 | `uv run python scripts/check_vendor.py` | целостность `src/pg_mcp/_vendor` |
+| `python3 scripts/client_smoke.py --qwen "$(command -v qwen)"` | проверка в настоящем клиенте, Qwen Code (`npm install -g @qwen-code/qwen-code`), по переменным `PG*`; модель не нужна |
 
 Интеграционные тесты ходят в настоящий PostgreSQL. Они создают и удаляют схемы `mcp_it`,
-`mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`; тестам роли нужен `psql`:
+`mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`, а тесты стендов — схемы
+`mcp_it_billing`, `mcp_it_orders`, одноимённые роли и вторую базу `mcp_it_stand` (для неё нужен
+суперпользователь); тестам роли нужен `psql`, тестам TLS — `openssl` (они ставят перед сервером
+TLS-прослойку со своим сертификатом, самому серверу TLS не нужен):
 
 ```bash
 PG_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov
 ```
 
-CI гоняет то же самое: линтеры и типы, тесты на Linux, Windows и macOS под Python 3.9 и 3.14,
-интеграционные тесты на PostgreSQL с 13-й по 18-ю, покрытие — на 16-й.
+CI гоняет то же самое, но на PR — сокращённый набор, а на push в `develop` и `main` — полный.
+На PR: линтеры и типы, тесты на Linux и Windows под Python 3.9 и 3.14, интеграционные тесты на
+PostgreSQL 13, 16 (покрытие) и 18, интеграционные тесты на Windows с PostgreSQL 17 и проверка в Qwen
+Code; сборка архива из `release.yml` — только если менялось то, из чего он собирается. На push в
+`develop` и `main` к этому добавляются macOS под обоими Python и PostgreSQL 14, 15 и 17. Так один PR
+стоит около 21 оплачиваемой минуты вместо 45: минута macOS считается за десять, Windows — за две, и
+macOS-раннеры к тому же подолгу стоят в очереди. Репозиторий приватный, минуты лимитированы.
+
+## Проверка в GigaCode CLI
+
+CI проверяет сервер в Qwen Code — открытой основе GigaCode CLI: `scripts/client_smoke.py` в
+одноразовой домашней папке регистрирует сервер через `install.py`, ждёт от `qwen mcp list` статуса
+`Connected` и подключает репозиторий как расширение. Сам GigaCode CLI вне компании не достать, поэтому
+перед выпуском его проверяют вручную:
+
+1. `python3 install.py` с переменными `PG*` тестовой базы — в конце `database: connected`.
+2. `gigacode mcp list`, если эта команда есть в вашей версии, — у сервера `pg` статус `Connected`.
+3. `gigacode extensions link .`, затем `gigacode extensions list` — расширение `pg-mcp` с командой
+   `/pg:setup` и контекстом `pg-mcp-context.md`.
+4. В GigaCode: «Проверь подключение к базе» (агент вызывает `status`), «Какие таблицы есть?»
+   (`list_tables`) и просьба удалить строки — агент должен получить отказ проверки SQL.
+
+## Выпуск
+
+1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_mcp/__init__.py` и
+   обоих манифестах расширения, раздел «Не выпущено» в `CHANGELOG.md` становится `## X.Y.Z — дата`.
+   `python3 scripts/release.py version` печатает версию, когда все файлы согласны.
+2. PR в `develop`, затем PR `develop` → `main`.
+3. Аннотированный тег на коммит слияния в `main`: `git tag -a vX.Y.Z -m "pg-mcp X.Y.Z"`,
+   `git push origin vX.Y.Z`.
+
+Пуш тега запускает `.github/workflows/release.yml`: он сверяет тег с версией в файлах, собирает
+`pg-mcp-X.Y.Z.zip` из дерева тега (`git archive`; `.github` в архив не попадает по `export-ignore` в
+`.gitattributes`), распаковывает архив и запускает из него `install.py --check` без базы
+(`scripts/release.py check`), считает `SHA256SUMS` и публикует GitHub Release с заметками из раздела
+этой версии в `CHANGELOG.md`. Так pg-mcp берут пользователи без git (README, шаг 1). Та же сборка с
+проверкой, но без публикации, идёт в каждом PR и при ручном запуске — `gh workflow run release.yml
+--ref <ветка>` (флаг `build_only` включён по умолчанию; снимать его есть смысл только на теге, чтобы
+опубликовать выпуск повторно); архив остаётся в артефактах запуска. По имени файла GitHub находит для
+ручного запуска только workflow из `main`; пока его там нет, подойдёт числовой id из
+`gh api repos/dbelokursky/pg-mcp/actions/workflows`:
+`gh api -X POST repos/dbelokursky/pg-mcp/actions/workflows/<id>/dispatches -f ref=<ветка> -f 'inputs[build_only]=true'`.
 
 ## Раскладка
 
@@ -63,6 +107,7 @@ CI гоняет то же самое: линтеры и типы, тесты н�
   `tests/test_i18n.py` сверяет ключи, формы множественного числа и плейсхолдеры. Журнал и ошибки
   JSON-RPC остаются английскими (ADR 0004).
 - **Версия в нескольких файлах.** `pyproject.toml`, `src/pg_mcp/__init__.py`, оба манифеста
-  расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`.
+  расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`, а тег
+  выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
 - **Почему так.** Решения про стек и инструменты описаны в [docs/adr/](docs/adr/); прежде чем
   менять принятое, допишите новый ADR.

@@ -22,9 +22,9 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from .db import Database
+from .db import Settings
 from .i18n import t
 
 log = logging.getLogger(__name__)
@@ -35,12 +35,26 @@ REFUSED = "refused"  # the read-only check turned the SQL down
 ERROR = "error"  # bad arguments, or PostgreSQL rejected the statement
 UNAVAILABLE = "unavailable"  # the database could not be reached
 FAILED = "failed"  # a bug in the server; its stderr log has the traceback
+SKIPPED = "skipped"  # a stand that a call over several stands had no time left for (stand_tools.py)
 
 # One write per line, always at the end of the file: several servers can share it, and
 # opening it anew for every line lets logrotate move it away without a restart. A symlink in
 # place of the file is refused, so a link planted in a shared folder cannot redirect the lines.
 _OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
 _FILE_MODE = 0o600  # SQL literals may carry personal data
+
+
+class LogSource(Protocol):
+    """Where the queries go: one Database, or the pool of a server with many stands."""
+
+    @property
+    def statements_run(self) -> int: ...
+
+    @property
+    def rows_read(self) -> int: ...
+
+    @property
+    def settings(self) -> Settings | None: ...
 
 
 @dataclass(frozen=True)
@@ -53,7 +67,7 @@ class Mark:
 
 
 class QueryLog:
-    def __init__(self, path: str | None, db: Database | None = None) -> None:
+    def __init__(self, path: str | None, db: LogSource | None = None) -> None:
         self.path = path
         self.problem: str | None = None
         self._db = db
@@ -63,7 +77,7 @@ class QueryLog:
         self._os_user = _os_user()
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str], db: Database | None = None) -> QueryLog:
+    def from_env(cls, env: Mapping[str, str], db: LogSource | None = None) -> QueryLog:
         raw = env.get("PG_MCP_QUERY_LOG", "").strip()
         return cls(str(Path(raw).expanduser()) if raw else None, db)
 
@@ -90,6 +104,7 @@ class QueryLog:
             "pid": os.getpid(),
             "role": settings.user if settings else None,
             "database": settings.database if settings else None,
+            **getattr(db, "log_context", dict)(),  # the stand and schema, on a server with many stands
             "tool": tool,
             "arguments": arguments,
             "outcome": outcome,

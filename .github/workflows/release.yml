@@ -1,0 +1,98 @@
+name: release
+
+# A tag v<version> publishes a GitHub Release with the source archive for users who have no git
+# (README, step 1). Every pull request, and a run by hand, only builds and checks the archive; a run
+# by hand on a tag with "build only" switched off publishes too, say after a failed run.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    # Only when what the archive is made of or checked by changes: the build costs minutes too.
+    paths:
+      - .github/workflows/release.yml
+      - .gitattributes
+      - scripts/release.py
+      - tests/test_release.py
+      - pyproject.toml
+      - src/pg_mcp/__init__.py
+      - gigacode-extension.json
+      - qwen-extension.json
+      - CHANGELOG.md
+      - install.py
+      - run.py
+  workflow_dispatch:
+    inputs:
+      build_only:
+        description: "Only build and check the archive, publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  archive:
+    name: build and check the archive
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: the version, the same in every file (and in the tag)
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=$(python3 scripts/release.py version --tag "$GITHUB_REF_NAME")
+          else
+            version=$(python3 scripts/release.py version)
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: archive the tree, without what .gitattributes marks export-ignore
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git archive --format=zip --prefix=pg-mcp/ --output="pg-mcp-$VERSION.zip" HEAD
+          sha256sum "pg-mcp-$VERSION.zip" | tee SHA256SUMS
+      - name: unpack the archive and start the server from it
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/release.py check "pg-mcp-$VERSION.zip"
+      - name: release notes from CHANGELOG.md
+        run: python3 scripts/release.py notes | tee release-notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: pg-mcp-${{ steps.version.outputs.version }}
+          path: |
+            pg-mcp-*.zip
+            SHA256SUMS
+            release-notes.md
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    needs: archive
+    if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.build_only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.archive.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: pg-mcp-${{ needs.archive.outputs.version }}
+      - name: create the release, or refresh the files of one that exists
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber "pg-mcp-$VERSION.zip" SHA256SUMS
+          else
+            gh release create "$TAG" --verify-tag --title "pg-mcp $VERSION" --notes-file release-notes.md \
+              "pg-mcp-$VERSION.zip" SHA256SUMS
+          fi

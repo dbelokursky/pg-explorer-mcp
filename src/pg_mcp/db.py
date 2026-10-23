@@ -9,6 +9,7 @@ model, and through it the user, what to fix.
 from __future__ import annotations
 
 import contextlib
+import errno
 import getpass
 import os
 import socket
@@ -25,18 +26,40 @@ import pg8000.native
 
 from .i18n import t
 
+# No route to the host: with the stands behind a VPN, the usual sign that the VPN is down.
+_NO_ROUTE = frozenset(
+    code for code in (errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ENETDOWN, getattr(errno, "EHOSTDOWN", None)) if code
+)
 SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
+STATEMENT_GRACE_S = 5  # a socket outwaits the statement timeout, so PostgreSQL's own error comes first
 CURSOR_NAME = "pg_mcp_rows"
 
 
 class DatabaseUnavailableError(Exception):
-    """The server cannot reach or log in to the database."""
+    """The server cannot reach or log in to the database.
+
+    host_down says the host did not answer at all (refused, unresolved, unreachable,
+    timed out, or the connection was lost), as opposed to a server that answered and
+    turned the login down: another login on that host would fail the same way.
+    """
+
+    def __init__(self, message: str, *, host_down: bool = False) -> None:
+        super().__init__(message)
+        self.host_down = host_down
 
 
 class QueryFailedError(Exception):
     """PostgreSQL rejected a statement."""
+
+
+@dataclass
+class Counters:
+    """Statements run through read_only and the rows they returned, for the query log."""
+
+    statements: int = 0
+    rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -50,6 +73,8 @@ class Settings:
     sslrootcert: str | None
     statement_timeout_ms: int
     passfile: str
+    socket_timeout_s: int = SOCKET_TIMEOUT_S
+    search_path: str | None = None  # a schema to look in first, for one of many stands
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
@@ -72,6 +97,8 @@ class Settings:
             sslrootcert=env.get("PGSSLROOTCERT") or None,
             statement_timeout_ms=_int_setting(env, "PG_MCP_STATEMENT_TIMEOUT_MS", DEFAULT_STATEMENT_TIMEOUT_MS),
             passfile=passfile,
+            socket_timeout_s=_int_setting(env, "PG_MCP_SOCKET_TIMEOUT_S", SOCKET_TIMEOUT_S),
+            search_path=env.get("PG_MCP_SEARCH_PATH") or None,
         )
 
     def describe(self) -> str:
@@ -81,17 +108,23 @@ class Settings:
 class Database:
     """One lazily opened, read-only session that reconnects once if it drops."""
 
-    def __init__(self, env: Mapping[str, str] | None = None) -> None:
+    def __init__(self, env: Mapping[str, str] | None = None, counters: Counters | None = None) -> None:
         self._conn: pg8000.native.Connection | None = None
         self.settings: Settings | None = None
         self._config_error: str | None = None
-        # Statements run through read_only and the rows they returned, for the query log.
-        self.statements_run = 0
-        self.rows_read = 0
+        self._counters = counters or Counters()  # shared by all connections of a stands pool
         try:
             self.settings = Settings.from_env(os.environ if env is None else env)
         except ValueError as exc:
             self._config_error = str(exc)
+
+    @property
+    def statements_run(self) -> int:
+        return self._counters.statements
+
+    @property
+    def rows_read(self) -> int:
+        return self._counters.rows
 
     def describe_target(self) -> str:
         if self.settings is None:
@@ -109,7 +142,7 @@ class Database:
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
-                    raise DatabaseUnavailableError(t("db.lost", target=self.describe_target(), error=exc)) from exc
+                    raise DatabaseUnavailableError(self._lost(exc), host_down=True) from exc
         raise AssertionError("unreachable")
 
     def read_only(self, sql: str, max_rows: int, *, cursor: bool) -> tuple[list[str], list[Sequence[Any]], bool]:
@@ -137,13 +170,13 @@ class Database:
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
                 self.close()
                 if attempt == 2:
-                    raise DatabaseUnavailableError(t("db.lost", target=self.describe_target(), error=exc)) from exc
+                    raise DatabaseUnavailableError(self._lost(exc), host_down=True) from exc
                 continue
             columns = [str(column["name"]) for column in context.columns or []]
             rows = list(context.rows or [])
             returned = rows[:max_rows]
-            self.statements_run += 1
-            self.rows_read += len(returned)
+            self._counters.statements += 1
+            self._counters.rows += len(returned)
             return columns, returned, len(rows) > max_rows
         raise AssertionError("unreachable")
 
@@ -160,6 +193,9 @@ class Database:
             with contextlib.suppress(Exception):  # the session is gone either way
                 self._conn.close()
             self._conn = None
+
+    def _lost(self, exc: Exception) -> str:
+        return t("db.lost", target=self.describe_target(), error=exc)
 
     def _connection(self) -> pg8000.native.Connection:
         if self._conn is None:
@@ -182,23 +218,31 @@ class Database:
                     database=settings.database,
                     unix_sock=str(Path(socket_dir) / f".s.PGSQL.{settings.port}") if socket_dir else None,
                     ssl_context=ssl_context,
-                    timeout=SOCKET_TIMEOUT_S,
+                    timeout=connect_timeout(settings),
                     application_name="pg-mcp",
                 )
                 break
-            except pg8000.exceptions.Error as exc:
-                if number == len(attempts):
-                    raise DatabaseUnavailableError(_explain_connect_failure(exc, settings)) from exc
+            except (pg8000.exceptions.Error, OSError) as exc:
+                # pg8000 wraps most socket errors, but not those of its TLS request.
+                down = _host_down(exc)
+                if down or number == len(attempts):  # a host that did not answer will not answer TLS either
+                    raise DatabaseUnavailableError(_explain_connect_failure(exc, settings), host_down=down) from exc
             except AttributeError as exc:
                 # pg8000 1.31 reports a missing password for cleartext and MD5 logins,
                 # but SCRAM fails on None.decode() instead.
                 if settings.password is not None:
                     raise
                 raise DatabaseUnavailableError(_password_hint(settings, t("db.password_unset"))) from exc
+        # Connecting waited connect_timeout(); a statement may run for statement_timeout_ms,
+        # so from here on the socket waits longer. pg8000 keeps the socket in _usock.
+        conn._usock.settimeout(socket_timeout(settings))
         try:
             # Guardrails, not the security boundary: the role's privileges are.
             conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
             conn.run(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
+            if settings.search_path:
+                quoted = '"' + settings.search_path.replace('"', '""') + '"'
+                conn.run(f"SET search_path = {quoted}, public")
         except pg8000.exceptions.Error as exc:
             conn.close()
             raise DatabaseUnavailableError(t("db.session_setup", error=exc)) from exc
@@ -215,6 +259,41 @@ def _run_one_statement(conn: pg8000.native.Connection, sql: str, params: dict[st
     finally:
         statement.close()
     return rows
+
+
+def connect_timeout(settings: Settings) -> int:
+    """Seconds to wait for the server to answer a new connection."""
+    return settings.socket_timeout_s if settings.socket_timeout_s > 0 else SOCKET_TIMEOUT_S
+
+
+def socket_timeout(settings: Settings) -> int:
+    """Seconds the connected socket may wait: past the statement timeout, so a slow statement
+    fails with its own error. A socket that gave up first would drop the session, and query()
+    would run the statement again.
+    """
+    return max(connect_timeout(settings), settings.statement_timeout_ms // 1000 + STATEMENT_GRACE_S)
+
+
+def _host_down(exc: Exception) -> bool:
+    """Whether the host did not answer at all, so that no login on it can succeed right now."""
+    cause = exc.__cause__ if exc.__cause__ is not None else exc
+    if isinstance(cause, ssl.SSLError) or _dropped(exc):
+        return False  # the host accepted the connection: it answered
+    return isinstance(cause, OSError)
+
+
+def _dropped(exc: Exception) -> bool:
+    """Whether the server accepted the connection and then closed it before the login was through.
+
+    pg8000 reports that as "network error", with or without the reset underneath. Windows
+    discards what the server sent before a reset, so the server's own refusal, usually of a
+    password, may arrive this way instead of as an error message.
+    """
+    cause = exc.__cause__ if exc.__cause__ is not None else exc
+    return (
+        isinstance(cause, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError))
+        or str(exc) == "network error"
+    )
 
 
 def pgpass_path(env: Mapping[str, str]) -> str:
@@ -301,7 +380,7 @@ def _server_message(exc: Exception) -> str:
 
 
 def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
-    cause = exc.__cause__
+    cause = exc.__cause__ if exc.__cause__ is not None else exc
     fields = _error_fields(exc)
     code = fields.get("C")
     detail = fields.get("M") or str(exc)
@@ -312,6 +391,10 @@ def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
         return t("db.unresolved", host=settings.host)
     if isinstance(cause, (socket.timeout, TimeoutError)):
         return t("db.timeout", where=where)
+    if isinstance(cause, OSError) and cause.errno in _NO_ROUTE:
+        return t("db.unreachable", where=where, error=cause.strerror or cause)
+    if _dropped(exc):
+        return t("db.dropped", where=where, user=settings.user)
     if code == "28P01" or (not settings.password and "password" in detail.lower()):
         return _password_hint(settings, detail)
     if code == "3D000":

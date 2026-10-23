@@ -219,8 +219,8 @@ class TestRussian:
         return {tool.name: tool for tool in build_tools(Database(unreachable_env), str(ROOT), profile="analyst")}
 
     def test_tools_are_described_in_russian(self, offered: dict[str, Tool]) -> None:
-        assert offered["status"].title == "Состояние подключения к базе"
-        assert offered["status"].describe()["annotations"]["title"] == "Состояние подключения к базе"
+        assert offered["status"].title == "Состояние подключения"
+        assert offered["status"].describe()["annotations"]["title"] == "Состояние подключения"
         assert "Возвращает не больше 200 строк" in offered["run_select"].description
         assert "реальное время" in offered["explain_query"].description
         limit = offered["sample_rows"].properties["limit"]
