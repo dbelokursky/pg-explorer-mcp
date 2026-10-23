@@ -10,8 +10,9 @@ every file to read, rotated ones (.1, .gz) included; gzip is told by content, no
 and --until take a UTC date or date-time; a bare date in --until covers that whole day. A line that
 is not a JSON object with time, tool, outcome and duration_ms, say one cut by a crash or by rotation,
 is skipped and counted. The text report is for a terminal: the period, the calls by tool, by user and
-by stand, the median and 95th percentile of duration_ms, the ten longest calls and every call the SQL
-check refused, since those are the attempts to write. --format json gives the same figures to scripts
+by stand, the versions of Python the servers ran on and how many users each, the median and 95th
+percentile of duration_ms, the ten longest calls and every call the SQL check refused, since those are
+the attempts to write. --format json gives the same figures to scripts
 and --format csv one table, the breakdown that --by chooses. Arguments, the SQL among them, go on one
 line cut to 80 characters, and the value of a key that looks like a password is hidden.
 """
@@ -36,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 OUTCOMES = ("ok", "error", "refused", "unavailable", "failed", "skipped")  # skipped: a stand of a call over several
-BREAKDOWNS = ("tool", "user", "stand", "day")
+BREAKDOWNS = ("tool", "user", "stand", "day", "python")
 FORMATS = ("text", "json", "csv")
 TOP = 10  # longest calls shown
 ARGUMENTS_WIDTH = 80
@@ -52,6 +53,7 @@ COLUMNS: dict[str, tuple[str, ...]] = {
     "user": ("user", "calls", "queries", "rows", "refused"),
     "stand": ("stand", "calls", "ok", "error", "refused", "unavailable", "failed", "skipped", "problems_pct"),
     "day": ("day", "calls", "users", "ok", "error", "refused", "unavailable", "failed", "problems_pct"),
+    "python": ("python", "users", "calls"),  # what raising the minimum Python version would cost the group
 }
 TEXT_HEADERS = {"problems_pct": "problems"}
 
@@ -70,6 +72,7 @@ class Entry:
     rows: int | None
     duration_ms: float
     message: str | None
+    python: str | None = None  # the version of Python the server ran on; lines before 0.7 do not say
 
     @property
     def day(self) -> str:
@@ -95,7 +98,9 @@ def parse_entry(line: str) -> Entry | None:
     tool, outcome = raw.get("tool"), raw.get("outcome")
     if time is None or duration is None or not isinstance(tool, str) or not isinstance(outcome, str):
         return None
-    user, stand, stands, rows, message = (raw.get(key) for key in ("os_user", "stand", "stands", "rows", "message"))
+    user, stand, stands, rows, message, python = (
+        raw.get(key) for key in ("os_user", "stand", "stands", "rows", "message", "python")
+    )
     return Entry(
         time=time,
         user=user if isinstance(user, str) and user else UNKNOWN_USER,
@@ -107,6 +112,7 @@ def parse_entry(line: str) -> Entry | None:
         rows=int(rows) if isinstance(rows, (int, float)) and not isinstance(rows, bool) else None,
         duration_ms=duration,
         message=message if isinstance(message, str) else None,
+        python=python if isinstance(python, str) and python else None,
     )
 
 
@@ -273,6 +279,8 @@ class Report:
             self.bucket(kind, name).add(entry.outcome, entry)
         if entry.stand is not None:
             self.bucket("stand", entry.stand).add(entry.outcome, entry)
+        if entry.python is not None:
+            self.bucket("python", entry.python).add(entry.outcome, entry)
         for stand, outcome in entry.stands.items():
             # The rows of a call over several stands are one total: they belong to no single stand.
             self.bucket("stand", stand).add(outcome)
@@ -323,6 +331,7 @@ class Report:
             "users": self.table("user"),
             "stands": self.table("stand"),
             "days": self.table("day"),
+            "python_versions": self.table("python"),
             "longest": [detail(entry) for entry in self.longest],
             "refused": [detail(entry) for entry in self.refused],
         }
@@ -395,6 +404,7 @@ def render_text(report: Report, by: str) -> str:
     lines.append(counts + (f"  Stands: {len(report.buckets['stand'])}" if report.stands_mode else ""))
     lines.append(f"Duration: median {median:.1f} ms, 95th percentile {p95:.1f} ms")
     kinds = ["tool", "user", *(["stand"] if report.stands_mode else []), *(["day"] if by == "day" else [])]
+    kinds += ["python"] if report.buckets["python"] else []
     for kind in kinds:
         lines.extend(["", f"By {kind}", *table_text(COLUMNS[kind], report.table(kind))])
     longest = [detail(entry) for entry in report.longest]

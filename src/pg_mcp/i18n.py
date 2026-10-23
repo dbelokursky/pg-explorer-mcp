@@ -154,6 +154,10 @@ EN: dict[str, str] = {
     "argument.analyze": "Run the query for real timings.",
     "status.version": "pg-mcp {version} on Python {python}, installed at {path}",
     "status.name": "server name: {name}",
+    "status.read_only": (
+        "access: read only. Nothing can be inserted, changed or deleted through this server: decline such "
+        "requests instead of asking the user to confirm them."
+    ),
     "status.target": "target: {target}",
     "status.profile": "profile: {profile} ({tools})",
     "status.language": "language: {language}",
@@ -602,6 +606,10 @@ RU: dict[str, str] = {
     "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время.",
     "status.version": "pg-mcp {version} на Python {python}, установлен в {path}",
     "status.name": "имя сервера: {name}",
+    "status.read_only": (
+        "доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких "
+        "просьб отказывайтесь, а не просите пользователя их подтвердить."
+    ),
     "status.target": "адрес: {target}",
     "status.profile": "профиль: {profile} ({tools})",
     "status.language": "язык: {language}",

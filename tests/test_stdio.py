@@ -73,5 +73,5 @@ def test_russian_session_stays_ascii_on_the_wire(unreachable_env: dict[str, str]
     assert all(line.isascii() for line in lines)
     initialize, tools, status = (json.loads(line) for line in lines)
     assert "Отвечайте пользователю" in initialize["result"]["instructions"]
-    assert tools["result"]["tools"][0]["title"] == "Состояние подключения"
+    assert tools["result"]["tools"][0]["annotations"]["title"] == "Состояние подключения"
     assert "база: недоступна" in status["result"]["content"][0]["text"]

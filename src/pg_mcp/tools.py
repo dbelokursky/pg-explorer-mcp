@@ -50,8 +50,11 @@ DEFAULT_PROFILE = "explore"
 DEFAULT_NAME = "pg"  # the entry install.py writes; further databases are pg-<name>
 STRICTEST_PROFILE = "schema"
 
-# MCP tool annotations: clients may run read-only tools without asking the user.
-READ_ONLY_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+# MCP tool annotations: clients may run read-only tools without asking the user. destructiveHint and
+# idempotentHint mean something only when readOnlyHint is false, so they are left out; the title goes
+# here rather than beside the name, where clients of protocol 2025-06-18 look first and older ones never
+# look: clients of every version fall back to this one.
+READ_ONLY_HINTS = {"readOnlyHint": True, "openWorldHint": False}
 
 # The SQLSTATE of a table PostgreSQL could not find, and its name in the message in any language:
 # 'relation "orders" does not exist', 'отношение "orders" не существует', 'Relation »orders« ...'.
@@ -199,10 +202,9 @@ class Tool:
             schema["required"] = list(self.required)
         return {
             "name": self.name,
-            "title": self.title,
             "description": self.description,
             "inputSchema": schema,
-            "annotations": dict(READ_ONLY_HINTS, title=self.title),
+            "annotations": {"title": self.title, **READ_ONLY_HINTS},
         }
 
     def call(self, arguments: Any) -> str:
@@ -380,6 +382,7 @@ def status(
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
+        t("status.read_only"),
         t("status.target", target=db.describe_target()),
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),

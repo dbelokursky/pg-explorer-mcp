@@ -465,3 +465,35 @@ def test_the_script_runs_on_its_own(log_files: list[str]) -> None:
     assert proc.returncode == 0, proc.stderr
     assert "Calls: 12  ok 7  error 1  refused 2  unavailable 1  failed 1" in proc.stdout
     assert "By day" in proc.stdout
+
+
+def test_the_python_versions_show_what_a_newer_minimum_would_cost(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = tmp_path / "queries.jsonl"
+    lines = [
+        call("2026-10-24T09:00:00Z", "status", "ok", 3.0, python="3.9.6"),
+        call("2026-10-24T09:01:00Z", "list_tables", "ok", 4.0, python="3.9.6", os_user="ivan"),
+        call("2026-10-24T09:02:00Z", "status", "ok", 2.0, python="3.14.7", os_user="petr"),
+        call("2026-10-24T09:03:00Z", "status", "ok", 2.0, python="3.9.6"),
+        call("2026-10-22T09:00:00Z", "status", "ok", 2.0),  # written before the server logged its Python
+    ]
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    text = run(capsys, str(log))
+    assert section(text, "By python") == [["python", "users", "calls"], ["3.9.6", "2", "3"], ["3.14.7", "1", "1"]]
+    report = json.loads(run(capsys, str(log), "--format", "json"))
+    assert report["python_versions"] == [
+        {"python": "3.9.6", "users": 2, "calls": 3},
+        {"python": "3.14.7", "users": 1, "calls": 1},
+    ]
+    assert run(capsys, str(log), "--format", "csv", "--by", "python").splitlines() == [
+        "python,users,calls",
+        "3.9.6,2,3",
+        "3.14.7,1,1",
+    ]
+
+
+def test_a_log_without_python_versions_has_no_such_table(
+    log_files: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert "By python" not in run(capsys, *log_files)

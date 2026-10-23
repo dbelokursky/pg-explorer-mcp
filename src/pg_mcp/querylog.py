@@ -18,6 +18,7 @@ import getpass
 import json
 import logging
 import os
+import platform
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -102,6 +103,7 @@ class QueryLog:
             "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")[:-6] + "Z",
             "os_user": self._os_user,
             "pid": os.getpid(),
+            "python": platform.python_version(),  # which Python the group runs: what a newer minimum would cost
             "role": settings.user if settings else None,
             "database": settings.database if settings else None,
             **getattr(db, "log_context", dict)(),  # the stand and schema, on a server with many stands
