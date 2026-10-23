@@ -2,6 +2,17 @@
 
 ## Не выпущено
 
+- Выгрузка подключений к стендам в инструменты БД: `install.py export` для DBeaver, DataGrip и других
+  IDE JetBrains, pgAdmin 4, psql и pgcli (`pg_service.conf`), расширений VS Code PostgreSQL (Microsoft)
+  и SQLTools — предпросмотр по умолчанию, запись с `--write`, `--stands` выбирает стенды. DBeaver
+  получает свой файл `data-sources-pg-mcp.json` с папкой на стенд, DataGrip — проект
+  `~/.pg-mcp/datagrip` (или `--project`), pgAdmin — `servers.json` для импорта, psql — секции со схемой
+  первой в search_path, расширения VS Code — подключения в настройках пользователя (`--editor` для
+  Cursor и Windsurf). Пароли не копируются: подключения входят по файлу паролей, только расширение
+  Microsoft его не читает и спрашивает пароль один раз. Выгрузка заменяет только свои подключения,
+  оставляет датированные копии и права файлов, пропускает то, что уже есть в DBeaver и в самом
+  `~/.pg_service.conf`; файл настроек с комментариями не переписывается — печатается, что добавить.
+  В терминале `install.py` после импорта и регистрации находит эти инструменты и предлагает выгрузку.
 - Запись сервера для других клиентов MCP: `install.py --client` пишет её в файл и в формате VS Code
   (GitHub Copilot), Cursor, Windsurf, Cline, Roo Code, Continue, LM Studio, Claude Desktop и Junie, а для
   JetBrains AI Assistant печатает, что вставить в настройки; `--print` только показывает запись и куда её
