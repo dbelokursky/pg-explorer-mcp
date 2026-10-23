@@ -20,7 +20,7 @@ from typing import Any
 
 from . import __version__
 from .budget import DEFAULT_BUDGET
-from .compare import compare_schema
+from .compare import Structure, compare_schema, comparison, read_structure
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
@@ -54,6 +54,7 @@ STAND_ONLY_TOOLS = {"list_schemas": "status", "compare_schema": "describe_table"
 # timeout (install.py registers the entry with "timeout": 30000): another stand is started only
 # while the call has time for that stand's connect timeout, and the rows are shared among the stands.
 CALL_TIME_BUDGET_S = 25
+DETAILED_COMPARE_STANDS = 3  # against more stands than this, compare_schema gives counts, not lines
 ROWS_PER_STAND_MIN = 10
 CATALOG_ATTEMPTS = 2  # logins tried per database for the catalog before giving up on it
 MAX_REGISTRY_WARNINGS = 10  # more would crowd status; the rest are counted
@@ -161,10 +162,11 @@ def build_stand_tools(
             properties={
                 "stand_a": {"type": "string", "description": t("argument.stand_a")},
                 "stand_b": {"type": "string", "description": t("argument.stand_b")},
+                "stands": {"type": "string", "description": t("argument.stands_compare", limit=MAX_STANDS_PER_CALL)},
                 "schema": {"type": "string", "description": t("argument.schema_compare")},
                 "database": database,
             },
-            required=("stand_a", "stand_b", "schema"),
+            required=("stand_a", "schema"),
             handler=lambda args: stand_compare(pool, args),
         ),
         Tool(
@@ -350,14 +352,67 @@ def stand_describe(pool: Pool, args: Arguments) -> list[str]:
 
 
 def stand_compare(pool: Pool, args: Arguments) -> list[str]:
-    """One schema on two stands; database picks the login the same way on both."""
+    """One schema on two stands, or on stand_a against several; database picks the login the same way on all."""
     registry = pool.registry
     first = registry.stand(args.get("stand_a"), "stand_a")
-    second = registry.stand(args.get("stand_b"), "stand_b")
+    schema, database = args.get("schema"), args.get("database")
+    many, second_name = args.get("stands"), args.get("stand_b")
+    if many not in (None, ""):
+        if second_name not in (None, ""):
+            raise StandError(t("compare.b_or_stands"))
+        others = [stand for stand in registry.matching(many) if stand != first]
+        if not others:
+            raise StandError(t("compare.no_others", pattern=many, stand=first))
+        return _compare_many(pool, registry.target(first, schema, database), others, args)
+    if second_name in (None, ""):
+        raise StandError(t("compare.need_b"))
+    second = registry.stand(second_name, "stand_b")
     if first == second:
         raise StandError(t("compare.same_stand", stand=first))
-    schema, database = args.get("schema"), args.get("database")
     return compare_schema(pool, registry.target(first, schema, database), registry.target(second, schema, database))
+
+
+def _compare_many(pool: Pool, reference: Target, stands: Sequence[str], args: Arguments) -> list[str]:
+    """The reference read once, each stand in turn; detail for a few stands, counts for many."""
+    base = read_structure(pool, reference)  # the reference failing fails the call: nothing to compare with
+    detailed = len(stands) <= DETAILED_COMPARE_STANDS
+    totals = {"same": 0, "differ": 0, "skipped": 0}
+
+    def run(stand: str) -> list[str]:
+        try:
+            target = pool.registry.target(stand, args.get("schema"), args.get("database"))
+            structure = read_structure(pool, target)
+        except StandError as exc:
+            totals["skipped"] += 1
+            pool.outcomes[stand] = ERROR
+            return [stand, f"  {exc}"]
+        except DatabaseUnavailableError as exc:
+            totals["skipped"] += 1
+            pool.outcomes[stand] = UNAVAILABLE
+            return [target.label, f"  {exc}"]
+        except (QueryFailedError, ToolError) as exc:
+            totals["skipped"] += 1
+            pool.outcomes[stand] = ERROR
+            return [target.label, f"  {exc}"]
+        pool.outcomes[stand] = OK
+        return _compared(base, structure, totals, detailed=detailed)
+
+    lines = [t("compare.many_header", a=reference.label, count=len(stands))]
+    lines.extend(_each_stand(pool, stands, run))
+    totals["skipped"] += sum(1 for stand in stands if pool.outcomes.get(stand) == SKIPPED)
+    lines.append(t("compare.totals", a=reference.stand, **totals))
+    return lines
+
+
+def _compared(base: Structure, structure: Structure, totals: dict[str, int], *, detailed: bool) -> list[str]:
+    found = comparison(base, structure)
+    if found.same:
+        totals["same"] += 1
+        return [f"{structure.target.label}: {t('compare.like', a=base.target.stand)}"]
+    totals["differ"] += 1
+    if detailed:
+        return [structure.target.label, *found.sections()]
+    return [f"{structure.target.label}: {found.summary()}"]
 
 
 def stand_sample(pool: Pool, args: Arguments) -> list[str]:

@@ -120,33 +120,78 @@ def _column(data_type: str, *, not_null: bool, default: str | None) -> str:
     return definition
 
 
-def differences(a: Structure, b: Structure) -> list[str]:
-    """The header, what is on one stand only and what differs; a single line when nothing does.
+@dataclass(frozen=True)
+class Comparison:
+    """What sets the schema on stand b apart from stand a: whole relations on one side, and lines of detail."""
 
-    Names are sorted by code point, as COLLATE "C" sorts them, so the answer does not depend
+    a: Structure
+    b: Structure
+    only_a: list[str]
+    only_b: list[str]
+    differing: list[str]
+
+    @property
+    def same(self) -> bool:
+        return not (self.only_a or self.only_b or self.differing)
+
+    def sections(self) -> list[str]:
+        """The three sections of the answer, each with a title, for the stands that differ."""
+        lines: list[str] = []
+        parts = (
+            (
+                t("compare.only_on", stand=self.a.target.stand),
+                [_relation_line(n, self.a.relations[n]) for n in self.only_a],
+            ),
+            (
+                t("compare.only_on", stand=self.b.target.stand),
+                [_relation_line(n, self.b.relations[n]) for n in self.only_b],
+            ),
+            (t("compare.differ"), self.differing),
+        )
+        for title, entries in parts:
+            if entries:
+                lines.append(title)
+                lines.extend(f"  {entry}" for entry in entries)
+        return lines
+
+    def summary(self) -> str:
+        """One line of counts, for a call that sets many stands against one."""
+        return t(
+            "compare.summary",
+            a=self.a.target.stand,
+            only_a=len(self.only_a),
+            only_b=len(self.only_b),
+            differ=len(self.differing),
+        )
+
+
+def comparison(a: Structure, b: Structure) -> Comparison:
+    """Names are sorted by code point, as COLLATE "C" sorts them, so the answer does not depend
     on either server's locale. Definitions are compared whole and shortened only for display.
     """
     first, second = a.target.stand, b.target.stand
-    lines = [t("compare.header", a=a.target.label, b=b.target.label)]
-    only_a = sorted(set(a.relations) - set(b.relations))
-    only_b = sorted(set(b.relations) - set(a.relations))
     differing: list[str] = []
     for name in sorted(set(a.relations) & set(b.relations)):
         differing.extend(_relation_differences(name, a.relations[name], b.relations[name], first, second))
-    if not (only_a or only_b or differing):
-        columns = sum(len(relation.columns) for relation in a.relations.values())
-        tables = plural("compare.tables", len(a.relations))
-        return [*lines, t("compare.same", tables=tables, columns=plural("compare.columns", columns))]
-    sections = (
-        (t("compare.only_on", stand=first), [_relation_line(name, a.relations[name]) for name in only_a]),
-        (t("compare.only_on", stand=second), [_relation_line(name, b.relations[name]) for name in only_b]),
-        (t("compare.differ"), differing),
+    only_a = sorted(set(a.relations) - set(b.relations))
+    only_b = sorted(set(b.relations) - set(a.relations))
+    return Comparison(a, b, only_a, only_b, differing)
+
+
+def same_line(a: Structure) -> str:
+    columns = sum(len(relation.columns) for relation in a.relations.values())
+    return t(
+        "compare.same", tables=plural("compare.tables", len(a.relations)), columns=plural("compare.columns", columns)
     )
-    for title, entries in sections:
-        if entries:
-            lines.append(title)
-            lines.extend(f"  {entry}" for entry in entries)
-    return lines
+
+
+def differences(a: Structure, b: Structure) -> list[str]:
+    """The header, what is on one stand only and what differs; a single line when nothing does."""
+    found = comparison(a, b)
+    header = t("compare.header", a=a.target.label, b=b.target.label)
+    if found.same:
+        return [header, same_line(a)]
+    return [header, *found.sections()]
 
 
 def _relation_line(name: str, relation: Relation) -> str:

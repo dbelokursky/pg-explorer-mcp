@@ -410,6 +410,7 @@ python3 install.py import pg-service ~/.pg_service.conf --write
 | «На каком dev-стенде есть заказ 123?» | `run_select` со `stands` и `schema` |
 | «На каких стендах в shop есть колонка со скидкой?» | `search_schema` со `stands` и `text` |
 | «Чем shop на dev7 отличается от dev12?» | `compare_schema` со `stand_a`, `stand_b` и `schema` |
+| «Какие dev-стенды отличаются от dev7 в shop?» | `compare_schema` со `stand_a`, `stands` и `schema` |
 
 Каждый ответ начинается с того, откуда он. Настоящие ответы на демо-базе:
 
@@ -442,6 +443,23 @@ dev7 / demo / shop  vs  dev12 / demo / shop
   order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
   orders.note только на dev12: text
   orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+```
+
+`compare_schema` со `stand_a: dev7`, `stands: dev*` и `schema: shop` — подходящие стенды, каждый против
+dev7; до трёх стендов получают полные различия, больше — по строке с числами:
+
+```text
+dev7 / demo / shop  против стендов: 3
+dev8 / demo / shop: как dev7
+dev9 / demo / shop: как dev7
+dev12 / demo / shop
+только на dev12:
+  returns | таблица
+отличаются:
+  order_items.price: dev7 numeric(10,2) NOT NULL | dev12 numeric(12,2) NOT NULL
+  orders.note только на dev12: text
+  orders: индекс orders_customer_idx только на dev7: CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+как dev7: 2; отличаются: 1; не проверены: 0
 ```
 
 Структура берётся из системного каталога каждого стенда под учёткой схемы, тремя запросами на стенд при
