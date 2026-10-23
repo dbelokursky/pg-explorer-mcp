@@ -46,11 +46,20 @@ def test_openssl_agrees(tmp_path: Path) -> None:
     assert aes.decrypt_cbc(key, iv, cipher) == data
 
 
-def test_a_wrong_key_or_broken_input_is_an_error() -> None:
+@pytest.mark.parametrize("last_byte", [0, 17, 2])
+def test_broken_padding_is_an_error(last_byte: int) -> None:
+    """A wrong key leaves random bytes in the last block; these are the ways they fail the check."""
+    key, iv = os.urandom(16), os.urandom(16)
+    # 0 and 17 are no padding lengths; 2 would need the byte before it to be 2 as well.
+    block = bytes(14) + bytes([1, last_byte])
+    cipher = aes.encrypt_block(key, bytes(a ^ b for a, b in zip(block, iv)))
+    with pytest.raises(ValueError, match="padding is wrong"):
+        aes.decrypt_cbc(key, iv, cipher)
+
+
+def test_broken_input_is_an_error() -> None:
     key, iv = os.urandom(16), os.urandom(16)
     cipher = aes.encrypt_cbc(key, iv, b"hello")
-    with pytest.raises(ValueError, match="padding is wrong"):
-        aes.decrypt_cbc(os.urandom(16), iv, cipher)
     with pytest.raises(ValueError, match="whole blocks"):
         aes.decrypt_cbc(key, iv, cipher[:-1])
     with pytest.raises(ValueError, match="whole blocks"):

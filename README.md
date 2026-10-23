@@ -2,6 +2,10 @@
 
 **English** | [Русский](README.ru.md)
 
+[![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 An MCP server that gives an agent **read-only** access to a PostgreSQL database, or through one entry to
 [dozens of stands](#many-stands). The agent sees the database structure, can look at sample rows and
 query plans, and analysts can run their own `SELECT`s.
@@ -73,8 +77,10 @@ git clone https://github.com/dbelokursky/pg-mcp.git
 
 Without git, take `pg-mcp-<version>.zip` from the latest release on the
 [Releases page](https://github.com/dbelokursky/pg-mcp/releases) and unpack it anywhere: inside is a `pg-mcp` folder
-with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. Do not move
-the folder afterwards: its path goes into the agent settings. If you do move it, repeat step 5.
+with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. The archive
+carries a provenance attestation: `gh attestation verify pg-mcp-<version>.zip --repo dbelokursky/pg-mcp`
+confirms that GitHub built it from this repository's tag. Do not move the folder afterwards: its path
+goes into the agent settings. If you do move it, repeat step 5.
 
 ### 2. Python 3.9 or newer
 
@@ -679,4 +685,9 @@ the server asks it to use the user's language. `PG_MCP_LANG` sets the language o
 
 Environment, checks, code layout and rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Decisions and
 their reasons are in [docs/adr/](docs/adr/), the version history is in [CHANGELOG.md](CHANGELOG.md).
-These documents are in Russian.
+These documents are in Russian. How to report a vulnerability is in [SECURITY.md](SECURITY.md).
+
+## License
+
+pg-mcp is under the MIT license ([LICENSE](LICENSE)). The packages it ships unchanged in
+`src/pg_mcp/_vendor` keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
