@@ -46,6 +46,8 @@ REQUIRED = (
     "README.md",
     "README.ru.md",
     "docs/role.sql",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
 )
 NOT_FOR_USERS = (".git", ".github")  # git archive never adds the first; .gitattributes marks the second export-ignore
 TIMEOUT_S = 120

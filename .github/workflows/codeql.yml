@@ -1,0 +1,34 @@
+name: codeql
+
+# Static analysis of the Python code by GitHub's CodeQL: on every push to the long-lived branches
+# and once a week, so that new queries find old code too. Findings appear under Security > Code scanning.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (Python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
+        with:
+          languages: python
+          # The vendored packages are not ours to fix; their upstreams run their own analysis.
+          config: |
+            paths-ignore:
+              - src/pg_mcp/_vendor
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
+        with:
+          category: python
