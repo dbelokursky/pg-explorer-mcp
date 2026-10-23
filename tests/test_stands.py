@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import socket
 import sys
 import time
@@ -1012,3 +1013,49 @@ def test_tool_descriptions_stay_small(language: str, mode: str, tmp_path: Path) 
             tools = build_stand_tools(Pool(registry, {}), str(ROOT), profile="analyst")
     size = len(json.dumps([tool.describe() for tool in tools], ensure_ascii=False))
     assert size <= SIZE_LIMITS[language, mode], f"tools/list in {language}, {mode}: {size} chars"
+
+
+class TestReload:
+    """The registry is re-read when its files change, so an import shows up without a restart."""
+
+    @pytest.fixture
+    def stands_file(self, tmp_path: Path) -> Path:
+        return write(tmp_path / "stands.conf", "[dev1.orders.billing]\nhost=127.0.0.1\nport=1\n")
+
+    @pytest.fixture
+    def tools(self, stands_file: Path, unreachable_env: dict[str, str]) -> dict[str, Tool]:
+        return by_name(build_stand_tools(Pool(loaded(STANDS_ON, [stands_file]), unreachable_env), str(ROOT)))
+
+    def test_a_new_stand_in_the_file_is_seen_by_the_next_call(self, stands_file: Path, tools: dict[str, Tool]) -> None:
+        assert "stands: 1 (dev1)" in tools["status"].call({})
+        write(
+            stands_file,
+            "[dev1.orders.billing]\nhost=127.0.0.1\nport=1\n\n[dev2.orders.billing]\nhost=127.0.0.1\nport=1\n",
+        )
+        os.utime(stands_file, (time.time() + 5, time.time() + 5))  # a change within the same tick still counts
+        assert "stands: 2 (dev1–dev2)" in tools["status"].call({})
+
+    def test_a_change_that_leaves_no_stands_keeps_the_old_ones(self, stands_file: Path, tools: dict[str, Tool]) -> None:
+        tools["status"].call({})
+        write(stands_file, "[dev1.orders.billing]\nport=1\n")
+        os.utime(stands_file, (time.time() + 5, time.time() + 5))
+        lines = tools["status"].call({}).splitlines()
+        assert "stands: 1 (dev1), connections in the registry: 1" in lines
+        assert any(
+            "warning: the stands registry changed" in line and "keeping the stands read before" in line
+            for line in lines
+        )
+        assert any("has no host, skipped" in line for line in lines)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="no mode bits on Windows")
+def test_a_registry_with_a_password_that_others_can_read_is_a_warning(tmp_path: Path) -> None:
+    own = write(tmp_path / "stands.conf", "[dev1.orders.billing]\nhost=db\npassword=secret\n")
+    own.chmod(0o644)
+    registry = loaded(STANDS_ON, [own])
+    assert registry.warnings == [f"{own} holds a password, and other users can read it: chmod 600 {own}"]
+    own.chmod(0o600)
+    assert loaded(STANDS_ON, [own]).warnings == []
+    plain = write(tmp_path / "plain.conf", "[dev1.orders.billing]\nhost=db\n")
+    plain.chmod(0o644)
+    assert loaded(STANDS_ON, [plain]).warnings == []  # no password, nothing to protect
