@@ -2,6 +2,10 @@
 
 [English](README.md) | **Русский**
 
+[![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 MCP-сервер, который даёт агенту доступ **только на чтение** к базе PostgreSQL, а через одну запись — и к
 [десяткам стендов](#много-стендов). Агент видит структуру базы, может посмотреть примеры строк и
 планы запросов, а аналитики — выполнять свои `SELECT`.
@@ -74,8 +78,9 @@ git clone https://github.com/dbelokursky/pg-mcp.git
 Без git: возьмите `pg-mcp-<версия>.zip` из последнего выпуска на
 [странице Releases](https://github.com/dbelokursky/pg-mcp/releases) и распакуйте его в любую папку: внутри папка
 `pg-mcp` со всем, что нужно серверу, а рядом с архивом лежит `SHA256SUMS` с его контрольной суммой.
-Папку потом не переносите: путь к ней записывается в настройки агента. Если всё же перенесли —
-повторите шаг 5.
+У архива есть аттестация происхождения: `gh attestation verify pg-mcp-<версия>.zip --repo
+dbelokursky/pg-mcp` подтверждает, что его собрал GitHub из тега этого репозитория. Папку потом не
+переносите: путь к ней записывается в настройки агента. Если всё же перенесли — повторите шаг 5.
 
 ### 2. Python 3.9 или новее
 
@@ -677,3 +682,10 @@ GigaCode CLI вне компании не достать, поэтому пер�
 
 Окружение, проверки, раскладка кода и правила — в [CONTRIBUTING.md](CONTRIBUTING.md). Принятые
 решения и их причины — в [docs/adr/](docs/adr/), история версий — в [CHANGELOG.md](CHANGELOG.md).
+Как сообщить об уязвимости — в [SECURITY.md](SECURITY.md).
+
+## Лицензия
+
+pg-mcp распространяется под лицензией MIT ([LICENSE](LICENSE)). Пакеты, которые он несёт в
+`src/pg_mcp/_vendor` без изменений, остаются под своими лицензиями — они перечислены в
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
