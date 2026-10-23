@@ -117,8 +117,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"could not do it as {settings.describe()}: {exc}", file=sys.stderr)
         return 1
     print(f"created the database {args.database} and the role {args.role}, which reads the {SCHEMA} schema")
-    print("next, as a line of the password file (~/.pgpass, chmod 600):")
-    print(f"  {settings.host}:{settings.port}:{args.database}:{args.role}:{args.password}")
+    print("next, as a line of the password file (~/.pgpass, chmod 600), with the password you chose:")
+    print(f"  {settings.host}:{settings.port}:{args.database}:{args.role}:<password>")
     print("then register the server for the demo:")
     print(f"  PGDATABASE={args.database} PGUSER={args.role} python3 {ROOT / 'install.py'} --profile analyst")
     return 0
