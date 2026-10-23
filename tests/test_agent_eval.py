@@ -262,7 +262,7 @@ def test_the_throwaway_home_gets_the_demo_database_and_nothing_of_the_shells_own
     assert not {"PGPASSWORD", "PG_MCP_STANDS"} & set(env)
     assert env["PG_MCP_QUERY_LOG"] == str(tmp_path / "queries.jsonl")
     passfile = Path(env["PGPASSFILE"])
-    assert passfile.read_text(encoding="utf-8") == "*:*:pg_mcp_demo:mcp_demo_agent:de\\:m\\\\o\n"
+    assert passfile.read_text(encoding="utf-8") == "*:*:*:*:de\\:m\\\\o\n"  # as client_smoke writes it
     if sys.platform != "win32":
         assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
     assert (tmp_path / "work").is_dir()

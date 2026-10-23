@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import client_smoke  # the throwaway home with the password in a pass file, as the smoke check makes it
 import demo  # the demo database: its names, and a connection to count the orders again
 import pg8000.exceptions
 
@@ -358,19 +359,12 @@ def home_env(home: Path, environ: dict[str, str], args: argparse.Namespace, mode
         "OPENAI_BASE_URL",
         "OPENAI_MODEL",
     }
-    env = {key: value for key, value in environ.items() if key not in dropped and not key.startswith("PG_MCP_")}
-    passfile = home / ".pgpass"
-    escaped = str(args.password).replace("\\", "\\\\").replace(":", "\\:")
-    passfile.write_text(f"*:*:{args.database}:{args.role}:{escaped}\n", encoding="utf-8")
-    passfile.chmod(0o600)
+    shell = {key: value for key, value in environ.items() if key not in dropped and not key.startswith("PG_MCP_")}
+    env = client_smoke.client_env(str(home), dict(shell, PGPASSWORD=str(args.password)))
     (home / "work").mkdir()  # Qwen Code's project folder: empty, so nothing but the database is in view
     env.update(
-        HOME=str(home),
-        USERPROFILE=str(home),
-        NO_COLOR="1",
         PGDATABASE=args.database,
         PGUSER=args.role,
-        PGPASSFILE=str(passfile),
         PG_MCP_QUERY_LOG=str(home / "queries.jsonl"),
         OPENAI_BASE_URL=args.base_url,
         OPENAI_MODEL=model,
