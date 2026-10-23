@@ -87,8 +87,6 @@ def build_stand_tools(
     names = STAND_PROFILES[profile]
     analyze = profile == "analyst"
     query_log = query_log or QueryLog(None)
-    note = " " + t("stands.tool_note")
-    note_many = " " + t("stands.tool_note_many")
     stand = {"type": "string", "description": t("argument.stand")}
     stands = {"type": "string", "description": t("argument.stands", limit=MAX_STANDS_PER_CALL)}
     database = {"type": "string", "description": t("argument.database")}
@@ -128,7 +126,7 @@ def build_stand_tools(
         Tool(
             name="list_tables",
             title=t("tool.list_tables.title"),
-            description=t("tool.list_tables.description", limit=LIST_TABLES_LIMIT) + note,
+            description=t("tool.list_tables.description", limit=LIST_TABLES_LIMIT),
             properties={"stand": stand, "schema": any_schema, "database": database},
             required=("stand",),
             handler=lambda args: stand_list_tables(pool, args),
@@ -136,7 +134,7 @@ def build_stand_tools(
         Tool(
             name="search_schema",
             title=t("tool.search_schema.title"),
-            description=t("tool.search_schema.description", limit=SEARCH_LIMIT) + note_many,
+            description=t("tool.search_schema.description", limit=SEARCH_LIMIT),
             properties={
                 "stand": stand,
                 "stands": stands,
@@ -150,7 +148,7 @@ def build_stand_tools(
         Tool(
             name="describe_table",
             title=t("tool.describe_table.title"),
-            description=t("tool.describe_table.description") + note,
+            description=t("tool.describe_table.description"),
             properties={"stand": stand, "table": table, "schema": any_schema, "database": database},
             required=("stand", "table"),
             handler=lambda args: stand_describe(pool, args),
@@ -171,7 +169,7 @@ def build_stand_tools(
         Tool(
             name="sample_rows",
             title=t("tool.sample_rows.title"),
-            description=t("tool.sample_rows.description", default=SAMPLE_ROWS_DEFAULT, limit=SAMPLE_ROWS_LIMIT) + note,
+            description=t("tool.sample_rows.description", default=SAMPLE_ROWS_DEFAULT, limit=SAMPLE_ROWS_LIMIT),
             properties={
                 "stand": stand,
                 "table": table,
@@ -191,8 +189,7 @@ def build_stand_tools(
         Tool(
             name="explain_query",
             title=t("tool.explain_query.title"),
-            description=t("tool.explain_query.description_analyze" if analyze else "tool.explain_query.description")
-            + note,
+            description=t("tool.explain_query.description_analyze" if analyze else "tool.explain_query.description"),
             properties=explain_properties,
             required=("stand", "schema", "query"),
             handler=lambda args: stand_explain(pool, args, analyze=analyze),
@@ -200,7 +197,7 @@ def build_stand_tools(
         Tool(
             name="run_select",
             title=t("tool.run_select.title"),
-            description=t("tool.run_select.description", limit=RUN_SELECT_LIMIT) + note_many,
+            description=t("tool.run_select.description", limit=RUN_SELECT_LIMIT),
             properties={"stand": stand, "stands": stands, "schema": data_schema, "database": database, "query": query},
             required=("schema", "query"),
             handler=lambda args: stand_run(pool, args),
