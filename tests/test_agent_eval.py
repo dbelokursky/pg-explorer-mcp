@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import stat
 import sys
@@ -14,12 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import agent_eval
+import demo
 import pytest
 from agent_eval import Call, Result, Scenario, Verdict, judge
 
-BY_NAME = {scenario.name: scenario for scenario in agent_eval.SCENARIOS}
+from pg_mcp.db import Settings
+
+BY_NAME = {scenario.name: scenario for scenario in (*agent_eval.SCENARIOS, *agent_eval.STAND_SCENARIOS)}
 BASE_URL = "http://box:11434/v1"
 PASSWORD = r"de:m\o"  # noqa: S105 (a colon and a backslash, which the password file escapes)
+EVAL_IT_PASSWORD = "eval-it"  # noqa: S105 (the throwaway role of the copy test)
 
 
 def line(tool: str, arguments: dict[str, Any], outcome: str = "ok", **more: Any) -> str:
@@ -229,10 +234,8 @@ def test_without_qwen_code_the_check_says_how_to_get_it(capsys: pytest.CaptureFi
 
 def test_an_unknown_scenario_name_lists_the_known_ones(capsys: pytest.CaptureFixture[str]) -> None:
     assert agent_eval.main(["--only", "orders,nonsense"]) == 2
-    assert (
-        "no scenario named nonsense; there are: counts, customers, delete, hr, orders, status, tables"
-        in capsys.readouterr().out
-    )
+    known = "compare, counts, customers, delete, find_order, hr, orders, stand_counts, stands, status, tables"
+    assert f"no scenario named nonsense; there are: {known}" in capsys.readouterr().out
     assert [scenario.name for scenario in agent_eval.selected("hr, status")] == ["status", "hr"]
 
 
@@ -306,3 +309,127 @@ def test_a_scenario_without_an_argument_takes_any_call_to_its_tool() -> None:
     scenario = Scenario("any", {"ru": "?", "en": "?"}, tools=("search_schema", "describe_table"))
     assert agent_eval.matching_call(scenario, [Call("status", {}, "ok"), Call("describe_table", {"table": "x"}, "ok")])
     assert agent_eval.matching_call(scenario, [Call("describe_table", {"table": "x"}, "error")]) is None
+
+
+class TestStands:
+    def test_the_stand_questions_are_asked_in_both_languages_of_pg_stands(self) -> None:
+        names = [scenario.name for scenario in (*agent_eval.SCENARIOS, *agent_eval.STAND_SCENARIOS)]
+        assert len(set(names)) == len(names)
+        assert all(scenario.stands for scenario in agent_eval.STAND_SCENARIOS)
+        assert not any(scenario.stands for scenario in agent_eval.SCENARIOS)
+        for scenario in agent_eval.STAND_SCENARIOS:
+            assert set(scenario.question) == set(agent_eval.LANGUAGES)
+
+    def test_the_mode_chooses_the_questions(self) -> None:
+        assert [scenario.name for scenario in agent_eval.selected(None, "stands")] == [
+            "stands",
+            "compare",
+            "find_order",
+            "stand_counts",
+        ]
+        assert len(agent_eval.selected(None, "single")) == len(agent_eval.SCENARIOS)
+        assert [scenario.name for scenario in agent_eval.selected("compare, status")] == ["status", "compare"]
+        with pytest.raises(agent_eval.CheckError, match="compare: no scenario of --mode single; pass --mode both"):
+            agent_eval.selected("compare", "single")
+
+    @pytest.mark.parametrize(
+        ("name", "calls", "answer"),
+        [
+            ("stands", [Call("status", {}, "ok")], "Стенды: dev7 и dev12."),
+            (
+                "compare",
+                [Call("compare_schema", {"stand_a": "dev7", "stand_b": "dev12", "schema": "shop"}, "ok")],
+                "На dev12 есть таблица returns, у orders колонка note, у order_items.price другой тип.",
+            ),
+            (
+                "find_order",
+                [Call("run_select", {"stands": "dev*", "query": "SELECT ..."}, "ok")],
+                "Order 501 is on dev12.",
+            ),
+            (
+                "stand_counts",
+                [Call("run_select", {"stand": "dev12", "schema": "shop", "query": "SELECT ..."}, "ok")],
+                "shipped 174, paid 162, cancelled 90, new 75",
+            ),
+            (
+                "stand_counts",
+                [Call("run_select", {"stands": "dev12", "schema": "shop", "query": "SELECT ..."}, "ok")],
+                "174 / 162 / 90 / 75",
+            ),
+        ],
+    )
+    def test_a_good_run_passes(self, name: str, calls: list[Call], answer: str) -> None:
+        assert judge(BY_NAME[name], calls, answer) == Verdict(True)
+
+    def test_the_counts_have_to_be_those_of_dev12(self) -> None:
+        calls = [Call("run_select", {"stand": "dev7", "schema": "shop", "query": "SELECT ..."}, "ok")]
+        verdict = judge(BY_NAME["stand_counts"], calls, "shipped 174, paid 162, cancelled 90, new 74")
+        assert verdict.notes == (
+            "run_select got stand='dev7', stands=None, not 'dev12'",
+            "the answer lacks \\b75\\b",
+        )
+
+    def test_the_registry_puts_the_demo_database_on_dev7_and_its_copy_on_dev12(self) -> None:
+        settings = Settings.from_env({"PGHOST": "db.local", "PGPORT": "6543", "PGUSER": "admin"})
+        args = argparse.Namespace(database="pg_mcp_demo", role="mcp_demo_agent")
+        assert agent_eval.stands_registry(settings, args) == (
+            "[dev7.demo.shop]\nhost=db.local\nport=6543\ndbname=pg_mcp_demo\nuser=mcp_demo_agent\n\n"
+            "[dev12.demo.shop]\nhost=db.local\nport=6543\ndbname=pg_mcp_demo_dev12\nuser=mcp_demo_agent\n"
+        )
+
+
+class TestRepeats:
+    def runs(self) -> list[Result]:
+        error = Call("list_tables", {"schema": "public"}, "error", "No readable tables in schema 'public'.")
+        return [
+            Result(BY_NAME["tables"], "ru", (error, Call("list_tables", {}, "ok")), "...", 40.0, Verdict(True)),
+            Result(BY_NAME["tables"], "ru", (error,), "...", 60.0, Verdict(False, ("list_tables ended error",))),
+            Result(BY_NAME["tables"], "ru", (Call("list_tables", {}, "ok"),), "...", 30.0, Verdict(True)),
+            Result(BY_NAME["status"], "en", (Call("status", {}, "ok"),), "...", 20.0, Verdict(True)),
+        ]
+
+    def test_the_summary_says_how_often_each_question_passed(self) -> None:
+        lines = agent_eval.summary(self.runs()).splitlines()
+        cells = [[cell.strip() for cell in line.split("|")[1:-1]] for line in lines if set(line) != {"|", "-"}]
+        assert cells == [
+            ["scenario", "lang", "passed", "calls with an error", "median time"],
+            ["tables", "ru", "2/3", "2", "40 s"],
+            ["status", "en", "1/1", "0", "20 s"],
+        ]
+
+    def test_an_error_answer_counts_once_it_comes_back(self) -> None:
+        assert agent_eval.repeated_errors(self.runs()) == ["2x list_tables: No readable tables in schema 'public'."]
+        assert agent_eval.repeated_errors(self.runs()[:1]) == []
+
+    def test_repeat_takes_a_whole_number_from_one(self) -> None:
+        assert agent_eval.parse_args(["--repeat", "3"]).repeat == 3
+        for bad in ("0", "two", "-1"):
+            with pytest.raises(SystemExit):
+                agent_eval.parse_args(["--repeat", bad])
+
+
+@pytest.mark.integration
+def test_the_copy_for_dev12_is_made_with_the_readme_changes_and_dropped_without_the_role() -> None:
+    settings = Settings.from_env(os.environ)
+    args = argparse.Namespace(database="pg_mcp_eval_it", role="mcp_eval_it_agent", password=EVAL_IT_PASSWORD)
+    agent_eval.make_copy(settings, args)
+    try:
+        copy = demo.connect(settings, "pg_mcp_eval_it_dev12")
+        try:
+            assert copy.run("SELECT status FROM shop.orders WHERE id = 501") == [["new"]]
+            assert copy.run(
+                "SELECT to_regclass('shop.returns') IS NOT NULL, to_regclass('shop.orders_customer_idx')"
+            ) == [[True, None]]
+            assert copy.run("SELECT has_table_privilege('mcp_eval_it_agent', 'shop.returns', 'SELECT')") == [[True]]
+        finally:
+            copy.close()
+        agent_eval.make_copy(settings, args)  # a copy left over from a stopped run is made anew
+    finally:
+        agent_eval.drop_copy(settings, args)
+        admin = demo.connect(settings, settings.database)
+        try:
+            assert admin.run("SELECT 1 FROM pg_database WHERE datname = 'pg_mcp_eval_it_dev12'") == []
+            assert admin.run("SELECT 1 FROM pg_roles WHERE rolname = 'mcp_eval_it_agent'") == [[1]]  # it stays
+            admin.run('DROP ROLE "mcp_eval_it_agent"')
+        finally:
+            admin.close()
