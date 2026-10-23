@@ -19,6 +19,7 @@ English or Russian.
 
 - [What it does](#what-it-does)
 - [Quick start](#quick-start)
+- [Try it on the demo database](#try-it-on-the-demo-database)
 - [Installation step by step](#installation-step-by-step)
 - [Usage](#usage)
 - [Many stands](#many-stands)
@@ -66,6 +67,23 @@ GigaCode and ask the agent: "Check the database connection".
 
 There is a shorter way too: link the extension (`gigacode extensions link`), restart GigaCode and run
 `/pg:setup` in it. The agent finds Python, runs `install.py` and works through the hints itself.
+
+## Try it on the demo database
+
+The answers shown in [Usage](#usage) come from a small demo database: a shop the agent may read and an
+`hr` schema it may not. `scripts/demo.py` makes it on any PostgreSQL where your `PG*` variables may
+create a database and a role (a fresh local PostgreSQL will do):
+
+```bash
+python3 scripts/demo.py                                     # pg_mcp_demo and the role mcp_demo_agent, password demo
+echo "localhost:5432:pg_mcp_demo:mcp_demo_agent:demo" >> ~/.pgpass && chmod 600 ~/.pgpass
+PGDATABASE=pg_mcp_demo PGUSER=mcp_demo_agent python3 install.py --profile analyst
+```
+
+Restart the agent and ask it: "How many orders are there per status?", "Describe the orders table",
+"What is in the hr schema?". The data is the same on every copy (`docs/demo.sql` builds it with
+arithmetic, not `random()`), so the agent's answers match the examples in this README.
+`python3 scripts/demo.py --drop` removes the database and the role.
 
 ## Installation step by step
 
@@ -281,9 +299,9 @@ The comments come from the database itself, so they stay in whatever language th
 ```text
 shop.orders:
 id | status | created_at
-1 | paid | 2026-05-03 16:49:13.795859+02:00
-2 | cancelled | 2026-09-13 17:03:59.690907+02:00
-3 | paid | 2026-05-22 21:08:31.308385+02:00
+1 | shipped | 2026-01-01 09:00:00+02:00
+2 | paid | 2026-01-01 16:00:00+02:00
+3 | cancelled | 2026-01-01 23:00:00+02:00
 (3 rows shown, there are more: narrow the query with WHERE, ORDER BY or LIMIT)
 ```
 
