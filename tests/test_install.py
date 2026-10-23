@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import install
-from pg_mcp import imports
+from pg_mcp import clients, imports
 from tests.helpers import ROOT
 from tests.test_imports import dbeaver_workspace, postgres
 
@@ -342,4 +343,88 @@ def test_a_terminal_user_is_offered_the_dbeaver_preview(
     assert "To import them, run:" in out
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     install.offer_import("en")
+    assert capsys.readouterr().out == ""
+
+
+def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]) -> None:
+    """use_env, and the folders of desktop apps under the temporary home on every system."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+
+def test_print_shows_the_entry_for_cursor_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["--client", "cursor", "--print", "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    first, _, body = out.partition("\n")
+    assert first == f"for Cursor, add this to {tmp_path / '.cursor' / 'mcp.json'}:"
+    entry = json.loads(body)["mcpServers"]["pg"]
+    assert entry["args"] == ["-I", install.RUN_PY]
+    assert "timeout" not in entry
+    assert not (tmp_path / ".cursor").exists()
+
+
+def test_print_for_jetbrains_says_where_to_paste(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["--client", "jetbrains", "--print", "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("JetBrains AI Assistant keeps its servers in the IDE: Settings | Tools | AI Assistant")
+    assert '"mcpServers"' in out
+
+
+def test_registering_with_vscode_writes_its_own_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    assert install.main(["--client", "vscode", "--lang", "en"]) == 1  # registered; the database is unreachable
+    path = clients.CLIENTS["vscode"].path(os.environ, Path.home(), "pg")
+    assert path is not None
+    assert path.is_relative_to(tmp_path)
+    server = json.loads(path.read_text(encoding="utf-8"))["servers"]["pg"]
+    assert (server["type"], server["command"]) == ("stdio", sys.executable)
+    out = capsys.readouterr().out
+    assert f"registered MCP server 'pg' in {path}" in out
+    assert "extensions link" not in out  # only GigaCode and Qwen Code link the extension
+
+
+def test_a_client_file_with_comments_gets_the_snippet_instead(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    settings = tmp_path / ".cursor" / "mcp.json"
+    settings.parent.mkdir()
+    settings.write_text('{\n  // mine\n  "mcpServers": {}\n}\n', encoding="utf-8")
+    assert not install.install_into("cursor", "pg", install.server_entry())
+    out = capsys.readouterr().out
+    assert f"{settings} is not plain JSON" in out
+    assert '"mcpServers"' in out
+    assert settings.read_text(encoding="utf-8") == '{\n  // mine\n  "mcpServers": {}\n}\n'
+
+
+def test_the_other_installed_clients_are_offered_at_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    isolated(monkeypatch, tmp_path, unreachable_env)
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".lmstudio").mkdir()
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    answers = iter(["n", "y"])
+    monkeypatch.setattr("builtins.input", lambda prompt: (sys.stdout.write(prompt), next(answers))[1])
+    entry = install.server_entry()
+    install.offer_clients("pg", entry, besides="gigacode")
+    out = capsys.readouterr().out
+    assert "Also found Cursor, LM Studio. Register pg there too? [y/N]" in out
+    assert "--client cursor|lmstudio" in out
+    assert not (tmp_path / ".cursor" / "mcp.json").exists()
+    install.offer_clients("pg", entry, besides="gigacode")
+    for path in (tmp_path / ".cursor" / "mcp.json", tmp_path / ".lmstudio" / "mcp.json"):
+        assert set(json.loads(path.read_text(encoding="utf-8"))["mcpServers"]) == {"pg"}
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    capsys.readouterr()
+    install.offer_clients("pg", entry, besides="gigacode")
     assert capsys.readouterr().out == ""
