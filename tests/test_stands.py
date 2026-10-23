@@ -35,6 +35,7 @@ from pg_mcp.stands import (
     StandError,
     Target,
     exported_sections,
+    listed,
     load_registry,
     parse_service_file,
     registry_files,
@@ -311,7 +312,11 @@ class TestRegistry:
             ("billing", None, "Schema 'billing' exists in several databases of dev1: archive, orders. Pass database"),
             ("shipping", "archive", "Schema 'shipping' of dev1 is in orders, not in 'archive'. Pass one of those"),
             ("shiping", None, "Stand dev1 has no schema 'shiping' that the server has a login for. Similar: shipping."),
-            ("hr", None, "Stand dev1 has no schema 'hr' that the server has a login for. Call list_schemas"),
+            (
+                "hr",
+                None,
+                "Stand dev1 has no schema 'hr' that the server has a login for. Its schemas: billing, shipping.",
+            ),
         ],
     )
     def test_a_wrong_schema_is_explained(self, registry: Registry, schema: Any, database: Any, message: str) -> None:
@@ -578,7 +583,7 @@ class TestCompareSchema:
             ),
             (
                 {"stand_a": "dev2", "stand_b": "dev1", "schema": "shipping"},
-                "Stand dev2 has no schema 'shipping' that the server has a login for. Call list_schemas to see them.",
+                "Stand dev2 has no schema 'shipping' that the server has a login for. Its schemas: billing.",
             ),
         ],
     )
@@ -715,16 +720,17 @@ class TestDifferences:
         assert differences(a, b) == [
             "dev7 / orders / shop  vs  dev12 / orders / shop",
             "only on dev7:",
-            "  archive | table",
+            "  shop.archive | table",
             "only on dev12:",
-            "  daily | view",
+            "  shop.daily | view",
             "differ:",
-            "  items: dev7 table | dev12 view",
-            "  orders.note only on dev12: text DEFAULT ''::text",
-            "  orders.total: dev7 numeric(12,2) NOT NULL | dev12 numeric(10,2)",
-            "  orders: constraint orders_status_check: dev7 CHECK (status = 'new') | dev12 CHECK (status = 'paid')",
-            "  orders: constraint orders_total_check only on dev12: CHECK (total > 0::numeric)",
-            f"  orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
+            "  shop.items: dev7 table | dev12 view",
+            "  shop.orders.note only on dev12: text DEFAULT ''::text",
+            "  shop.orders.total: dev7 numeric(12,2) NOT NULL | dev12 numeric(10,2)",
+            "  shop.orders: constraint orders_status_check: dev7 CHECK (status = 'new') "
+            "| dev12 CHECK (status = 'paid')",
+            "  shop.orders: constraint orders_total_check only on dev12: CHECK (total > 0::numeric)",
+            f"  shop.orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
         ]
 
     @pytest.mark.parametrize(
@@ -763,7 +769,7 @@ class TestDifferences:
             "dev1 / orders / billing  vs  2 stands:",
             "dev2 / orders / billing",
             "differ:",
-            "  invoices.note only on dev2: text",
+            "  billing.invoices.note only on dev2: text",
             "ift1 / orders / billing",
             "  ift1 / orders / billing: Connecting to ift1 timed out.",
             "same as dev1: 0; different: 1; not checked: 1",
@@ -787,9 +793,9 @@ class TestDifferences:
         other = structure("dev12", orders=Relation("r", constraints={"c": long_check[:-2] + "y)"}))
         assert differences(a, same)[-1] == "identical: 1 table, 0 columns"
         line = differences(a, other)[-1]
-        assert line.startswith("  orders: constraint c: dev7 CHECK (xxx")
+        assert line.startswith("  shop.orders: constraint c: dev7 CHECK (xxx")
         assert line.count("…") == 2
-        assert len(line) < 2 * 200 + 40
+        assert len(line) < 2 * 200 + 50  # two shortened definitions and the qualified name around them
 
     @pytest.mark.usefixtures("russian")
     def test_in_russian(self) -> None:
@@ -798,9 +804,9 @@ class TestDifferences:
         assert differences(a, b) == [
             "dev7 / orders / shop  vs  dev12 / orders / shop",
             "только на dev12:",
-            "  log | таблица",
+            "  shop.log | таблица",
             "отличаются:",
-            f"  orders: индекс orders_pkey только на dev7: {PRIMARY_KEY}",
+            f"  shop.orders: индекс orders_pkey только на dev7: {PRIMARY_KEY}",
         ]
         assert differences(a, structure("dev12", orders=a.relations["orders"]))[-1] == "одинаково: 1 таблица, 1 колонка"
 
@@ -1137,3 +1143,17 @@ def test_a_registry_with_a_password_that_others_can_read_is_a_warning(tmp_path: 
     plain = write(tmp_path / "plain.conf", "[dev1.orders.billing]\nhost=db\n")
     plain.chmod(0o644)
     assert loaded(STANDS_ON, [plain]).warnings == []  # no password, nothing to protect
+
+
+def test_a_stand_names_its_schemas_when_the_schema_is_missing_or_unknown(registry: Registry) -> None:
+    with pytest.raises(StandError, match=r"Pass schema: .* Its schemas: billing, shipping\.$"):
+        registry.target("dev1", " ")
+    with pytest.raises(StandError, match=r"no schema 'public' .* Its schemas: billing\.$"):
+        registry.target("dev2", "public")
+
+
+def test_a_long_list_of_schemas_is_cut_with_its_count() -> None:
+    names = [f"s{number:02}" for number in range(20)]
+    assert listed(names[:3]) == "s00, s01, s02"
+    assert listed(names) == f"{', '.join(names[:15])} and more, 20 in all: list_schemas shows them"
+    assert listed([]) == "none"

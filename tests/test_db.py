@@ -307,6 +307,11 @@ class TestData:
         with pytest.raises(ToolError, match=hint):
             analyst["explain_query"].call({"query": "SELECT * FROM orders"})
 
+    def test_a_guessed_column_brings_the_columns_of_the_table(self, analyst: dict[str, Tool]) -> None:
+        hint = rf"42703.* Columns of the tables the query reads: {SCHEMA}\.orders: id, customer_id, total, note\."
+        with pytest.raises(ToolError, match=hint):
+            analyst["run_select"].call({"query": f"SELECT order_id FROM {SCHEMA}.orders"})
+
 
 @pytest.mark.usefixtures("russian")
 class TestRussian:
@@ -476,6 +481,21 @@ class TestRoleScript:
             f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}"
         ]
         assert lines_of(tools["search_schema"], text="orders")[0].startswith("Nothing matches 'orders'.")
+
+    def test_a_column_error_lists_only_the_tables_the_role_reads(
+        self, agent: Database, admin: pg8000.native.Connection
+    ) -> None:
+        # PostgreSQL reports the missing column first: the privilege is checked when the plan starts
+        admin.run(f"CREATE TABLE {ROLE_SCHEMA}.salaries (id int, amount numeric)")
+        admin.run(f"REVOKE ALL ON {ROLE_SCHEMA}.salaries FROM {ROLE}")
+        try:
+            tools = by_name(build_tools(agent, str(ROOT), profile="analyst"))
+            query = f"SELECT nosuch FROM {ROLE_SCHEMA}.items JOIN {ROLE_SCHEMA}.salaries USING (id)"
+            with pytest.raises(ToolError, match=rf"42703.* reads: {ROLE_SCHEMA}\.items: id\.$") as caught:
+                tools["run_select"].call({"query": query})
+            assert "amount" not in str(caught.value)
+        finally:
+            admin.run(f"DROP TABLE {ROLE_SCHEMA}.salaries")
 
     @pytest.mark.usefixtures("agent")
     def test_the_role_cannot_write_even_with_read_only_mode_switched_off(self) -> None:
