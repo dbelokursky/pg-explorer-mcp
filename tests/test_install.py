@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 import install
+from pg_mcp import imports
 from tests.helpers import ROOT
+from tests.test_imports import dbeaver_workspace, postgres
 
 ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-mcp/run.py"]}
 
@@ -232,3 +234,112 @@ def test_names_that_would_not_make_a_clean_entry_are_refused(name: str, capsys: 
     with pytest.raises(SystemExit):
         install.main(["--check", "--lang", "en", f"--name={name}"])  # = keeps "-sales" from looking like an option
     assert "cannot be a server name" in capsys.readouterr().err
+
+
+def dbeaver_folder(tmp_path: Path) -> Path:
+    """A DBeaver workspace with two stands, written the way DBeaver writes it."""
+    return dbeaver_workspace(
+        tmp_path / ".dbeaver",
+        {
+            "pg-1": postgres("orders", "dev7-db.example", "orders", folder="Stands/dev7"),
+            "pg-2": postgres("IFT2 shop", "ift2-db.example", "shop", user="shop"),
+        },
+        {"pg-1": {"user": "billing", "password": "s3cret"}, "pg-2": {"user": "shop", "password": "pw"}},
+    )
+
+
+def test_import_previews_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+    assert install.main(["import", "dbeaver", "--workspace", str(dbeaver_folder(tmp_path)), "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    assert "2 connections go into" in out
+    assert "[dev7.orders.billing]  dev7-db.example:5432" in out
+    assert "This was a preview, nothing was written." in out
+    assert "s3cret" not in out
+    assert "pw" not in out.replace("pg-mcp", "")
+    assert not (tmp_path / "stands.conf").exists()
+    assert not (tmp_path / "pgpass").exists()
+
+
+def test_import_write_registers_pg_stands_next_to_pg(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+    assert install.main(["--client", "qwen"]) == 1  # the plain entry: its database is unreachable
+    argv = [
+        "import",
+        "dbeaver",
+        "--workspace",
+        str(dbeaver_folder(tmp_path)),
+        "--write",
+        "--client",
+        "qwen",
+        "--lang",
+        "en",
+    ]
+    assert install.main(argv) == 0  # the stands are found, which is all the check asks of a stands entry
+    out = capsys.readouterr().out
+    assert "stands: 2 (dev7, ift2), connections in the registry: 2" in out
+    assert "s3cret" not in out
+    assert (tmp_path / "pgpass").read_text(encoding="utf-8").splitlines() == [
+        "dev7-db.example:5432:orders:billing:s3cret",
+        "ift2-db.example:5432:shop:shop:pw",
+    ]
+    settings = read(tmp_path / ".qwen" / "settings.json")
+    assert isinstance(settings, dict)
+    servers = settings["mcpServers"]
+    assert set(servers) == {"pg", "pg-stands"}
+    assert servers["pg-stands"]["env"]["PG_MCP_STANDS"] == "*"
+    assert "PG_MCP_STANDS" not in servers["pg"]["env"]
+
+
+def test_import_pg_service_needs_a_file_and_dbeaver_a_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    assert install.main(["import", "pg-service", "--lang", "en"]) == 2
+    assert "pg-service needs the file" in capsys.readouterr().out
+    assert install.main(["import", "dbeaver", "--lang", "en"]) == 2  # HOME is empty here
+    assert "were not found on this machine" in capsys.readouterr().out
+    assert install.main(["import", "dbeaver", "--workspace", str(tmp_path), "--lang", "en"]) == 1
+    assert "cannot read" in capsys.readouterr().out
+    assert (
+        install.main(
+            ["import", "dbeaver", "--workspace", str(dbeaver_folder(tmp_path)), "--stand-pattern", "(x", "--lang", "en"]
+        )
+        == 1
+    )
+    assert "not a regular expression" in capsys.readouterr().out
+
+
+def test_a_terminal_user_is_offered_the_dbeaver_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+    folder = dbeaver_folder(tmp_path)
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: folder)  # noqa: ARG005
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    answers = iter(["y", "n"])
+    monkeypatch.setattr("builtins.input", lambda prompt: (sys.stdout.write(prompt), next(answers))[1])
+    install.offer_import("en")
+    out = capsys.readouterr().out
+    assert "Show what an import would bring into pg-mcp?" in out
+    assert "2 connections go into" in out
+    assert "To import them, run:" in out
+    assert "--write" in out
+    assert not (tmp_path / "stands.conf").exists()
+    install.offer_import("en")
+    out = capsys.readouterr().out
+    assert "2 connections go into" not in out
+    assert "To import them, run:" in out
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    install.offer_import("en")
+    assert capsys.readouterr().out == ""

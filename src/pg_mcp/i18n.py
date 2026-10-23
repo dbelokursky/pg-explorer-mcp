@@ -396,6 +396,47 @@ EN: dict[str, str] = {
         "Stand {stand} has no schema {schema!r} in database {database}: the registry lists it, but the database "
         "does not have it. Nothing to compare."
     ),
+    "stands.readable_by_others": "{path} holds a password, and other users can read it: chmod 600 {path}",
+    "stands.reload_kept": (
+        "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
+    ),
+    # install.py import
+    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-mcp",
+    "install.help.source": "where the connections come from: dbeaver or pg-service",
+    "install.help.file": "the pg_service.conf file to read (for pg-service)",
+    "install.help.workspace": "DBeaver's folder with data-sources.json (default: the usual place for this OS)",
+    "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
+    "install.help.prune": "with --write: replace the registry instead of adding to it",
+    "install.help.stand_pattern": (
+        "regular expression that finds the stand in a folder, connection name or host (default: {pattern})"
+    ),
+    "import.unreadable": "cannot read {path}: {error}",
+    "import.bad_pattern": "the stand pattern {pattern!r} is not a regular expression: {error}",
+    "import.duplicate": "the same stand, database and user as {other!r}: [{name}] is already taken",
+    "import.no_host": "no host",
+    "import.no_database": "no database",
+    "import.no_user": "no user: pg-mcp reads a schema with the login of the same name",
+    "import.no_stand": "no stand in the folder, the name or the host",
+    "import.bad_name": "{part!r} cannot be a part of a section name (letters, digits, _ $ - only)",
+    "import.reading": "reading {source}",
+    "import.preview_header": "{count} connections go into {registry}:",
+    "import.preview_no_password": "no saved password: add a line to the password file",
+    "import.preview_passwords": "{count} passwords go into {passfile}",
+    "import.preview_skipped": "left out: {count}",
+    "import.nothing": "nothing to import",
+    "import.dry_run": (
+        "This was a preview, nothing was written. Add --write to write the files and register pg-stands."
+    ),
+    "import.cannot_write": "cannot write {path}: {error}. Nothing was changed.",
+    "import.written": "written {path}",
+    "import.written_backup": "written {path}; the old file is kept as {backup}",
+    "import.no_dbeaver": (
+        "DBeaver's connections were not found on this machine; pass --workspace with the folder that holds "
+        "data-sources.json"
+    ),
+    "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
+    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-mcp? [y/N] ",
+    "import.offer_hint": "To import them, run: {command}",
     # install.py
     "install.description": "Register the pg-mcp server in the agent's settings and check it.",
     "install.help.client": "whose settings.json to edit",
@@ -737,6 +778,46 @@ RU: dict[str, str] = {
     "compare.no_schema": (
         "На стенде {stand} в базе {database} нет схемы {schema!r}: она есть в реестре, но не в базе. Сравнивать нечего."
     ),
+    "stands.readable_by_others": "в {path} есть пароль, а читать файл могут другие пользователи: chmod 600 {path}",
+    "stands.reload_kept": (
+        "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
+        "раньше"
+    ),
+    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-mcp",
+    "install.help.source": "откуда брать подключения: dbeaver или pg-service",
+    "install.help.file": "файл pg_service.conf, который читать (для pg-service)",
+    "install.help.workspace": "папка DBeaver с data-sources.json (по умолчанию — обычное место для этой ОС)",
+    "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
+    "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
+    "install.help.stand_pattern": (
+        "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern})"
+    ),
+    "import.unreadable": "не удалось прочитать {path}: {error}",
+    "import.bad_pattern": "шаблон стенда {pattern!r} — не регулярное выражение: {error}",
+    "import.duplicate": "тот же стенд, база и пользователь, что у {other!r}: [{name}] уже занята",
+    "import.no_host": "нет хоста",
+    "import.no_database": "нет базы",
+    "import.no_user": "нет пользователя: pg-mcp читает схему под одноимённой учёткой",
+    "import.no_stand": "стенд не найден ни в папке, ни в имени, ни в хосте",
+    "import.bad_name": "{part!r} не годится в имя секции (только буквы, цифры, _ $ -)",
+    "import.reading": "читаю {source}",
+    "import.preview_header": "в {registry} попадут подключения: {count}",
+    "import.preview_no_password": "пароль не сохранён: добавьте строку в файл паролей",
+    "import.preview_passwords": "в {passfile} попадут пароли: {count}",
+    "import.preview_skipped": "пропущено: {count}",
+    "import.nothing": "импортировать нечего",
+    "import.dry_run": (
+        "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы и зарегистрировать pg-stands."
+    ),
+    "import.cannot_write": "не удалось записать {path}: {error}. Ничего не изменено.",
+    "import.written": "записан {path}",
+    "import.written_backup": "записан {path}; прежний файл сохранён как {backup}",
+    "import.no_dbeaver": (
+        "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
+    ),
+    "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
+    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-mcp? [y/N] ",
+    "import.offer_hint": "Чтобы перенести их, выполните: {command}",
     "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
     "install.help.client": "чей settings.json править",
     "install.help.check": "только запустить сервер и вызвать status, ничего не меняя",

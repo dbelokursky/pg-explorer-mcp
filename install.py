@@ -6,6 +6,9 @@
     python3 install.py --client qwen
     python3 install.py --lang ru  the server and this script speak Russian
     PGDATABASE=sales python3 install.py --name sales  another database, as pg-sales
+    python3 install.py import dbeaver            show what DBeaver's connections would bring
+    python3 install.py import dbeaver --write    write the stands registry, the password file, register pg-stands
+    python3 install.py import pg-service ~/.pg_service.conf --write
 
 Uses only the standard library and registers the very interpreter that runs it,
 so the agent later starts the server on a Python that is known to work. PG*
@@ -31,13 +34,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pg_mcp import i18n
+from pg_mcp import i18n, imports
 from pg_mcp.i18n import t
 
 MIN_PYTHON = (3, 9)
 ROOT = Path(__file__).resolve().parent
 RUN_PY = str(ROOT / "run.py")
 SERVER_NAME = "pg"  # further databases register as pg-<name>
+STANDS_NAME = "stands"  # the entry an import registers: pg-stands, with PG_MCP_STANDS=*
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
 SETTINGS_FILES = {"gigacode": "~/.gigacode/settings.json", "qwen": "~/.qwen/settings.json"}
 COPIED_ENV = (
@@ -177,12 +181,25 @@ def main(argv: list[str]) -> int:
         sys.exit(t("install.old_python", need=".".join(map(str, MIN_PYTHON)), have=platform.python_version()))
 
     parser = argparse.ArgumentParser(description=t("install.description"))
-    parser.add_argument("--client", choices=sorted(SETTINGS_FILES), default="gigacode", help=t("install.help.client"))
+    _common_options(parser)
     parser.add_argument("--check", action="store_true", help=t("install.help.check"))
-    parser.add_argument("--profile", choices=PROFILES, help=t("install.help.profile"))
-    parser.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
     parser.add_argument("--name", type=_name, help=t("install.help.name"))
+    commands = parser.add_subparsers(dest="command")
+    importer = commands.add_parser("import", help=t("install.help.import"), description=t("install.help.import"))
+    _common_options(importer)
+    importer.add_argument("source", choices=("dbeaver", "pg-service"), help=t("install.help.source"))
+    importer.add_argument("file", nargs="?", help=t("install.help.file"))
+    importer.add_argument("--workspace", help=t("install.help.workspace"))
+    importer.add_argument("--write", action="store_true", help=t("install.help.write"))
+    importer.add_argument("--prune", action="store_true", help=t("install.help.prune"))
+    importer.add_argument(
+        "--stand-pattern",
+        default=imports.DEFAULT_STAND_PATTERN,
+        help=t("install.help.stand_pattern", pattern=imports.DEFAULT_STAND_PATTERN),
+    )
     args = parser.parse_args(argv)
+    if args.command == "import":
+        return import_command(args, language)
 
     entry = server_entry(args.profile, language, args.name)
     if not args.check:
@@ -192,7 +209,85 @@ def main(argv: list[str]) -> int:
         print()
         print(t("install.next", client=args.client, path=ROOT))
         print(t("install.restart"))
+        if args.name is None:
+            offer_import(language)
     return 0 if ok else 1
+
+
+def _common_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--client", choices=sorted(SETTINGS_FILES), default="gigacode", help=t("install.help.client"))
+    parser.add_argument("--profile", choices=PROFILES, help=t("install.help.profile"))
+    parser.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
+
+
+def import_command(args: argparse.Namespace, language: str) -> int:
+    """Preview, or with --write bring, the connections of DBeaver or a pg_service.conf file into pg-mcp."""
+    try:
+        connections = _connections(args)
+        pattern = imports.compile_pattern(args.stand_pattern)
+    except imports.ImportRefusedError as exc:
+        print(exc)
+        return 1
+    if connections is None:
+        return 2
+    registry_file, passfile = imports.default_files(os.environ)
+    result = imports.plan(connections, pattern)
+    for line in imports.preview(result, registry_file, passfile):
+        print(line)
+    if not result.targets:
+        print(t("import.nothing"))
+        return 1
+    if not args.write:
+        print(t("import.dry_run"))
+        return 0
+    try:
+        written = imports.write(result, registry_file, passfile, prune=args.prune)
+    except imports.ImportRefusedError as exc:
+        print(exc)
+        return 1
+    for line in written:
+        print(line)
+    entry = server_entry(args.profile, language, STANDS_NAME)
+    entry["env"]["PG_MCP_STANDS"] = "*"
+    register(Path(SETTINGS_FILES[args.client]).expanduser(), entry, server_name(STANDS_NAME))
+    ok = check(entry)
+    print()
+    print(t("install.restart"))
+    return 0 if ok else 1
+
+
+def _connections(args: argparse.Namespace) -> list[imports.Connection] | None:
+    if args.source == "dbeaver":
+        folder = Path(args.workspace).expanduser() if args.workspace else imports.dbeaver_workspace(os.environ)
+        if folder is None:
+            print(t("import.no_dbeaver"))
+            return None
+        print(t("import.reading", source=folder))
+        return imports.read_dbeaver(folder)
+    if not args.file:
+        print(t("import.need_file"))
+        return None
+    path = Path(args.file).expanduser()
+    print(t("import.reading", source=path))
+    return imports.read_pg_service(path)
+
+
+def offer_import(language: str) -> None:
+    """At a terminal, when DBeaver is on this machine: offer to show what an import would do."""
+    folder = imports.dbeaver_workspace(os.environ)
+    if folder is None or not sys.stdin.isatty():
+        return
+    try:
+        answer = input(t("import.offer", path=folder))
+    except EOFError:
+        return
+    command = f"{sys.executable} {ROOT / 'install.py'} import dbeaver --write --lang {language}"
+    if answer.strip().lower() in ("y", "yes", "д", "да"):
+        print()
+        import_command(argparse.Namespace(source="dbeaver", file=None, workspace=None, write=False, prune=False,
+                                          stand_pattern=imports.DEFAULT_STAND_PATTERN, client="gigacode",
+                                          profile=None, lang=language), language)  # fmt: skip
+    print(t("import.offer_hint", command=command))
 
 
 if __name__ == "__main__":

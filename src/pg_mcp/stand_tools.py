@@ -25,7 +25,7 @@ from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
-from .stands import MAX_STANDS_PER_CALL, Pool, StandError, Target, summarize
+from .stands import MAX_STANDS_PER_CALL, Pool, Registry, StandError, Target, summarize
 from .tools import (
     DEFAULT_NAME,
     DEFAULT_PROFILE,
@@ -56,6 +56,7 @@ STAND_ONLY_TOOLS = {"list_schemas": "status", "compare_schema": "describe_table"
 CALL_TIME_BUDGET_S = 25
 ROWS_PER_STAND_MIN = 10
 CATALOG_ATTEMPTS = 2  # logins tried per database for the catalog before giving up on it
+MAX_REGISTRY_WARNINGS = 10  # more would crowd status; the rest are counted
 
 
 def _stand_names(names: Sequence[str]) -> tuple[str, ...]:
@@ -212,6 +213,7 @@ def _fresh(pool: Pool, handler: Callable[[dict[str, Any]], Answer]) -> Callable[
 
     def run(args: dict[str, Any]) -> Answer:
         pool.forget()
+        pool.refresh()
         return handler(args)
 
     return run
@@ -240,7 +242,7 @@ def stand_status(
         t("status.language", language=current()),
         query_log.describe(),
     ]
-    lines.extend(t("status.warning", warning=warning) for warning in warnings)
+    lines.extend(t("status.warning", warning=warning) for warning in (*warnings, *registry_warnings(registry)))
     if not isinstance(stand, str) or not stand.strip():
         lines.append(
             t(
@@ -284,6 +286,14 @@ def _check(pool: Pool, target: Target, budget: int) -> tuple[DatabaseUnavailable
         )
     )
     return None, lines
+
+
+def registry_warnings(registry: Registry) -> list[str]:
+    """The registry's problems for status: at most MAX_REGISTRY_WARNINGS of them, the rest counted."""
+    shown = registry.warnings[:MAX_REGISTRY_WARNINGS]
+    if len(registry.warnings) > MAX_REGISTRY_WARNINGS:
+        shown.append(t("stands.more_warnings", count=len(registry.warnings) - MAX_REGISTRY_WARNINGS))
+    return shown
 
 
 def list_schemas(pool: Pool, stand: Any) -> list[str]:

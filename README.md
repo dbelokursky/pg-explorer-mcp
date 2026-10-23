@@ -193,7 +193,8 @@ gigacode extensions link /path/to/pg-mcp     # Qwen Code: qwen extensions link â
 ```
 
 The extension gives the agent a short context (where to start, never to ask for passwords in the chat,
-to answer in the user's language) and the `/pg:setup` command for installing and repairing the server.
+to answer in the user's language), the `/pg:setup` command for installing and repairing the server and
+`/pg:import` for bringing stand connections in from DBeaver or `pg_service.conf`.
 
 ### 7. Check
 
@@ -348,6 +349,28 @@ PG_MCP_STANDS='*' python3 install.py --name stands
 This registers `pg-stands` next to `pg`. `PG_MCP_STANDS` switches stands on: `*` takes every stand,
 patterns such as `dev*,ift2` take some. The check succeeds once the stands are found: a stand behind a
 VPN is reached only when a tool needs it.
+
+**Importing connections.** When the connections already live in DBeaver, or in a `pg_service.conf`
+file, let `install.py` bring them in:
+
+```bash
+python3 install.py import dbeaver            # a preview: what would go where; nothing is written
+python3 install.py import dbeaver --write    # write the registry and the password file, register pg-stands
+python3 install.py import pg-service ~/.pg_service.conf --write
+```
+
+The stand comes from the DBeaver folder, then the connection name, then the host, matched with the
+regular expression `(dev|ift)\d+` (`--stand-pattern` changes it); the database is the connection's and
+the schema is its login, since on a stand every schema has a login of its own name. The preview lists
+what would be written and what is left out and why; passwords are never shown. `--write` rewrites
+`~/.pg-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`), adds the passwords
+to the password file without touching its other lines, keeps a dated backup of both files and
+registers `pg-stands`; when anything fails, nothing is changed. DBeaver's saved passwords are read
+from its own files while DBeaver keeps them under its default key; with its secure storage switched
+on they stay unknown, and the preview says which logins need a line in the password file by hand.
+The agent does the same with `/pg:import`, writing only after you confirm. A running server notices
+a changed registry on its next call, so an import needs no restart; a registry file that holds a
+`password=` line and is readable by other users gets a warning in `status`.
 
 **3. Use.** Every tool takes `stand`. Reading data also takes `schema`: the server connects with that
 schema's login and looks for unqualified names in it first. `database` is needed only when the schema

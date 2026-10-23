@@ -19,13 +19,12 @@ from .budget import budget_from_env
 from .db import Database
 from .protocol import Server
 from .querylog import QueryLog
-from .stand_tools import build_stand_tools
+from .stand_tools import build_stand_tools, registry_warnings
 from .stands import DEFAULT_MAX_CONNECTIONS, Pool, load_registry
 from .tools import DEFAULT_NAME, build_tools, profile_from_env
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 # A checkout keeps run.py two levels up; an installed copy has only the package.
-MAX_REGISTRY_WARNINGS = 10  # more would crowd status; the rest are counted
 INSTALL_DIR = str(_PACKAGE_DIR.parents[1] if (_PACKAGE_DIR.parents[1] / "run.py").exists() else _PACKAGE_DIR)
 
 
@@ -56,11 +55,8 @@ def main(
     name = env.get("PG_MCP_NAME", "").strip() or DEFAULT_NAME
     # Many stands only when PG_MCP_STANDS asks and the registry has some; otherwise the PG* settings.
     registry = load_registry(env)
-    if registry is not None:
-        warnings.extend(registry.warnings[:MAX_REGISTRY_WARNINGS])
-        if len(registry.warnings) > MAX_REGISTRY_WARNINGS:
-            more = len(registry.warnings) - MAX_REGISTRY_WARNINGS
-            warnings.append(i18n.t("stands.more_warnings", count=more))
+    if registry is not None and not registry.targets:
+        warnings.extend(registry_warnings(registry))  # the single-database tools show why the stands are off
     connections: Database | Pool
     if registry is not None and registry.targets:
         connections = Pool(registry, env, _whole(env, "PG_MCP_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS))
