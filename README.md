@@ -445,9 +445,12 @@ python3 install.py export pgadmin --write --stands 'dev*,ift2'
 
 An export replaces only the connections it brings, found by a stable id or by name, and keeps the
 rest: what you made in the tool, and what an earlier export brought for other stands. Each changed
-file keeps a dated copy and its permissions. Connections DBeaver already has with the same host,
-port, database and user are left out, since the stands most often come from DBeaver in the first
-place; so are the sections the registry reads from `~/.pg_service.conf` itself. A settings file with
+file keeps a dated copy and its permissions, and a file that is a link stays a link. Connections
+DBeaver already has with the same host, port, database and user are left out, since the stands most
+often come from DBeaver in the first place. In `~/.pg_service.conf` every exported section sits under
+the line `# pg-mcp export`: the next export rewrites only such sections, the server does not take them
+for stands, and a section of the same name that you wrote yourself stays as it is while its stand is
+left out. The TLS settings of a stand, `sslmode` and `sslrootcert`, go along. A settings file with
 comments is left alone, and the export prints what to add to it by hand. The PostgreSQL extension of
 Microsoft cannot read the password file: it asks for each password once and keeps it in the system
 keychain. Importing the file into pgAdmin again adds the servers again, so remove the old ones first.

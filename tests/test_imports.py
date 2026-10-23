@@ -166,6 +166,11 @@ class TestPgService:
         assert first.options == {"sslmode": "require"}
         assert (second.database, second.user, second.password) == ("", "", None)
 
+    def test_the_copies_an_export_wrote_are_not_brought_back(self, tmp_path: Path) -> None:
+        path = tmp_path / "service.conf"
+        path.write_text("# pg-mcp export\n[dev7.orders.billing]\nhost=db\n\n[reports]\nhost=db\n", encoding="utf-8")
+        assert [connection.name for connection in read_pg_service(path)] == ["reports"]
+
     def test_an_unreadable_file_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ImportRefusedError, match="cannot read"):
             read_pg_service(tmp_path / "absent.conf")

@@ -474,7 +474,9 @@ def test_export_previews_then_writes(
     out = capsys.readouterr().out
     assert f"записан {service}" in out
     assert 'psql "service=ift2.orders.billing"' in out
-    assert service.read_text(encoding="utf-8").startswith("[ift2.orders.billing]\nhost=ift2-db.example\n")
+    assert service.read_text(encoding="utf-8").startswith(
+        "# pg-mcp export\n[ift2.orders.billing]\nhost=ift2-db.example\n"
+    )
 
 
 def test_export_says_why_it_cannot(
@@ -564,3 +566,22 @@ def test_the_database_tools_found_here_are_offered_the_stands(
     monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "none.conf"))
     install.offer_export()  # no stands: nothing to offer
     assert capsys.readouterr().out == ""
+
+
+def test_both_extensions_of_one_editor_get_their_connections(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
+) -> None:
+    stands_home(monkeypatch, tmp_path, unreachable_env)
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # noqa: ARG005
+    user = clients.app_data(os.environ, Path.home()) / "Code" / "User"
+    user.mkdir(parents=True)
+    (user / "settings.json").write_text('{"editor.fontSize": 13}\n', encoding="utf-8")
+    for extension in ("ms-ossdata.vscode-pgsql-1.4.0", "mtxr.sqltools-0.28.4"):
+        (tmp_path / ".vscode" / "extensions" / extension).mkdir(parents=True)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")  # noqa: ARG005
+    install.offer_export()  # both change settings.json: the second must see what the first wrote
+    settings = json.loads((user / "settings.json").read_text(encoding="utf-8"))
+    assert settings["editor.fontSize"] == 13
+    assert len(settings["pgsql.connections"]) == len(settings["sqltools.connections"]) == 2
+    assert len(list(user.glob("settings.json.bak-*"))) == 2

@@ -436,16 +436,27 @@ def offer_export(*, besides: str | None = None) -> None:
     except EOFError:
         return
     if answer.strip().lower() in YES:
-        for export, _ in ready:
+        for export, editor in ready:
             print()
-            for line in exports.preview(export):
-                print(line)
-            _write_export(export)
+            _export_now(export.tool, items, editor)
         return
     print(t("export.offer_hint"))
     for export, editor in ready:
         option = f" --editor {editor}" if editor and editor != "vscode" else ""
         print(f"  {sys.executable} {ROOT / 'install.py'} export {export.tool}{option} --write")
+
+
+def _export_now(tool: str, items: list[exports.Connection], editor: str) -> None:
+    """Prepare one export and write it. It is prepared only now: both VS Code extensions change one file."""
+    try:
+        export = exports.prepare(tool, items, os.environ, Path.home(), editor=editor or "vscode")
+    except exports.ExportRefusedError as exc:
+        print(exc)
+        return
+    for line in exports.preview(export):
+        print(line)
+    if export.files:
+        _write_export(export)
 
 
 if __name__ == "__main__":

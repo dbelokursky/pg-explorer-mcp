@@ -17,17 +17,19 @@ import os
 import shutil
 import uuid
 import xml.etree.ElementTree as ET
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from xml.sax.saxutils import escape, quoteattr
 
 from .clients import app_data
 from .db import pgpass_path
 from .i18n import plural, t
 from .imports import ImportRefusedError, dbeaver_workspace, read_dbeaver
-from .stands import Target, load_registry, registry_files, summarize
+from .stands import EXPORTED, Target, load_registry, registry_files, summarize
 
 NAMESPACE = uuid.UUID("6f0f7a4e-2b43-4d0b-8a5e-3d1f2a9c7e10")  # stable ids: a re-export updates, never duplicates
 DBEAVER_FILE = "data-sources-pg-mcp.json"  # DBeaver loads every data-sources*.json of a project
@@ -49,6 +51,7 @@ class Connection:
     dbname: str
     user: str
     sslmode: str | None
+    sslrootcert: str | None = None  # the CA certificate file, for a stand whose server certificate is checked
     source: str = field(default="", compare=False)  # the registry file the connection comes from
 
     @property
@@ -87,17 +90,27 @@ def connection(target: Target) -> Connection:
         dbname=options.get("dbname", target.database),
         user=options.get("user", target.schema),
         sslmode=options.get("sslmode") or None,
+        sslrootcert=options.get("sslrootcert") or None,
         source=target.source,
     )
 
 
-def jdbc_url(item: Connection, *, current_schema: bool = False) -> str:
-    """The pgjdbc URL; with current_schema, the schema comes first on the search path, as on the server."""
+def tls_settings(item: Connection) -> dict[str, str]:
+    """sslmode and sslrootcert where the registry sets them: libpq and pgjdbc both take these names."""
+    settings = {"sslmode": item.sslmode, "sslrootcert": item.sslrootcert}
+    return {key: value for key, value in settings.items() if value}
+
+
+def jdbc_url(item: Connection, *, current_schema: bool = False, tls: bool = True) -> str:
+    """The pgjdbc URL; with current_schema, the schema comes first on the search path, as on the server.
+
+    Without tls the URL leaves the TLS settings to the driver properties.
+    """
     parameters = []
     if current_schema:
         parameters.append(f"currentSchema={item.schema},public")
-    if item.sslmode:
-        parameters.append(f"sslmode={item.sslmode}")
+    if tls:  # pgjdbc decodes the values: a path may hold spaces or backslashes
+        parameters.extend(f"{key}={quote(value, safe='/:')}" for key, value in tls_settings(item).items())
     query = "?" + "&".join(parameters) if parameters else ""
     return f"jdbc:postgresql://{item.host}:{item.port}/{item.dbname}{query}"
 
@@ -106,25 +119,64 @@ def jdbc_url(item: Connection, *, current_schema: bool = False) -> str:
 
 
 def pg_service(items: Sequence[Connection], existing: str) -> str:
-    """The service file with these sections added or replaced; other sections and comments stay."""
-    wanted = {item.key: item for item in items}
-    out: list[str] = []
-    skipping = False
-    for line in existing.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            skipping = stripped[1:-1].strip() in wanted
-        if not skipping:
-            out.append(line)
+    """The service file with these sections, each under the EXPORTED line; everything else stays as it was.
+
+    A section an earlier export wrote for one of these stands is replaced; a section the user wrote is
+    never touched, and prepare() leaves its stand out. A comment after the last setting of a replaced
+    section belongs to what follows it, so it stays.
+    """
+    wanted = {item.key for item in items}
+    lines = existing.splitlines()
+    headers = [number for number, line in enumerate(lines) if _section(line) is not None]
+    drop: set[int] = set()
+    for position, start in enumerate(headers):
+        if _section(lines[start]) in wanted and _exported(lines, start):
+            end = headers[position + 1] if position + 1 < len(headers) else len(lines)
+            last = max((number for number in range(start + 1, end) if _setting(lines[number])), default=start)
+            first = start - 1  # the EXPORTED line, and the empty lines above it
+            while first > 0 and not lines[first - 1].strip():
+                first -= 1
+            drop.update(range(first, last + 1))
+    out = [line for number, line in enumerate(lines) if number not in drop]
     while out and not out[-1].strip():
         out.pop()
     for item in items:
-        out.extend(["", f"[{item.key}]", f"host={item.host}", f"port={item.port}", f"dbname={item.dbname}"])
-        out.append(f"user={item.user}")
-        if item.sslmode:
-            out.append(f"sslmode={item.sslmode}")
+        out.extend(["", EXPORTED, f"[{item.key}]", f"host={item.host}", f"port={item.port}"])
+        out.extend([f"dbname={item.dbname}", f"user={item.user}"])
+        out.extend(f"{key}={value}" for key, value in tls_settings(item).items())
         out.append(f"options=-c search_path={item.schema},public")  # as the server does: the schema first
     return "\n".join(out).lstrip("\n") + "\n"
+
+
+def service_sections(text: str) -> dict[str, bool]:
+    """The sections of a service file, each with whether an export wrote it; a name the user wrote is theirs."""
+    lines = text.splitlines()
+    found: dict[str, bool] = {}
+    for number, line in enumerate(lines):
+        name = _section(line)
+        if name is not None:
+            found[name] = found.get(name, True) and _exported(lines, number)
+    return found
+
+
+def _section(line: str) -> str | None:
+    """The section a line opens, its stand in lower case as the registry has it; None for any other line."""
+    stripped = line.strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        return None
+    parts = stripped[1:-1].strip().split(".")
+    if len(parts) == 3:  # stand.database.schema
+        parts[0] = parts[0].lower()
+    return ".".join(parts)
+
+
+def _exported(lines: Sequence[str], header: int) -> bool:
+    return header > 0 and lines[header - 1].strip().startswith(EXPORTED)
+
+
+def _setting(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and not stripped.startswith("#")
 
 
 # --- DBeaver ------------------------------------------------------------------------------------------
@@ -144,7 +196,7 @@ def dbeaver(items: Sequence[Connection], previous: Mapping[str, Any] | None = No
             "host": item.host,
             "port": str(item.port),
             "database": item.dbname,
-            "url": jdbc_url(item),
+            "url": jdbc_url(item, tls=False),  # DBeaver builds the URL of a MANUAL connection itself
             "configurationType": "MANUAL",
             "type": "dev",
             "auth-model": "postgres_pgpass",
@@ -152,6 +204,8 @@ def dbeaver(items: Sequence[Connection], previous: Mapping[str, Any] | None = No
             "bootstrap": {"defaultSchema": item.schema},
             "provider-properties": {"@dbeaver-show-non-default-db@": "false"},
         }
+        if tls_settings(item):
+            configuration["properties"] = tls_settings(item)  # driver properties: pgjdbc gets them as they are
         data_sources[f"postgres-jdbc-pg-mcp-{item.uid()}"] = {
             "provider": "postgresql",
             "driver": "postgres-jdbc",
@@ -179,9 +233,19 @@ def in_dbeaver(folder: Path) -> set[tuple[str, int, str, str]]:
     }
 
 
-def _known(item: Connection, present: set[tuple[str, int, str, str]]) -> bool:
-    address = (item.host.lower(), item.port, item.dbname)
-    return (*address, item.user) in present or (*address, "") in present
+def not_in_dbeaver(items: Sequence[Connection], present: set[tuple[str, int, str, str]]) -> list[Connection]:
+    """The connections DBeaver does not have of its own.
+
+    A connection of DBeaver whose user is unknown stands for a login of the registry only where the
+    registry has a single login to that database: with several, there is no telling which it is.
+    """
+    logins = Counter((item.host.lower(), item.port, item.dbname) for item in items)
+
+    def known(item: Connection) -> bool:
+        address = (item.host.lower(), item.port, item.dbname)
+        return (*address, item.user) in present or ((*address, "") in present and logins[address] == 1)
+
+    return [item for item in items if not known(item)]
 
 
 # --- DataGrip and the IDEs of JetBrains with database tools -----------------------------------------
@@ -269,6 +333,8 @@ def pgadmin(items: Sequence[Connection], passfile: str) -> str:
     servers = {}
     for number, item in enumerate(items, start=1):
         parameters: dict[str, Any] = {"sslmode": item.sslmode or "prefer", "connect_timeout": 10, "passfile": passfile}
+        if item.sslrootcert:
+            parameters["sslrootcert"] = item.sslrootcert
         servers[str(number)] = {
             "Name": item.label,
             "Group": item.stand,
@@ -315,9 +381,8 @@ def vscode_pgsql(items: Sequence[Connection], settings: dict[str, Any]) -> dict[
             "user": item.user,
             "authenticationType": "SqlLogin",
             "options": f"-c search_path={item.schema},public",
+            **tls_settings(item),
         }
-        if item.sslmode:
-            entry["sslmode"] = item.sslmode
         saved.append(entry)
     return {**settings, "pgsql.serverGroups": groups, "pgsql.connections": saved}
 
@@ -345,7 +410,9 @@ def sqltools(items: Sequence[Connection], settings: dict[str, Any]) -> dict[str,
         if item.sslmode in ("require", "prefer", "allow"):
             entry["pgOptions"] = {"ssl": {"rejectUnauthorized": False}}  # TLS without checking the certificate
         elif item.sslmode in ("verify-ca", "verify-full"):
-            entry["pgOptions"] = {"ssl": True}
+            # SQLTools reads the CA file itself and gives node-postgres its text
+            ssl = {"rejectUnauthorized": True, "ca": item.sslrootcert} if item.sslrootcert else True
+            entry["pgOptions"] = {"ssl": ssl}
         saved.append(entry)
     return {**settings, "sqltools.connections": saved}
 
@@ -457,8 +524,7 @@ def _dbeaver_export(items: Sequence[Connection], env: Mapping[str, str], home: P
     folder = workspace or dbeaver_workspace(env, home)
     if folder is None:
         raise ExportRefusedError(t("export.no_dbeaver"))
-    present = in_dbeaver(folder)
-    fresh = [item for item in items if not _known(item, present)]
+    fresh = not_in_dbeaver(items, in_dbeaver(folder))
     notes = [t("export.present_dbeaver", count=len(items) - len(fresh))] if len(fresh) < len(items) else []
     path = folder / DBEAVER_FILE
     files = [(path, dbeaver(fresh, read_settings(path)))] if fresh else []
@@ -466,24 +532,24 @@ def _dbeaver_export(items: Sequence[Connection], env: Mapping[str, str], home: P
 
 
 def _service_export(items: Sequence[Connection], env: Mapping[str, str]) -> Export:
-    """Into the user's pg_service.conf, leaving out the sections the registry read from that very file."""
+    """Into the user's pg_service.conf, leaving out the stands that have a section the user wrote there.
+
+    That includes the stands the registry reads from this very file.
+    """
     service = registry_files(env)[1]
-    fresh = [item for item in items if not _same_file(item.source, service)]
+    try:
+        existing = service.read_text(encoding="utf-8") if service.exists() else ""
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ExportRefusedError(t("export.unreadable", path=service, error=exc)) from exc
+    sections = service_sections(existing)
+    fresh = [item for item in items if sections.get(item.key, True)]  # no section yet, or one an export wrote
     notes = (
         [t("export.present_service", path=service, count=len(items) - len(fresh))] if len(fresh) < len(items) else []
     )
     if not fresh:
         return Export("pg-service", [], [], "", notes)
-    try:
-        existing = service.read_text(encoding="utf-8") if service.exists() else ""
-    except (OSError, UnicodeDecodeError) as exc:
-        raise ExportRefusedError(t("export.unreadable", path=service, error=exc)) from exc
     next_step = t(NEXT["pg-service"], service=fresh[0].key)
     return Export("pg-service", fresh, [(service, pg_service(fresh, existing))], next_step, notes)
-
-
-def _same_file(source: str, path: Path) -> bool:
-    return bool(source) and Path(source).expanduser().resolve() == path.expanduser().resolve()
 
 
 def _editor_export(tool: str, items: Sequence[Connection], env: Mapping[str, str], home: Path, editor: str) -> Export:
@@ -526,22 +592,17 @@ def write(export: Export) -> list[str]:
     changes nothing. The files are the user's own (a pg_service.conf may hold passwords of other
     services): a new text is readable by its owner only until it takes the old file's permissions.
     """
-    staged: list[tuple[Path, Path]] = []
-    for path, text in export.files:
-        temporary = path.with_name(path.name + ".pg-mcp-new")
-        staged.append((path, temporary))
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(text)
-        except OSError as exc:
-            _discard(staged)
-            raise ExportRefusedError(t("import.cannot_write", path=path, error=exc)) from exc
+    staged: list[tuple[Path, Path, Path]] = []  # the path as named, the file it is, the new text next to that file
+    try:
+        for path, text in export.files:
+            staged.append(_stage(path, text))
+    except OSError as exc:
+        _discard(staged)
+        raise ExportRefusedError(t("import.cannot_write", path=path, error=exc)) from exc
     lines: list[str] = []
-    for number, (path, temporary) in enumerate(staged):
+    for number, (path, real, temporary) in enumerate(staged):
         try:
-            backup = _place(path, temporary)
+            backup = _place(real, temporary)
         except OSError as exc:
             _discard(staged[number:])
             raise ExportRefusedError("\n".join([*lines, t("export.cannot_place", path=path, error=exc)])) from exc
@@ -551,12 +612,27 @@ def write(export: Export) -> list[str]:
     return [*lines, export.next_step]
 
 
+def _stage(path: Path, text: str) -> tuple[Path, Path, Path]:
+    """Write the new text next to the file the path is, readable by its owner only."""
+    real = path.resolve()  # a link (into a dotfiles repository, say) stays a link to the changed file
+    temporary = real.with_name(real.name + ".pg-mcp-new")
+    real.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+    except OSError:
+        _discard([(path, real, temporary)])
+        raise
+    return path, real, temporary
+
+
 def _place(path: Path, temporary: Path) -> Path | None:
     """Put the new file in place: the old one becomes the dated copy and gives the new one its permissions."""
     if not path.exists():
         temporary.replace(path)
         return None
-    backup = path.with_name(f"{path.name}.bak-{datetime.datetime.now():%Y%m%d-%H%M%S}")
+    backup = backup_name(path)
     shutil.copymode(path, temporary)
     path.replace(backup)
     try:
@@ -567,8 +643,22 @@ def _place(path: Path, temporary: Path) -> Path | None:
     return backup
 
 
-def _discard(staged: Sequence[tuple[Path, Path]]) -> None:
-    for _, temporary in staged:
+def backup_name(path: Path) -> Path:
+    """A dated name for the old file that no earlier copy has: two writes within a second keep both copies."""
+    stamp = f"{path.name}.bak-{_now()}"
+    backup, number = path.with_name(stamp), 1
+    while backup.exists():
+        number += 1
+        backup = path.with_name(f"{stamp}-{number}")
+    return backup
+
+
+def _now() -> str:
+    return f"{datetime.datetime.now():%Y%m%d-%H%M%S}"
+
+
+def _discard(staged: Sequence[tuple[Path, Path, Path]]) -> None:
+    for _, _, temporary in staged:
         with contextlib.suppress(OSError):  # not there, or not even its folder
             temporary.unlink()
 

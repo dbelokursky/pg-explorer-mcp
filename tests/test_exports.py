@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 import stat
@@ -20,6 +21,9 @@ BILLING = Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orde
 SHIPPING = Connection("dev7", "orders", "shipping", "dev7-db.example", 5432, "orders", "shipping_ro", "require")
 IFT = Connection("ift2", "orders", "billing", "ift2-db.example", 6432, "orders_ift", "billing", None)
 ITEMS = [BILLING, SHIPPING, IFT]
+VERIFIED = Connection(
+    "dev9", "orders", "billing", "h", 5432, "orders", "billing", "verify-full", "/etc/my certs/ca.pem"
+)
 
 
 def registry(tmp_path: Path, text: str, service: str | None = None) -> dict[str, str]:
@@ -82,33 +86,77 @@ class TestConnections:
         assert BILLING.uid() == Connection(*[*BILLING.__dict__.values()]).uid()
         assert BILLING.uid() != SHIPPING.uid()
 
-    def test_the_jdbc_url_carries_the_tls_mode_and_the_schema_when_asked(self) -> None:
+    def test_the_jdbc_url_carries_the_tls_settings_and_the_schema_when_asked(self) -> None:
         assert exports.jdbc_url(BILLING) == "jdbc:postgresql://dev7-db.example:5432/orders"
         assert exports.jdbc_url(SHIPPING) == "jdbc:postgresql://dev7-db.example:5432/orders?sslmode=require"
         assert exports.jdbc_url(SHIPPING, current_schema=True) == (
             "jdbc:postgresql://dev7-db.example:5432/orders?currentSchema=shipping,public&sslmode=require"
         )
+        assert exports.jdbc_url(SHIPPING, tls=False) == "jdbc:postgresql://dev7-db.example:5432/orders"
+        assert exports.jdbc_url(VERIFIED).endswith("?sslmode=verify-full&sslrootcert=/etc/my%20certs/ca.pem")
+        windows = dataclasses.replace(VERIFIED, sslrootcert="C:\\certs\\ca+1.pem")
+        assert exports.jdbc_url(windows).endswith("&sslrootcert=C:%5Ccerts%5Cca%2B1.pem")  # pgjdbc decodes it
+
+    def test_the_ca_certificate_of_a_stand_comes_along(self, tmp_path: Path) -> None:
+        env = registry(
+            tmp_path, "[dev9.orders.billing]\nhost=h\nsslmode=verify-full\nsslrootcert=/etc/my certs/ca.pem\n"
+        )
+        assert exports.connections(env)[0] == [VERIFIED]
 
 
 class TestPgService:
-    def test_sections_for_psql_with_the_schema_first(self) -> None:
-        text = exports.pg_service([BILLING, SHIPPING], "")
-        assert text == (
-            "[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\nuser=billing\n"
+    def test_sections_for_psql_under_the_export_line_with_the_schema_first(self) -> None:
+        assert exports.pg_service([BILLING, SHIPPING, VERIFIED], "") == (
+            "# pg-mcp export\n[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\nuser=billing\n"
             "options=-c search_path=billing,public\n"
-            "\n[dev7.orders.shipping]\nhost=dev7-db.example\nport=5432\ndbname=orders\nuser=shipping_ro\n"
-            "sslmode=require\noptions=-c search_path=shipping,public\n"
+            "\n# pg-mcp export\n[dev7.orders.shipping]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
+            "user=shipping_ro\nsslmode=require\noptions=-c search_path=shipping,public\n"
+            "\n# pg-mcp export\n[dev9.orders.billing]\nhost=h\nport=5432\ndbname=orders\nuser=billing\n"
+            "sslmode=verify-full\nsslrootcert=/etc/my certs/ca.pem\noptions=-c search_path=billing,public\n"
         )
 
-    def test_other_services_and_comments_stay_and_ours_are_replaced(self) -> None:
-        existing = "# my services\n[reports]\nhost=rep\n\n[dev7.orders.billing]\nhost=old\nport=1\n\n[later]\nhost=x\n"
-        text = exports.pg_service([BILLING], existing)
-        assert text.startswith("# my services\n[reports]\nhost=rep\n\n[later]\nhost=x\n\n[dev7.orders.billing]\n")
-        assert "host=old" not in text
-        assert text.count("[dev7.orders.billing]") == 1
-        assert exports.pg_service([BILLING], "[reports]\nhost=rep\n\n\n").startswith(
-            "[reports]\nhost=rep\n\n[dev7.orders.billing]\n"  # one empty line between sections, however many before
+    def test_an_earlier_export_is_replaced_and_everything_else_stays(self) -> None:
+        earlier = exports.pg_service(
+            [dataclasses.replace(BILLING, host="old"), IFT], "# my services\n[reports]\nhost=rep\n"
         )
+        earlier += "\n# the reporting replica\n[replica]\nhost=replica\n"  # the user's, after the export
+        assert exports.pg_service([BILLING], earlier) == (
+            "# my services\n[reports]\nhost=rep\n"
+            "\n# pg-mcp export\n[ift2.orders.billing]\nhost=ift2-db.example\nport=6432\ndbname=orders_ift\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
+            "\n# the reporting replica\n[replica]\nhost=replica\n"
+            "\n# pg-mcp export\n[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
+        )
+        assert exports.pg_service([BILLING], "[reports]\nhost=rep\n\n\n").startswith(
+            "[reports]\nhost=rep\n\n# pg-mcp export\n[dev7.orders.billing]\n"  # one empty line, however many before
+        )
+
+    def test_the_export_line_tells_the_sections_apart(self) -> None:
+        text = (
+            "[DEV7.orders.billing]\nhost=mine\n\n# pg-mcp export\n[dev8.orders.billing]\nhost=h\n"
+            "\n# pg-mcp export\n\n[dev9.orders.billing]\nhost=h\n[reports]\nhost=r\n"
+        )
+        assert exports.service_sections(text) == {
+            "dev7.orders.billing": False,  # the user's, whatever the case of the stand
+            "dev8.orders.billing": True,
+            "dev9.orders.billing": False,  # the line has to be right above the section
+            "reports": False,
+        }
+
+    def test_a_section_the_user_wrote_is_never_touched(self, tmp_path: Path) -> None:
+        mine = "[dev7.orders.billing]\nhost=dev7-db.example\nsslrootcert=/etc/ca.pem\napplication_name=me\n"
+        stands = (
+            "[dev7.orders.billing]\nhost=dev7-db.example\n\n"
+            "[ift2.orders.billing]\nhost=ift2-db.example\nport=6432\ndbname=orders_ift\n"
+        )
+        env = registry(tmp_path, stands, mine)
+        items, _ = exports.connections(env)  # dev7 comes from stands.conf, which the registry reads first
+        export = exports.prepare("pg-service", items, env, tmp_path)
+        assert export.items == [IFT]
+        assert export.notes == [f"left out, already in {tmp_path / 'service.conf'}: 1"]
+        [(_, text)] = export.files
+        assert text.startswith(mine + "\n# pg-mcp export\n[ift2.orders.billing]\n")
 
     def test_the_sections_read_from_the_service_file_itself_are_left_out(self, tmp_path: Path) -> None:
         env = registry(
@@ -121,8 +169,16 @@ class TestPgService:
         assert export.notes == [f"left out, already in {service}: 1"]
         [(path, text)] = export.files
         assert path == service
-        assert text.startswith("# mine\n[dev8.crm.sales]\nhost=dev8-db\n\n[dev7.orders.billing]\n")
+        assert text.startswith("# mine\n[dev8.crm.sales]\nhost=dev8-db\n\n# pg-mcp export\n[dev7.orders.billing]\n")
         assert export.next_step.startswith('Connect with psql "service=dev7.orders.billing"')
+
+    def test_the_registry_does_not_take_exported_sections_for_stands(self, tmp_path: Path) -> None:
+        env = registry(tmp_path, "[dev7.orders.billing]\nhost=dev7-db.example\n")
+        items, _ = exports.connections(env)
+        exports.write(exports.prepare("pg-service", items, env, tmp_path))
+        (tmp_path / "stands.conf").write_text("", encoding="utf-8")  # the stand is gone from the registry
+        with pytest.raises(ExportRefusedError, match="no stands to export"):
+            exports.connections(env)
 
     def test_nothing_is_written_when_every_section_is_there_already(self, tmp_path: Path) -> None:
         env = registry(tmp_path, "", "[dev8.crm.sales]\nhost=dev8-db\n")
@@ -162,6 +218,21 @@ class TestDBeaver:
         assert configuration["user"] == "billing"
         assert configuration["bootstrap"] == {"defaultSchema": "billing"}
         assert '"password":' not in json.dumps(data)  # only "save-password": false
+
+    def test_tls_goes_into_the_driver_properties(self) -> None:
+        connections = json.loads(exports.dbeaver([SHIPPING, VERIFIED, BILLING]))["connections"]
+        shipping = connections[f"postgres-jdbc-pg-mcp-{SHIPPING.uid()}"]["configuration"]
+        assert shipping["url"] == "jdbc:postgresql://dev7-db.example:5432/orders"  # DBeaver builds its own
+        assert shipping["properties"] == {"sslmode": "require"}
+        verified = connections[f"postgres-jdbc-pg-mcp-{VERIFIED.uid()}"]["configuration"]
+        assert verified["properties"] == {"sslmode": "verify-full", "sslrootcert": "/etc/my certs/ca.pem"}
+        assert "properties" not in connections[f"postgres-jdbc-pg-mcp-{BILLING.uid()}"]["configuration"]
+
+    def test_an_unknown_user_stands_for_a_login_only_when_there_is_one(self, tmp_path: Path) -> None:
+        folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": postgres("dev7", "dev7-db.example", "orders")}, {})
+        export = exports.prepare("dbeaver", [BILLING, SHIPPING], {}, tmp_path, workspace=folder)
+        assert (export.items, export.notes) == ([BILLING, SHIPPING], [])  # two logins: which one would it be?
+        assert exports.prepare("dbeaver", [BILLING], {}, tmp_path, workspace=folder).items == []
 
     def test_an_earlier_export_keeps_what_this_one_does_not_bring(self) -> None:
         previous = json.loads(exports.dbeaver([IFT, BILLING]))
@@ -310,6 +381,15 @@ class TestPgAdmin:
         }
         assert data["Servers"]["1"]["ConnectionParameters"]["sslmode"] == "prefer"
 
+    def test_the_ca_certificate_goes_into_the_connection_parameters(self) -> None:
+        parameters = json.loads(exports.pgadmin([VERIFIED], "/p"))["Servers"]["1"]["ConnectionParameters"]
+        assert parameters == {
+            "sslmode": "verify-full",
+            "connect_timeout": 10,
+            "passfile": "/p",
+            "sslrootcert": "/etc/my certs/ca.pem",
+        }
+
     def test_a_quote_in_a_schema_name_is_doubled(self) -> None:
         assert exports.quote_ident('we"ird') == '"we""ird"'
 
@@ -361,11 +441,17 @@ class TestEditors:
         assert old == {"id": f"pg-mcp-{BILLING.uid()}", "server": "old"}
 
     def test_sqltools_connections_replace_the_same_names_and_choose_tls(self) -> None:
-        verified = Connection("dev9", "orders", "billing", "h", 5432, "orders", "billing", "verify-full")
+        verified = dataclasses.replace(VERIFIED, stand="dev10", sslrootcert=None)
         settings = {"sqltools.connections": [{"name": "local", "driver": "SQLite"}, {"name": BILLING.label}]}
-        result = exports.sqltools([BILLING, SHIPPING, verified], settings)
+        result = exports.sqltools([BILLING, SHIPPING, verified, VERIFIED], settings)
         connections = result["sqltools.connections"]
-        assert [entry["name"] for entry in connections] == ["local", BILLING.label, SHIPPING.label, verified.label]
+        assert [entry["name"] for entry in connections] == [
+            "local",
+            BILLING.label,
+            SHIPPING.label,
+            verified.label,
+            VERIFIED.label,
+        ]
         assert connections[1] == {
             "name": "dev7 / orders / billing",
             "group": "dev7",
@@ -380,6 +466,11 @@ class TestEditors:
         }
         assert connections[2]["pgOptions"] == {"ssl": {"rejectUnauthorized": False}}
         assert connections[3]["pgOptions"] == {"ssl": True}
+        assert connections[4]["pgOptions"] == {"ssl": {"rejectUnauthorized": True, "ca": "/etc/my certs/ca.pem"}}
+
+    def test_the_postgresql_extension_gets_the_ca_certificate(self) -> None:
+        [entry] = exports.vscode_pgsql([VERIFIED], {})["pgsql.connections"]
+        assert (entry["sslmode"], entry["sslrootcert"]) == ("verify-full", "/etc/my certs/ca.pem")
 
     def test_a_setting_that_is_not_a_list_is_refused(self) -> None:
         with pytest.raises(ExportRefusedError, match=r"pgsql\.connections in the editor's settings is not a list"):
@@ -459,6 +550,40 @@ class TestPreviewAndWrite:
         if posix:
             assert stat.S_IMODE(path.stat().st_mode) == stat.S_IMODE(backup.stat().st_mode) == 0o640
         assert sorted(child.name for child in path.parent.iterdir()) == ["pg_service.conf", backup.name]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need extra rights on Windows")
+    def test_a_link_stays_a_link_to_the_changed_file(self, tmp_path: Path) -> None:
+        dotfiles = tmp_path / "dotfiles"
+        dotfiles.mkdir()
+        (dotfiles / "settings.json").write_text("{}\n", encoding="utf-8")
+        link = tmp_path / "settings.json"
+        link.symlink_to(dotfiles / "settings.json")
+        lines = exports.write(Export("sqltools", [], [(link, '{"a": 1}\n')], "next step"))
+        [backup] = dotfiles.glob("settings.json.bak-*")
+        assert link.is_symlink()
+        assert (dotfiles / "settings.json").read_text(encoding="utf-8") == '{"a": 1}\n'
+        assert not backup.is_symlink()
+        assert backup.read_text(encoding="utf-8") == "{}\n"
+        assert lines[0] == f"written {link}; the old file is kept as {backup}"
+
+    def test_two_writes_within_a_second_keep_both_copies(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(exports, "_now", lambda: "20261023-120000")
+        path = tmp_path / "settings.json"
+        path.write_text("original\n", encoding="utf-8")
+        exports.write(Export("vscode-pgsql", [], [(path, "first\n")], ""))
+        exports.write(Export("sqltools", [], [(path, "second\n")], ""))
+        assert (tmp_path / "settings.json.bak-20261023-120000").read_text(encoding="utf-8") == "original\n"
+        assert (tmp_path / "settings.json.bak-20261023-120000-2").read_text(encoding="utf-8") == "first\n"
+        assert path.read_text(encoding="utf-8") == "second\n"
+
+    def test_a_new_text_that_cannot_be_written_changes_nothing(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.json"
+        path.write_text("old\n", encoding="utf-8")
+        (tmp_path / "settings.json.pg-mcp-new").mkdir()  # where the new text would go
+        with pytest.raises(ExportRefusedError, match="cannot write"):
+            exports.write(Export("sqltools", [], [(path, "new\n")], ""))
+        assert path.read_text(encoding="utf-8") == "old\n"
+        assert sorted(child.name for child in tmp_path.iterdir()) == ["settings.json", "settings.json.pg-mcp-new"]
 
     def test_a_file_that_cannot_be_replaced_stays_as_it_was(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
