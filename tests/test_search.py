@@ -49,8 +49,7 @@ def test_tables_and_columns_come_back_one_per_line() -> None:
 
 def test_the_query_gets_the_spellings_the_schema_and_one_row_more_than_the_limit() -> None:
     db = CannedDatabase([])
-    with pytest.raises(ToolError, match="No readable tables in schema 'sales'"):  # nor any readable schema here
-        search(db, text=" Заказ ", schema='"sales"')
+    search(db, text=" Заказ ", schema='"sales"')
     assert db.params[0] == {"patterns": ["%Заказ%", "%заказ%", "%ЗАКАЗ%"], "schema": "sales", "limit": SEARCH_LIMIT + 1}
 
 
@@ -186,26 +185,70 @@ class TestMissingTableHint:
         assert hint.endswith("Таблица с таким именем доступна как shop.orders: укажите имя вместе со схемой.")
 
 
-class SchemasOnly(Database):
-    """Finds nothing, and knows which schemas hold readable tables."""
+class ShopAndHr(Database):
+    """shop has a readable table, hr only tables the role cannot read, and public none at all."""
 
-    def __init__(self, schemas: list[str]) -> None:
+    CUSTOMERS = ("shop", "customers", "r", 50, "Покупатели")
+
+    def __init__(self) -> None:
         super().__init__({"PGPORT": "not-a-number"})
-        self.schemas = schemas
 
-    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:  # noqa: ARG002
-        return [(name,) for name in self.schemas] if sql == tools.SCHEMAS_SQL else []
+    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
+        if sql == tools.SCHEMAS_SQL:
+            return [("shop",)]
+        if sql == tools.SCHEMA_HOLDS_RELATIONS_SQL:
+            return [(1,)] if params["schema"] in ("shop", "hr") else []
+        if params.get("schema") not in (None, "shop"):
+            return []
+        if sql == tools.LIST_TABLES_SQL:
+            return [self.CUSTOMERS]
+        if sql == tools.SEARCH_SQL and "%customer%" in params["patterns"]:
+            return [(*self.CUSTOMERS, None, None, None, None)]
+        return []
 
 
-def test_a_schema_without_readable_tables_names_the_ones_with_them() -> None:
-    """The model guesses "public"; one answer that names shop saves it a call to list_tables."""
-    with pytest.raises(
-        ToolError, match=r"No readable tables in schema 'public'\. Schemas with readable tables: shop\."
-    ):
-        search(SchemasOnly(["shop"]), text="customer", schema="public")
-    assert search(SchemasOnly(["shop"]), text="zzz", schema="shop") == [
-        "Nothing matches 'zzz'. Try a shorter piece of the name, another spelling, or list_tables."
-    ]
+def listing(db: Database, **arguments: object) -> list[str]:
+    tool = {tool.name: tool for tool in build_tools(db, str(ROOT))}["list_tables"]
+    return tool.call(arguments).splitlines()
+
+
+class TestGuessedSchema:
+    """The model guesses "public"; when not a single table is there, the tables of every schema answer it."""
+
+    def test_list_tables_shows_the_tables_of_every_schema(self) -> None:
+        assert listing(ShopAndHr(), schema="public") == [
+            "Schema 'public' has no tables, so these are the readable tables of all schemas:",
+            "shop.customers | table | ~50 rows | Покупатели",
+        ]
+
+    def test_search_schema_searches_every_schema(self) -> None:
+        assert search(ShopAndHr(), text="customer", schema="public") == [
+            "Schema 'public' has no tables, so the search went through all schemas:",
+            "shop.customers | table | ~50 rows | Покупатели",
+        ]
+        assert search(ShopAndHr(), text="zzz", schema="public")[1].startswith("Nothing matches 'zzz'.")
+
+    def test_a_schema_whose_tables_the_role_cannot_read_is_refused(self) -> None:
+        """hr: the answer is that the role reads nothing there, not the tables of shop."""
+        message = r"No readable tables in schema 'hr'\. Schemas with readable tables: shop\."
+        with pytest.raises(ToolError, match=message):
+            listing(ShopAndHr(), schema="hr")
+        with pytest.raises(ToolError, match=message):
+            search(ShopAndHr(), text="salary", schema="hr")
+
+    def test_a_readable_schema_without_matches_has_nothing_to_show(self) -> None:
+        assert search(ShopAndHr(), text="zzz", schema="shop") == [
+            "Nothing matches 'zzz'. Try a shorter piece of the name, another spelling, or list_tables."
+        ]
+
+    @pytest.mark.usefixtures("russian")
+    def test_the_first_line_speaks_russian(self) -> None:
+        assert listing(ShopAndHr(), schema="public")[0] == (
+            "В схеме 'public' нет таблиц, поэтому здесь доступные для чтения таблицы всех схем:"
+        )
+        assert search(ShopAndHr(), text="customer", schema="public")[0] == (
+            "В схеме 'public' нет таблиц, поэтому поиск шёл по всем схемам:"
+        )
 
 
 class KnownTables(Database):

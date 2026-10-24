@@ -96,6 +96,16 @@ LIST_TABLES_SQL = (
 
 SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1\nLIMIT 50"
 
+# Whether a schema holds a table or view at all, readable or not. One that holds none was guessed,
+# "public" most often; one whose tables the role cannot read was not, and it is refused as before.
+SCHEMA_HOLDS_RELATIONS_SQL = """
+SELECT 1
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = CAST(:schema AS text) AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+LIMIT 1
+"""
+
 # A relation as the statement found it: to_regclass reads the name with its schema and quotes, or on
 # the search path of the session, as the statement did. Only one the role reads, as everywhere else:
 # PostgreSQL reports a missing column before it checks the privilege to read the table.
@@ -438,6 +448,8 @@ def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None 
             raise ToolError(t("stands.no_tables", schemas=", ".join(schemas)))
         if schema is None:
             raise ToolError(t("error.no_tables"))
+        if _guessed(db, schema):  # the question was what tables there are: those of every schema answer it
+            return [t("list.guessed_schema", schema=schema), *list_tables(db, None)]
         visible = ", ".join(row[0] for row in db.query(SCHEMAS_SQL)) or t("error.none")
         raise ToolError(t("error.no_tables_in_schema", schema=schema, visible=visible))
     lines = [_describe_relation(*row) for row in rows[:LIST_TABLES_LIMIT]]
@@ -467,8 +479,11 @@ def search_schema(
     if not rows:
         if schemas is None and params["schema"] is not None:
             visible = [row[0] for row in db.query(SCHEMAS_SQL)]
-            if params["schema"] not in visible:  # a guessed schema, "public" most often: name the real ones
-                raise ToolError(
+            if params["schema"] not in visible:
+                if _guessed(db, params["schema"]):  # "public" most often: the other schemas answer the question
+                    lead = t("search.guessed_schema", schema=params["schema"])
+                    return [lead, *search_schema(db, fragment, None, limit=limit)]
+                raise ToolError(  # tables the role cannot read, as in hr: name the schemas it can
                     t(
                         "error.no_tables_in_schema",
                         schema=params["schema"],
@@ -487,6 +502,11 @@ def search_schema(
     if len(rows) > limit:
         lines.append(t("search.more", limit=limit))
     return lines
+
+
+def _guessed(db: Database, schema: str) -> bool:
+    """A schema without a single table or view, readable or not: the model made it up."""
+    return not db.query(SCHEMA_HOLDS_RELATIONS_SQL, schema=schema)
 
 
 def describe_table(db: Database, table: Any, schema: Any) -> list[str]:

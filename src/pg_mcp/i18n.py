@@ -200,8 +200,10 @@ EN: dict[str, str] = {
         "explain_query takes a SELECT, WITH ... SELECT, VALUES or TABLE statement, without EXPLAIN."
     ),
     "list.more": "... more than {limit} entries; pass schema to narrow the list",
+    "list.guessed_schema": "Schema {schema!r} has no tables, so these are the readable tables of all schemas:",
     "search.nothing": "Nothing matches {text!r}. Try a shorter piece of the name, another spelling, or list_tables.",
     "search.more": "... more than {limit} matches; use a longer piece of text or pass schema",
+    "search.guessed_schema": "Schema {schema!r} has no tables, so the search went through all schemas:",
     "describe.columns": "columns:",
     "describe.constraints": "constraints:",
     "describe.referenced_by": "referenced by:",
@@ -662,10 +664,12 @@ RU: dict[str, str] = {
         "explain_query принимает команду SELECT, WITH ... SELECT, VALUES или TABLE без EXPLAIN."
     ),
     "list.more": "... записей больше {limit}; чтобы сузить список, передайте schema",
+    "list.guessed_schema": "В схеме {schema!r} нет таблиц, поэтому здесь доступные для чтения таблицы всех схем:",
     "search.nothing": (
         "Ничего не нашлось по {text!r}. Попробуйте фрагмент покороче, другое написание или list_tables."
     ),
     "search.more": "... совпадений больше {limit}; уточните фрагмент или передайте schema",
+    "search.guessed_schema": "В схеме {schema!r} нет таблиц, поэтому поиск шёл по всем схемам:",
     "describe.columns": "колонки:",
     "describe.constraints": "ограничения:",
     "describe.referenced_by": "на неё ссылаются:",

@@ -136,9 +136,10 @@ class TestStructure:
         # Before PostgreSQL 14 an empty table and a never analyzed one look the same.
         assert lines_of(tools["list_tables"], schema=ARCHIVE) == [f"{ARCHIVE}.orders | table | {never_analyzed(db)}"]
 
-    def test_unknown_schema_points_to_the_schemas_that_exist(self, tools: dict[str, Tool]) -> None:
-        with pytest.raises(ToolError, match=SCHEMA):
-            tools["list_tables"].call({"schema": "no_such_schema"})
+    def test_a_schema_without_tables_brings_the_tables_of_every_schema(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["list_tables"], schema="no_such_schema")
+        assert lines[0] == "Schema 'no_such_schema' has no tables, so these are the readable tables of all schemas:"
+        assert f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов" in lines
 
     def test_describe_table_shows_columns_keys_and_indexes(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["describe_table"], table=f"{SCHEMA}.orders")
@@ -195,9 +196,10 @@ class TestStructure:
 
 
 class TestSearch:
-    def test_a_schema_without_readable_tables_names_the_ones_with_them(self, tools: dict[str, Tool]) -> None:
-        with pytest.raises(ToolError, match=f"No readable tables in schema 'no_such_schema'.*{SCHEMA}"):
-            tools["search_schema"].call({"text": "order", "schema": "no_such_schema"})
+    def test_a_schema_without_tables_is_searched_as_every_schema(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["search_schema"], text="заказ", schema="no_such_schema")
+        assert lines[0] == "Schema 'no_such_schema' has no tables, so the search went through all schemas:"
+        assert f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов" in lines
 
     def test_finds_tables_by_name_or_comment_in_either_alphabet(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["search_schema"], text="заказ", schema=SCHEMA) == [
@@ -481,6 +483,19 @@ class TestRoleScript:
             f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}"
         ]
         assert lines_of(tools["search_schema"], text="orders")[0].startswith("Nothing matches 'orders'.")
+
+    @pytest.mark.usefixtures("db")  # the tables of SCHEMA, which the role cannot read
+    def test_a_schema_the_role_cannot_read_is_refused_and_one_without_tables_answered(self, agent: Database) -> None:
+        tools = by_name(build_tools(agent, str(ROOT)))
+        refusal = rf"No readable tables in schema '{SCHEMA}'\. Schemas with readable tables: {ROLE_SCHEMA}\."
+        with pytest.raises(ToolError, match=refusal):
+            tools["list_tables"].call({"schema": SCHEMA})
+        with pytest.raises(ToolError, match=refusal):
+            tools["search_schema"].call({"text": "order", "schema": SCHEMA})
+        assert lines_of(tools["list_tables"], schema="no_such_schema") == [
+            "Schema 'no_such_schema' has no tables, so these are the readable tables of all schemas:",
+            f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}",
+        ]
 
     def test_a_column_error_lists_only_the_tables_the_role_reads(
         self, agent: Database, admin: pg8000.native.Connection
