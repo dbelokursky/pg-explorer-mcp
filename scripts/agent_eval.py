@@ -111,7 +111,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "customers",
         {"ru": "Где хранятся покупатели?", "en": "Where are the customers stored?"},
-        tools=("search_schema", "describe_table"),
+        tools=("search_schema", "describe_table", "list_tables"),  # the list shows the table and its comment too
         answer=((r"shop\.customers",),),  # the table by name, not a plan to look for it
     ),
     Scenario(

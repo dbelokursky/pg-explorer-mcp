@@ -137,6 +137,12 @@ def test_a_good_run_passes(name: str, calls: list[Call], answer: str) -> None:
     assert judge(BY_NAME[name], calls, answer) == Verdict(True)
 
 
+def test_the_customers_may_be_found_in_the_list_of_tables() -> None:
+    """list_tables with a guessed schema answers with every schema's tables, comments included."""
+    listed = [Call("list_tables", {"schema": "public"}, "ok")]
+    assert judge(BY_NAME["customers"], listed, "Покупатели хранятся в таблице shop.customers.") == Verdict(True, ())
+
+
 def test_the_customers_have_to_be_named_not_promised() -> None:
     searched = [Call("search_schema", {"text": "customer", "schema": "public"}, "ok")]
     plan = "Let's check the shop schema for tables related to customers."
