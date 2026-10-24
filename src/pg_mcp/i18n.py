@@ -188,7 +188,13 @@ EN: dict[str, str] = {
     "error.out_of_range": "{name} must be from {low} to {high}, got {number}",
     "error.flag": "{name} must be true or false",
     "error.no_tables": "The current role cannot read any table in this database. Ask the DBA to grant SELECT.",
-    "error.no_tables_in_schema": "No readable tables in schema {schema!r}. Schemas with readable tables: {visible}.",
+    "error.no_tables_in_schema": (
+        "The current role cannot read any table in schema {schema!r}. Schemas with readable tables: {visible}."
+    ),
+    "error.system_schema": (
+        "Schema {schema!r} is a system one: list_tables and search_schema leave system schemas out. "
+        "Schemas with readable tables: {visible}."
+    ),
     "error.ambiguous": "{name!r} exists in several schemas: {options}. Pass schema to pick one.",
     "error.not_found": "No readable table or view named {name!r}{where}. Call list_tables to see what exists.",
     "error.not_found_similar": "No readable table or view named {name!r}{where}. Similar names: {similar}.",
@@ -646,7 +652,12 @@ RU: dict[str, str] = {
     "error.flag": "Параметр {name} должен быть true или false",
     "error.no_tables": "Текущая роль не может читать ни одну таблицу в этой базе. Попросите DBA выдать права SELECT.",
     "error.no_tables_in_schema": (
-        "В схеме {schema!r} нет таблиц, доступных для чтения. Схемы с такими таблицами: {visible}."
+        "Текущая роль не может читать ни одну таблицу в схеме {schema!r}. "
+        "Схемы с таблицами, доступными для чтения: {visible}."
+    ),
+    "error.system_schema": (
+        "Схема {schema!r} системная: list_tables и search_schema системные схемы не показывают. "
+        "Схемы с таблицами, доступными для чтения: {visible}."
     ),
     "error.ambiguous": "{name!r} есть в нескольких схемах: {options}. Чтобы выбрать одну, передайте schema.",
     "error.not_found": (

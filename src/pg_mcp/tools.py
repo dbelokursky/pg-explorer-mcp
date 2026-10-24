@@ -439,6 +439,7 @@ def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None 
     """Readable tables, or with schemas (on a stand) the tables of those schemas."""
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema"))
+    schema = schema.strip().strip('"') if schema else None
     if schemas is None:
         rows = db.query(LIST_TABLES_SQL, schema=schema, limit=LIST_TABLES_LIMIT + 1)
     else:
@@ -450,8 +451,7 @@ def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None 
             raise ToolError(t("error.no_tables"))
         if _guessed(db, schema):  # the question was what tables there are: those of every schema answer it
             return [t("list.guessed_schema", schema=schema), *list_tables(db, None)]
-        visible = ", ".join(row[0] for row in db.query(SCHEMAS_SQL)) or t("error.none")
-        raise ToolError(t("error.no_tables_in_schema", schema=schema, visible=visible))
+        raise ToolError(_closed_schema(db, schema))
     lines = [_describe_relation(*row) for row in rows[:LIST_TABLES_LIMIT]]
     if len(rows) > LIST_TABLES_LIMIT:
         lines.append(t("list.more", limit=LIST_TABLES_LIMIT))
@@ -483,13 +483,7 @@ def search_schema(
                 if _guessed(db, params["schema"]):  # "public" most often: the other schemas answer the question
                     lead = t("search.guessed_schema", schema=params["schema"])
                     return [lead, *search_schema(db, fragment, None, limit=limit)]
-                raise ToolError(  # tables the role cannot read, as in hr: name the schemas it can
-                    t(
-                        "error.no_tables_in_schema",
-                        schema=params["schema"],
-                        visible=", ".join(visible) or t("error.none"),
-                    )
-                )
+                raise ToolError(_closed_schema(db, params["schema"], visible))
         return [t("search.nothing", text=fragment)]
     lines = []
     for row in rows[:limit]:
@@ -504,9 +498,24 @@ def search_schema(
     return lines
 
 
+def _system(schema: str) -> bool:
+    """A schema the tools leave out, as _READABLE_RELATIONS does."""
+    return schema == "information_schema" or schema.startswith("pg_")
+
+
 def _guessed(db: Database, schema: str) -> bool:
     """A schema without a single table or view, readable or not: the model made it up."""
-    return not db.query(SCHEMA_HOLDS_RELATIONS_SQL, schema=schema)
+    return not _system(schema) and not db.query(SCHEMA_HOLDS_RELATIONS_SQL, schema=schema)
+
+
+def _closed_schema(db: Database, schema: str, visible: Sequence[str] | None = None) -> str:
+    """Why a schema that holds tables shows none: the tools leave system schemas out, or the role reads none.
+
+    Said plainly, so that a model answers "no access to hr" rather than "hr has no tables".
+    """
+    names = [row[0] for row in db.query(SCHEMAS_SQL)] if visible is None else visible
+    key = "error.system_schema" if _system(schema) else "error.no_tables_in_schema"
+    return t(key, schema=schema, visible=", ".join(names) or t("error.none"))
 
 
 def describe_table(db: Database, table: Any, schema: Any) -> list[str]:
@@ -643,17 +652,26 @@ def _relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> 
 def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:
     """The pg_class row of the one readable relation the arguments name, or a ToolError with a hint."""
     name, schema = split_name(table, schema)
-    matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
-    if not matches and name != name.lower():
-        # Unquoted identifiers are folded to lower case, so "Orders" usually means orders.
-        name = name.lower()
-        matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
+    name, matches = _relations_by_name(db, name, schema)
+    if not matches and schema is not None and _guessed(db, schema):
+        # "public" most often: the name alone finds the table, or the schema it carries, as in shop.orders
+        name, schema = split_name(table, None)
+        name, matches = _relations_by_name(db, name, schema)
     if not matches:
         raise ToolError(_not_found(db, name, schema))
     if len(matches) > 1:
         options = ", ".join(f"{row[1]}.{row[2]}" for row in matches)
         raise ToolError(t("error.ambiguous", name=name, options=options))
     return tuple(matches[0])
+
+
+def _relations_by_name(db: Database, name: str, schema: str | None) -> tuple[str, list[Sequence[Any]]]:
+    matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
+    if not matches and name != name.lower():
+        # Unquoted identifiers are folded to lower case, so "Orders" usually means orders.
+        name = name.lower()
+        matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
+    return name, matches
 
 
 def split_name(table: Any, schema: Any) -> tuple[str, str | None]:

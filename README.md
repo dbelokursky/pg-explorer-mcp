@@ -342,7 +342,7 @@ DELETE is not allowed. Only read-only statements are: SELECT, WITH ... SELECT, V
 No readable table or view named 'salaries' in schema 'hr'. Call list_tables to see what exists.
 ```
 
-The last line is about the `hr` schema, which the role has no rights to: for the agent it does not exist.
+The last line is about the `hr` schema, which the role has no rights to: the tools show none of its tables.
 
 ### Limits
 

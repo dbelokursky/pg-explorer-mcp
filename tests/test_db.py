@@ -141,6 +141,17 @@ class TestStructure:
         assert lines[0] == "Schema 'no_such_schema' has no tables, so these are the readable tables of all schemas:"
         assert f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов" in lines
 
+    def test_a_schema_without_tables_does_not_hide_the_table_a_name_means(self, tools: dict[str, Tool]) -> None:
+        first = f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов"
+        assert lines_of(tools["describe_table"], table=f"{SCHEMA}.orders", schema="no_such_schema")[0] == first
+        assert lines_of(tools["sample_rows"], table=f"{SCHEMA}.customers", schema="public")[0] == f"{SCHEMA}.customers:"
+        with pytest.raises(ToolError, match=f"orders.*{SCHEMA}.orders, {ARCHIVE}.orders"):  # two tables of that name
+            tools["describe_table"].call({"table": "orders", "schema": "no_such_schema"})
+
+    def test_a_system_schema_is_left_out_and_not_called_closed(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match="Schema 'pg_catalog' is a system one"):
+            tools["list_tables"].call({"schema": "pg_catalog"})
+
     def test_describe_table_shows_columns_keys_and_indexes(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["describe_table"], table=f"{SCHEMA}.orders")
         assert lines[0] == f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов"
@@ -487,7 +498,7 @@ class TestRoleScript:
     @pytest.mark.usefixtures("db")  # the tables of SCHEMA, which the role cannot read
     def test_a_schema_the_role_cannot_read_is_refused_and_one_without_tables_answered(self, agent: Database) -> None:
         tools = by_name(build_tools(agent, str(ROOT)))
-        refusal = rf"No readable tables in schema '{SCHEMA}'\. Schemas with readable tables: {ROLE_SCHEMA}\."
+        refusal = rf"cannot read any table in schema '{SCHEMA}'\. Schemas with readable tables: {ROLE_SCHEMA}\."
         with pytest.raises(ToolError, match=refusal):
             tools["list_tables"].call({"schema": SCHEMA})
         with pytest.raises(ToolError, match=refusal):
@@ -496,6 +507,11 @@ class TestRoleScript:
             "Schema 'no_such_schema' has no tables, so these are the readable tables of all schemas:",
             f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}",
         ]
+        assert lines_of(tools["describe_table"], table="items", schema="no_such_schema")[0].startswith(
+            f"{ROLE_SCHEMA}.items | table"
+        )
+        with pytest.raises(ToolError, match=f"No readable table or view named 'orders' in schema '{SCHEMA}'"):
+            tools["describe_table"].call({"table": "orders", "schema": SCHEMA})
 
     def test_a_column_error_lists_only_the_tables_the_role_reads(
         self, agent: Database, admin: pg8000.native.Connection

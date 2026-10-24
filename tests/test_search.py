@@ -204,11 +204,20 @@ class ShopAndHr(Database):
             return [self.CUSTOMERS]
         if sql == tools.SEARCH_SQL and "%customer%" in params["patterns"]:
             return [(*self.CUSTOMERS, None, None, None, None)]
+        if sql == tools.FIND_RELATION_SQL and params["name"] == "customers":
+            return [(1, *self.CUSTOMERS)]
+        if sql == tools.COLUMNS_SQL:
+            return [("id", "integer", True, None, None)]
         return []
 
 
 def listing(db: Database, **arguments: object) -> list[str]:
     tool = {tool.name: tool for tool in build_tools(db, str(ROOT))}["list_tables"]
+    return tool.call(arguments).splitlines()
+
+
+def described(db: Database, **arguments: object) -> list[str]:
+    tool = {tool.name: tool for tool in build_tools(db, str(ROOT))}["describe_table"]
     return tool.call(arguments).splitlines()
 
 
@@ -228,13 +237,31 @@ class TestGuessedSchema:
         ]
         assert search(ShopAndHr(), text="zzz", schema="public")[1].startswith("Nothing matches 'zzz'.")
 
+    def test_describe_table_finds_the_table_the_name_means(self) -> None:
+        for arguments in ({"table": "customers", "schema": "public"}, {"table": "shop.customers", "schema": "public"}):
+            assert described(ShopAndHr(), **arguments)[:3] == [
+                "shop.customers | table | ~50 rows | Покупатели",
+                "columns:",
+                "  id integer NOT NULL",
+            ]
+
     def test_a_schema_whose_tables_the_role_cannot_read_is_refused(self) -> None:
         """hr: the answer is that the role reads nothing there, not the tables of shop."""
-        message = r"No readable tables in schema 'hr'\. Schemas with readable tables: shop\."
+        message = r"The current role cannot read any table in schema 'hr'\. Schemas with readable tables: shop\."
         with pytest.raises(ToolError, match=message):
             listing(ShopAndHr(), schema="hr")
         with pytest.raises(ToolError, match=message):
             search(ShopAndHr(), text="salary", schema="hr")
+        with pytest.raises(ToolError, match=r"No readable table or view named 'customers' in schema 'hr'\."):
+            described(ShopAndHr(), table="customers", schema="hr")
+
+    def test_a_system_schema_is_left_out_and_not_called_closed(self) -> None:
+        for schema in ("pg_catalog", "information_schema"):
+            with pytest.raises(ToolError, match=rf"Schema '{schema}' is a system one: list_tables and search_schema"):
+                listing(ShopAndHr(), schema=schema)
+
+    def test_the_schema_of_list_tables_is_read_as_the_other_tools_read_it(self) -> None:
+        assert listing(ShopAndHr(), schema=' "shop" ') == ["shop.customers | table | ~50 rows | Покупатели"]
 
     def test_a_readable_schema_without_matches_has_nothing_to_show(self) -> None:
         assert search(ShopAndHr(), text="zzz", schema="shop") == [
