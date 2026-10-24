@@ -207,7 +207,32 @@ def build_stand_tools(
         ),
     ]
     offered = [tool for tool in tools if tool.name in names]
-    return [replace(tool, handler=_fresh(pool, tool.handler), budget=budget, query_log=query_log) for tool in offered]
+    return [
+        replace(
+            tool,
+            handler=_fresh(pool, tool.handler),
+            budget=budget,
+            query_log=query_log,
+            missing_hint=lambda args, missing: _schema_left_out(pool, args, missing),
+        )
+        for tool in offered
+    ]
+
+
+def _schema_left_out(pool: Pool, args: Arguments, missing: Sequence[str]) -> str | None:
+    """A schema left out on a stand: the registry's answer, which names the schemas of that stand.
+
+    A model sends schema: "" and, told only that the argument is missing, spends a call on list_schemas.
+    """
+    argument = "stand" if args.get("stand") else "stand_a"
+    stand = args.get(argument)
+    if list(missing) != ["schema"] or not isinstance(stand, str) or not stand.strip():
+        return None
+    try:
+        pool.registry.target(pool.registry.stand(stand, argument), args.get("schema"))
+    except StandError as exc:
+        return str(exc)
+    return None
 
 
 def _fresh(pool: Pool, handler: Callable[[dict[str, Any]], Answer]) -> Callable[[dict[str, Any]], Answer]:

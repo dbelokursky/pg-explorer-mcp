@@ -557,13 +557,33 @@ class TestOfflineTools:
         assert ("stand" in second, second["role"]) == (False, None)  # not the previous call's login
 
 
+@pytest.mark.parametrize("tool", ["run_select", "explain_query"])
+def test_a_left_out_schema_is_answered_with_the_schemas_of_the_stand(pool: Pool, tool: str) -> None:
+    """A model sends schema: ""; the answer names what to pass, not only that something is missing."""
+    tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+    with pytest.raises(ToolError) as caught:
+        tools[tool].call({"stand": "dev1", "schema": "", "query": "SELECT 1"})
+    assert str(caught.value) == (
+        "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
+        "Its schemas: billing, shipping."
+    )
+    with pytest.raises(ToolError, match=r"^No stand 'dev11' in the registry\. Similar: dev1, dev2\.$"):
+        tools[tool].call({"stand": "dev11", "query": "SELECT 1"})
+    with pytest.raises(ToolError, match=r"^Missing argument\(s\): schema\.$"):  # no stand whose schemas to name
+        tools["run_select"].call({"stands": "dev*", "query": "SELECT 1"})
+
+
 class TestCompareSchema:
     """compare_schema without a database: the arguments, failures that name the stand, and the catalog reading."""
 
     @pytest.mark.parametrize(
         ("arguments", "message"),
         [
-            ({"stand_a": "dev1", "stand_b": "dev2"}, "Missing argument(s): schema."),
+            (
+                {"stand_a": "dev1", "stand_b": "dev2"},
+                "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
+                "Its schemas: billing, shipping.",
+            ),
             ({"stand_a": " ", "stand_b": "dev2", "schema": "billing"}, "Pass stand_a, one of: dev1–dev2, ift1."),
             (
                 {"stand_a": "dev1", "stand_b": "dev11", "schema": "billing"},
