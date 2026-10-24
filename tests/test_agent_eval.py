@@ -350,7 +350,7 @@ class TestStands:
             (
                 "find_order",
                 [Call("run_select", {"stands": "dev*", "query": "SELECT ..."}, "ok")],
-                "Order 501 is on dev12.",
+                "Order 9001 is on dev12.",
             ),
             (
                 "stand_counts",
@@ -422,7 +422,7 @@ def test_the_copy_for_dev12_is_made_with_the_readme_changes_and_dropped_without_
     try:
         copy = demo.connect(settings, "pg_mcp_eval_it_dev12")
         try:
-            assert copy.run("SELECT status FROM shop.orders WHERE id = 501") == [["new"]]
+            assert copy.run("SELECT status FROM shop.orders WHERE id = 9001") == [["new"]]
             assert copy.run(
                 "SELECT to_regclass('shop.returns') IS NOT NULL, to_regclass('shop.orders_customer_idx')"
             ) == [[True, None]]

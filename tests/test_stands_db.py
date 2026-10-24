@@ -286,6 +286,13 @@ class TestCompareSchema:
 
 
 class TestData:
+    def test_an_answer_without_rows_names_the_other_stands_with_the_schema(self, tools: dict[str, Tool]) -> None:
+        query = "SELECT * FROM invoices WHERE id = 99"
+        assert lines_of(tools["run_select"], stand="dev1", schema=BILLING, query=query)[-2:] == [
+            "(0 rows)",
+            f"Schema {BILLING} is on dev2, dev4, dev9 as well; pass stands to ask up to 10 stands in one call.",
+        ]
+
     def test_names_resolve_in_the_schema_of_the_login(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["run_select"], stand="dev1", schema=BILLING, query="SELECT count(*) FROM invoices")
         assert lines[:3] == [f"dev1 / shop / {BILLING}", "count", "2"]
@@ -377,6 +384,21 @@ class TestManyStands:
             f"{BILLING}.invoices",
             f"dev4 / shop / {BILLING}",
             f"{BILLING}.invoices",
+        ]
+
+    def test_a_list_in_stand_asks_those_stands(self, tools: dict[str, Tool]) -> None:
+        arguments = {"schema": BILLING, "query": "SELECT count(*) FROM invoices"}
+        lines = lines_of(tools["run_select"], stand="dev1,dev4", **arguments)
+        assert lines == lines_of(tools["run_select"], stands="dev1,dev4", **arguments)
+        assert lines == [
+            f"dev1 / shop / {BILLING}",
+            "count",
+            "2",
+            "(1 row)",
+            f"dev4 / shop / {BILLING}",
+            "count",
+            "3",
+            "(1 row)",
         ]
 
     def test_an_unreachable_stand_does_not_hide_the_others(self, tools: dict[str, Tool]) -> None:

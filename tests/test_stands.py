@@ -557,6 +557,31 @@ class TestOfflineTools:
         assert ("stand" in second, second["role"]) == (False, None)  # not the previous call's login
 
 
+def test_the_stand_argument_names_the_stands_of_the_registry(registry: Registry, tmp_path: Path) -> None:
+    """A model that knows the stands looks on each, not only on the one an example names."""
+    tools = by_name(build_stand_tools(Pool(registry, {}), str(ROOT), profile="analyst"))
+    assert tools["run_select"].describe()["inputSchema"]["properties"]["stand"]["description"] == (
+        "One of the stands: dev1–dev2, ift1."
+    )
+    names = [f"box{letter}" for letter in "abcdefghijklmnopqrst"]  # no numbers to fold into a range
+    many = loaded(STANDS_ON, [write(tmp_path / "many.conf", "".join(f"[{name}.db.s]\nhost=h\n\n" for name in names))])
+    listing = by_name(build_stand_tools(Pool(many, {}), str(ROOT)))["list_tables"]
+    assert listing.describe()["inputSchema"]["properties"]["stand"]["description"] == (
+        f"One of the stands: {', '.join(names[:12])} and more, 20 in all: status lists them."
+    )
+
+
+def test_an_answer_without_rows_names_the_other_stands_that_have_the_schema(registry: Registry) -> None:
+    pool = Pool(registry, {})
+    empty, found = ["id", "(0 rows)"], ["id", "1", "(1 row)"]
+    billing = registry.target("dev2", "billing")
+    assert stand_tools._elsewhere(pool, billing, empty) == [
+        "Schema billing is on dev1, ift1 as well; pass stands to ask up to 10 stands in one call."
+    ]
+    assert stand_tools._elsewhere(pool, billing, found) == []
+    assert stand_tools._elsewhere(pool, registry.target("dev1", "shipping"), empty) == []  # on dev1 only
+
+
 @pytest.mark.parametrize("tool", ["run_select", "explain_query"])
 def test_a_left_out_schema_is_answered_with_the_schemas_of_the_stand(pool: Pool, tool: str) -> None:
     """A model sends schema: ""; the answer names what to pass, not only that something is missing."""
@@ -972,6 +997,45 @@ class TestManyStands:
         with pytest.raises(ToolError, match="DELETE is not allowed"):
             tools["run_select"].call(arguments)
         assert (pool.open_count(), pool.outcomes) == (0, {})
+
+    @pytest.mark.parametrize(
+        ("tool", "arguments"),
+        [("run_select", {"schema": "billing", "query": "SELECT 1"}), ("search_schema", {"text": "order"})],
+    )
+    def test_an_unknown_stand_says_how_to_look_on_every_stand(
+        self, tools: dict[str, Tool], tool: str, arguments: dict[str, str]
+    ) -> None:
+        """Told only that there is no stand 'pg', a model asked the user which stand to take."""
+        with pytest.raises(ToolError) as caught:
+            tools[tool].call({"stand": "pg", **arguments})
+        assert str(caught.value) == (
+            "No stand 'pg' in the registry. Stands: dev1–dev2, ift1. "
+            'To look on every stand, call again with stands: "*" in place of stand.'
+        )
+        with pytest.raises(ToolError, match=r"^No stand 'pg' in the registry\. Stands: dev1–dev2, ift1\.$"):
+            tools["list_tables"].call({"stand": "pg"})  # it takes one stand only
+
+    def test_more_stands_than_one_call_asks_are_named_as_a_list_or_a_pattern(self, tmp_path: Path) -> None:
+        names = [f"dev{number}" for number in range(1, 13)]
+        many = loaded(
+            STANDS_ON, [write(tmp_path / "many.conf", "".join(f"[{name}.db.s]\nhost=h\n\n" for name in names))]
+        )
+        tools = by_name(build_stand_tools(Pool(many, {}), str(ROOT), profile="analyst"))
+        with pytest.raises(
+            ToolError, match=r"pass stands in place of stand: a list or a pattern, at most 10 stands\.$"
+        ):
+            tools["run_select"].call({"stand": "pg", "schema": "s", "query": "SELECT 1"})
+
+    @pytest.mark.parametrize("one", ["dev*", "dev2,dev1"])
+    def test_a_pattern_or_a_list_in_stand_goes_as_stands(self, tools: dict[str, Tool], one: str) -> None:
+        """Asked which stand has something, a model sends stand: "*"; no stand is named so."""
+        for name, arguments in (
+            ("run_select", {"schema": "billing", "database": "orders", "query": "SELECT 1"}),
+            ("search_schema", {"text": "order"}),
+        ):
+            assert tools[name].call({"stand": one, **arguments}) == tools[name].call({"stands": one, **arguments})
+        with pytest.raises(ToolError, match=r"^No stand '\*' in the registry\. Stands: dev1–dev2, ift1\.$"):
+            tools["list_tables"].call({"stand": "*"})  # one stand or none: no stands to take it as
 
     def test_search_without_schema_goes_database_by_database_on_each_stand(
         self, pool: Pool, tools: dict[str, Tool]

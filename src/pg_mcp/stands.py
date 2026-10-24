@@ -396,8 +396,18 @@ class Pool:
         return -(-milliseconds // 1000)
 
 
+def names_several(text: str) -> bool:
+    """Whether a stand argument is a pattern or a list ("*", "dev7,dev12"): no stand is named so."""
+    return any(char in text for char in (*_WILDCARDS, ","))
+
+
 def summarize(stands: Sequence[str]) -> str:
     """Stand names with numbered runs folded into ranges, so fifty dev stands take one entry."""
+    return ", ".join(stand_ranges(stands)) or t("error.none")
+
+
+def stand_ranges(stands: Sequence[str]) -> list[str]:
+    """The entries of summarize: a name, or a numbered run as one range."""
     groups: dict[str, list[int]] = {}
     others: list[str] = []
     for name in stands:
@@ -417,7 +427,7 @@ def summarize(stands: Sequence[str]) -> str:
             parts.append(f"{prefix}{start}" if start == previous else f"{prefix}{start}{_RANGE}{prefix}{previous}")
             if number is not None:
                 start = previous = number
-    return ", ".join([*parts, *others]) or t("error.none")
+    return [*parts, *others]
 
 
 def _target(name: str, options: dict[str, str], source: str, warnings: list[str]) -> Target | None:
