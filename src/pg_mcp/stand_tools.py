@@ -513,10 +513,24 @@ def _many_stands(pool: Pool, args: Arguments) -> list[str] | None:
             raise StandError(t("stands.no_stand_or_stands", stands=summarize(pool.registry.stands())))
         if isinstance(one, str) and names_several(one):
             return pool.registry.matching(one)
+        _known_stand(pool, one)
         return None
     if one not in (None, ""):
         raise StandError(t("stands.one_or_many"))
     return pool.registry.matching(many)
+
+
+def _known_stand(pool: Pool, stand: Any) -> None:
+    """A stand of the registry, or its error with the way to look on several stands at once.
+
+    Told only that there is no stand 'pg' (the server's name), a model asked the user which stand to take.
+    """
+    try:
+        pool.registry.stand(stand)
+    except StandError as exc:
+        every = len(pool.registry.stands()) <= MAX_STANDS_PER_CALL
+        hint = t("stands.ask_every") if every else t("stands.ask_several", limit=MAX_STANDS_PER_CALL)
+        raise StandError(f"{exc} {hint}") from exc
 
 
 def _share(limit: int, stands: int) -> int:

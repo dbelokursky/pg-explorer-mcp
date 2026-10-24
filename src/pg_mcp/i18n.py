@@ -372,6 +372,11 @@ EN: dict[str, str] = {
     ),
     "stands.more_names": "{names} and more, {count} in all: list_schemas shows them",
     "stands.more_stands": "{names} and more, {count} in all: status lists them",
+    "stands.ask_every": 'To look on every stand, call again with stands: "*" in place of stand.',
+    "stands.ask_several": (
+        "To look on several stands in one call, pass stands in place of stand: a list or a pattern, "
+        "at most {limit} stands."
+    ),
     "stands.elsewhere": "Schema {schema} is on {stands} as well; pass stands to ask up to {limit} stands in one call.",
     "stands.unknown_schema_similar": (
         "Stand {stand} has no schema {schema!r} that the server has a login for. Similar: {similar}."
@@ -851,6 +856,11 @@ RU: dict[str, str] = {
     ),
     "stands.more_names": "{names} и другие, всего {count}: list_schemas покажет все",
     "stands.more_stands": "{names} и другие, всего {count}: status покажет все",
+    "stands.ask_every": 'Чтобы посмотреть на всех стендах, вызовите ещё раз со stands: "*" вместо stand.',
+    "stands.ask_several": (
+        "Чтобы посмотреть на нескольких стендах одним вызовом, передайте stands вместо stand: список или шаблон, "
+        "не больше {limit} стендов."
+    ),
     "stands.elsewhere": (
         "Схема {schema} есть и на {stands}; передайте stands, чтобы спросить до {limit} стендов одним вызовом."
     ),

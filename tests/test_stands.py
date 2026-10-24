@@ -998,6 +998,34 @@ class TestManyStands:
             tools["run_select"].call(arguments)
         assert (pool.open_count(), pool.outcomes) == (0, {})
 
+    @pytest.mark.parametrize(
+        ("tool", "arguments"),
+        [("run_select", {"schema": "billing", "query": "SELECT 1"}), ("search_schema", {"text": "order"})],
+    )
+    def test_an_unknown_stand_says_how_to_look_on_every_stand(
+        self, tools: dict[str, Tool], tool: str, arguments: dict[str, str]
+    ) -> None:
+        """Told only that there is no stand 'pg', a model asked the user which stand to take."""
+        with pytest.raises(ToolError) as caught:
+            tools[tool].call({"stand": "pg", **arguments})
+        assert str(caught.value) == (
+            "No stand 'pg' in the registry. Stands: dev1–dev2, ift1. "
+            'To look on every stand, call again with stands: "*" in place of stand.'
+        )
+        with pytest.raises(ToolError, match=r"^No stand 'pg' in the registry\. Stands: dev1–dev2, ift1\.$"):
+            tools["list_tables"].call({"stand": "pg"})  # it takes one stand only
+
+    def test_more_stands_than_one_call_asks_are_named_as_a_list_or_a_pattern(self, tmp_path: Path) -> None:
+        names = [f"dev{number}" for number in range(1, 13)]
+        many = loaded(
+            STANDS_ON, [write(tmp_path / "many.conf", "".join(f"[{name}.db.s]\nhost=h\n\n" for name in names))]
+        )
+        tools = by_name(build_stand_tools(Pool(many, {}), str(ROOT), profile="analyst"))
+        with pytest.raises(
+            ToolError, match=r"pass stands in place of stand: a list or a pattern, at most 10 stands\.$"
+        ):
+            tools["run_select"].call({"stand": "pg", "schema": "s", "query": "SELECT 1"})
+
     @pytest.mark.parametrize("one", ["dev*", "dev2,dev1"])
     def test_a_pattern_or_a_list_in_stand_goes_as_stands(self, tools: dict[str, Tool], one: str) -> None:
         """Asked which stand has something, a model sends stand: "*"; no stand is named so."""
