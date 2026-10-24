@@ -153,7 +153,7 @@ COPY_CHANGES = (
     "CREATE TABLE shop.returns (order_id integer PRIMARY KEY REFERENCES shop.orders (id), reason text NOT NULL)",
     "COMMENT ON TABLE shop.returns IS 'Возвраты'",
     "DROP INDEX shop.orders_customer_idx",
-    "INSERT INTO shop.orders (id, customer_id, status, created_at) VALUES (501, 1, 'new', '2026-03-01 00:00:00+00')",
+    "INSERT INTO shop.orders (id, customer_id, status, created_at) VALUES (9001, 1, 'new', '2026-03-01 00:00:00+00')",
     "ANALYZE shop.orders",
 )
 ORDERS_ON_COPY = {**ORDERS_BY_STATUS, "new": ORDERS_BY_STATUS["new"] + 1}
@@ -178,7 +178,7 @@ STAND_SCENARIOS: tuple[Scenario, ...] = (
     ),
     Scenario(
         "find_order",
-        {"ru": "На каком стенде есть заказ 501?", "en": "Which stand has order 501?"},  # noqa: RUF001 (Russian)
+        {"ru": "На каком стенде есть заказ 9001?", "en": "Which stand has order 9001?"},  # noqa: RUF001 (Russian)
         tools=("run_select",),
         answer=(("dev12",),),
         stands=True,
