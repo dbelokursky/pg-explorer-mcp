@@ -223,6 +223,8 @@ class Tool:
     required: tuple[str, ...] = ()
     budget: int = DEFAULT_BUDGET
     query_log: QueryLog | None = None
+    # A better answer than "Missing argument(s)" for the arguments and what is missing, or None.
+    missing_hint: Callable[[dict[str, Any], list[str]], str | None] | None = None
 
     def describe(self) -> dict[str, Any]:
         schema: dict[str, Any] = {"type": "object", "properties": self.properties, "additionalProperties": False}
@@ -278,7 +280,8 @@ class Tool:
         }
         missing = [name for name in self.required if arguments.get(name) in (None, "")]
         if missing:
-            raise ToolError(t("error.missing_arguments", missing=", ".join(missing)))
+            hint = self.missing_hint(arguments, missing) if self.missing_hint else None
+            raise ToolError(hint or t("error.missing_arguments", missing=", ".join(missing)))
         answer = self.handler(arguments)
         return answer.splitlines() if isinstance(answer, str) else answer
 
