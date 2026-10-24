@@ -4,6 +4,7 @@
 
 [![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
 [![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
+[![downloads](https://img.shields.io/github/downloads/dbelokursky/pg-mcp/total)](https://github.com/dbelokursky/pg-mcp/releases)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 An MCP server that gives an agent **read-only** access to a PostgreSQL database, or through one entry to
