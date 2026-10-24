@@ -998,6 +998,17 @@ class TestManyStands:
             tools["run_select"].call(arguments)
         assert (pool.open_count(), pool.outcomes) == (0, {})
 
+    @pytest.mark.parametrize("one", ["dev*", "dev2,dev1"])
+    def test_a_pattern_or_a_list_in_stand_goes_as_stands(self, tools: dict[str, Tool], one: str) -> None:
+        """Asked which stand has something, a model sends stand: "*"; no stand is named so."""
+        for name, arguments in (
+            ("run_select", {"schema": "billing", "database": "orders", "query": "SELECT 1"}),
+            ("search_schema", {"text": "order"}),
+        ):
+            assert tools[name].call({"stand": one, **arguments}) == tools[name].call({"stands": one, **arguments})
+        with pytest.raises(ToolError, match=r"^No stand '\*' in the registry\. Stands: dev1–dev2, ift1\.$"):
+            tools["list_tables"].call({"stand": "*"})  # one stand or none: no stands to take it as
+
     def test_search_without_schema_goes_database_by_database_on_each_stand(
         self, pool: Pool, tools: dict[str, Tool]
     ) -> None:

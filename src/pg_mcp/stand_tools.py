@@ -25,7 +25,7 @@ from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, plural, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
-from .stands import MAX_STANDS_PER_CALL, Pool, Registry, StandError, Target, stand_ranges, summarize
+from .stands import MAX_STANDS_PER_CALL, Pool, Registry, StandError, Target, names_several, stand_ranges, summarize
 from .tools import (
     DEFAULT_NAME,
     DEFAULT_PROFILE,
@@ -502,11 +502,17 @@ def _elsewhere(pool: Pool, target: Target, lines: Sequence[str]) -> list[str]:
 
 
 def _many_stands(pool: Pool, args: Arguments) -> list[str] | None:
-    """The stands of a call over several of them (stands), or None when stand names one."""
+    """The stands of a call over several of them (stands), or None when stand names one.
+
+    A model asked which stand has something sends stand: "*" for every stand; no stand is named so,
+    and a pattern or a list in stand goes as stands.
+    """
     one, many = args.get("stand"), args.get("stands")
     if many in (None, ""):
         if one in (None, ""):
             raise StandError(t("stands.no_stand_or_stands", stands=summarize(pool.registry.stands())))
+        if isinstance(one, str) and names_several(one):
+            return pool.registry.matching(one)
         return None
     if one not in (None, ""):
         raise StandError(t("stands.one_or_many"))

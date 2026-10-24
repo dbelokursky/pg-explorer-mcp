@@ -386,6 +386,21 @@ class TestManyStands:
             f"{BILLING}.invoices",
         ]
 
+    def test_a_list_in_stand_asks_those_stands(self, tools: dict[str, Tool]) -> None:
+        arguments = {"schema": BILLING, "query": "SELECT count(*) FROM invoices"}
+        lines = lines_of(tools["run_select"], stand="dev1,dev4", **arguments)
+        assert lines == lines_of(tools["run_select"], stands="dev1,dev4", **arguments)
+        assert lines == [
+            f"dev1 / shop / {BILLING}",
+            "count",
+            "2",
+            "(1 row)",
+            f"dev4 / shop / {BILLING}",
+            "count",
+            "3",
+            "(1 row)",
+        ]
+
     def test_an_unreachable_stand_does_not_hide_the_others(self, tools: dict[str, Tool]) -> None:
         found = names_of(lines_of(tools["search_schema"], stands="dev9,dev4", text="invoice", schema=BILLING))
         assert found[:3] == [f"dev4 / shop / {BILLING}", f"{BILLING}.invoices", f"dev9 / shop / {BILLING}"]

@@ -396,6 +396,11 @@ class Pool:
         return -(-milliseconds // 1000)
 
 
+def names_several(text: str) -> bool:
+    """Whether a stand argument is a pattern or a list ("*", "dev7,dev12"): no stand is named so."""
+    return any(char in text for char in (*_WILDCARDS, ","))
+
+
 def summarize(stands: Sequence[str]) -> str:
     """Stand names with numbered runs folded into ranges, so fifty dev stands take one entry."""
     return ", ".join(stand_ranges(stands)) or t("error.none")
