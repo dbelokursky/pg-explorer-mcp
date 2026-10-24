@@ -327,7 +327,7 @@ EN: dict[str, str] = {
     "tool.list_schemas.description": (
         "Databases of a stand and the schemas with logins; call it first on a new stand."
     ),
-    "argument.stand": 'Stand, e.g. "dev7".',
+    "argument.stand": "One of the stands: {stands}.",
     "argument.stands": 'Instead of stand: "dev*" or "dev1,dev2", at most {limit}.',
     "argument.stand_status": "Stand to check; omit for the list.",
     "argument.database": "Only when the schema is in several databases.",
@@ -371,6 +371,8 @@ EN: dict[str, str] = {
         "Stand {stand} has no schema {schema!r} that the server has a login for. Its schemas: {schemas}."
     ),
     "stands.more_names": "{names} and more, {count} in all: list_schemas shows them",
+    "stands.more_stands": "{names} and more, {count} in all: status lists them",
+    "stands.elsewhere": "Schema {schema} is on {stands} as well; pass stands to ask up to {limit} stands in one call.",
     "stands.unknown_schema_similar": (
         "Stand {stand} has no schema {schema!r} that the server has a login for. Similar: {similar}."
     ),
@@ -798,7 +800,7 @@ RU: dict[str, str] = {
     "stands.status_note": "Со stand ещё и проверяет этот стенд.",
     "tool.list_schemas.title": "Список схем",
     "tool.list_schemas.description": "Базы стенда и схемы с учётками; вызывайте первым на новом стенде.",
-    "argument.stand": 'Стенд, например "dev7".',
+    "argument.stand": "Один из стендов: {stands}.",
     "argument.stands": 'Вместо stand: "dev*" или "dev1,dev2", не больше {limit}.',
     "argument.stand_status": "Стенд для проверки; без него — список.",
     "argument.database": "Только если схема есть в нескольких базах.",
@@ -848,6 +850,10 @@ RU: dict[str, str] = {
         "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Его схемы: {schemas}."
     ),
     "stands.more_names": "{names} и другие, всего {count}: list_schemas покажет все",
+    "stands.more_stands": "{names} и другие, всего {count}: status покажет все",
+    "stands.elsewhere": (
+        "Схема {schema} есть и на {stands}; передайте stands, чтобы спросить до {limit} стендов одним вызовом."
+    ),
     "stands.unknown_schema_similar": (
         "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Похожие: {similar}."
     ),

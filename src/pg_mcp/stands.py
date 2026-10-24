@@ -398,6 +398,11 @@ class Pool:
 
 def summarize(stands: Sequence[str]) -> str:
     """Stand names with numbered runs folded into ranges, so fifty dev stands take one entry."""
+    return ", ".join(stand_ranges(stands)) or t("error.none")
+
+
+def stand_ranges(stands: Sequence[str]) -> list[str]:
+    """The entries of summarize: a name, or a numbered run as one range."""
     groups: dict[str, list[int]] = {}
     others: list[str] = []
     for name in stands:
@@ -417,7 +422,7 @@ def summarize(stands: Sequence[str]) -> str:
             parts.append(f"{prefix}{start}" if start == previous else f"{prefix}{start}{_RANGE}{prefix}{previous}")
             if number is not None:
                 start = previous = number
-    return ", ".join([*parts, *others]) or t("error.none")
+    return [*parts, *others]
 
 
 def _target(name: str, options: dict[str, str], source: str, warnings: list[str]) -> Target | None:

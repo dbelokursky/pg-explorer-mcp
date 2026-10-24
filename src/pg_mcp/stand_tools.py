@@ -22,10 +22,10 @@ from . import __version__
 from .budget import DEFAULT_BUDGET
 from .compare import Structure, compare_schema, comparison, read_structure
 from .db import Database, DatabaseUnavailableError, QueryFailedError
-from .i18n import current, t
+from .i18n import current, plural, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
-from .stands import MAX_STANDS_PER_CALL, Pool, Registry, StandError, Target, summarize
+from .stands import MAX_STANDS_PER_CALL, Pool, Registry, StandError, Target, stand_ranges, summarize
 from .tools import (
     DEFAULT_NAME,
     DEFAULT_PROFILE,
@@ -58,6 +58,7 @@ DETAILED_COMPARE_STANDS = 3  # against more stands than this, compare_schema giv
 ROWS_PER_STAND_MIN = 10
 CATALOG_ATTEMPTS = 2  # logins tried per database for the catalog before giving up on it
 MAX_REGISTRY_WARNINGS = 10  # more would crowd status; the rest are counted
+STANDS_DESCRIBED = 12  # entries of the stand list in a tool's description; status names every stand
 
 
 def _stand_names(names: Sequence[str]) -> tuple[str, ...]:
@@ -89,7 +90,7 @@ def build_stand_tools(
     names = STAND_PROFILES[profile]
     analyze = profile == "analyst"
     query_log = query_log or QueryLog(None)
-    stand = {"type": "string", "description": t("argument.stand")}
+    stand = {"type": "string", "description": t("argument.stand", stands=_stands_named(pool.registry))}
     stands = {"type": "string", "description": t("argument.stands", limit=MAX_STANDS_PER_CALL)}
     database = {"type": "string", "description": t("argument.database")}
     data_schema = {"type": "string", "description": t("argument.schema_data")}
@@ -233,6 +234,17 @@ def _schema_left_out(pool: Pool, args: Arguments, missing: Sequence[str]) -> str
     except StandError as exc:
         return str(exc)
     return None
+
+
+def _stands_named(registry: Registry) -> str:
+    """The stands for the stand argument, so that a model knows them before its first call.
+
+    They are the registry's at start; status and the errors name the stands as they are now.
+    """
+    entries = stand_ranges(registry.stands())
+    if len(entries) <= STANDS_DESCRIBED:
+        return ", ".join(entries) or t("error.none")
+    return t("stands.more_stands", names=", ".join(entries[:STANDS_DESCRIBED]), count=len(registry.stands()))
 
 
 def _fresh(pool: Pool, handler: Callable[[dict[str, Any]], Answer]) -> Callable[[dict[str, Any]], Answer]:
@@ -458,10 +470,8 @@ def stand_run(pool: Pool, args: Arguments) -> list[str]:
     stands = _many_stands(pool, args)
     if stands is None:
         target = _required_target(pool, args)
-        return [
-            target.label,
-            *run_select(pool.database(target), args.get("query"), schemas=_database_schemas(pool, target)),
-        ]
+        lines = run_select(pool.database(target), args.get("query"), schemas=_database_schemas(pool, target))
+        return [target.label, *lines, *_elsewhere(pool, target, lines)]
     query = args.get("query")
     check_read_only(query)  # a statement the policy refuses is refused once, before any stand is asked
     _schema_on_some(pool, stands, args)
@@ -471,6 +481,24 @@ def stand_run(pool: Pool, args: Arguments) -> list[str]:
         return run_select(pool.database(target), query, limit, _database_schemas(pool, target))
 
     return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+
+
+def _elsewhere(pool: Pool, target: Target, lines: Sequence[str]) -> list[str]:
+    """For an answer without rows, the other stands with the schema: what one stand lacks, another may hold.
+
+    Asked which stand has an order, a model looked on one stand, found nothing, and named stands that do not exist.
+    """
+    if lines[-1:] != [plural("rows.count", 0)]:
+        return []
+    registry = pool.registry
+    others = [
+        stand
+        for stand in registry.stands()
+        if stand != target.stand and any(other.schema == target.schema for other in registry.of_stand(stand))
+    ]
+    if not others:
+        return []
+    return [t("stands.elsewhere", schema=target.schema, stands=summarize(others), limit=MAX_STANDS_PER_CALL)]
 
 
 def _many_stands(pool: Pool, args: Arguments) -> list[str] | None:
