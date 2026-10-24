@@ -274,7 +274,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-mcp 0.6.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+pg-mcp 0.7.0 on Python 3.9.6, installed at /Users/me/pg-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
