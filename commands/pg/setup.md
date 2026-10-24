@@ -1,5 +1,5 @@
 ---
-description: Install or repair the pg-mcp server and check the database connection
+description: Install or repair pg-mcp when its tools are missing or status reports the database unavailable; to check the connection, call the status tool instead
 ---
 Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-mcp extension.
 
