@@ -361,8 +361,10 @@ EN: dict[str, str] = {
         "Narrow the pattern or name up to {limit} stands separated by commas."
     ),
     "stands.out_of_time": (
-        "{stands}: not tried, the call would exceed its {budget} seconds; ask for them in another call."
+        "{stands}: no answer within the {budget} seconds of the call; ask about them in another call."
     ),
+    "stands.no_rows": "no rows on {stands}",
+    "stands.no_matches": "nothing matches on {stands}",
     "stands.no_schema_argument": (
         "Pass schema: on stand {stand} the server reads data with the login of the schema you name. "
         "Its schemas: {schemas}."
@@ -844,9 +846,9 @@ RU: dict[str, str] = {
         "{patterns!r} — это {count} стендов ({stands}), а один вызов охватывает не больше {limit}. "
         "Сузьте шаблон или перечислите через запятую не больше {limit} стендов."
     ),
-    "stands.out_of_time": (
-        "{stands}: не проверялись, вызов не уложился бы в {budget} секунд; спросите о них отдельным вызовом."
-    ),
+    "stands.out_of_time": "{stands}: не ответили за {budget} секунд вызова; спросите о них отдельным вызовом.",
+    "stands.no_rows": "нет строк на {stands}",
+    "stands.no_matches": "ничего не нашлось на {stands}",
     "stands.no_schema_argument": (
         "Передайте schema: на стенде {stand} сервер читает данные под учёткой схемы, которую вы назовёте. "
         "Его схемы: {schemas}."

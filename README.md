@@ -358,7 +358,7 @@ The last line is about the `hr` schema, which the role has no rights to: the too
 | A whole tool answer | 8000 characters (`PG_MCP_MAX_RESPONSE_CHARS`) |
 | One query | 5 seconds (`PG_MCP_STATEMENT_TIMEOUT_MS`) |
 | Open connections of an entry for stands | at most 8 (`PG_MCP_MAX_CONNECTIONS`) |
-| Stands in one call (`stands`) | at most 10; the rows of `run_select` and the matches of `search_schema` are shared among them, at least 10 per stand |
+| Stands in one call (`stands`) | at most 100, asked at the same time; the rows of `run_select` and the matches of `search_schema` are shared among them, at least 10 per stand |
 
 A longer answer is cut at whole lines, and its last line says how much is shown. Local models run with
 small context windows, and an answer that is too long can end the agent's session.
@@ -537,14 +537,15 @@ schemas of the registry are shown. The data stays behind each schema's own privi
 cannot read a neighbouring schema gets `permission denied` there.
 
 **4. Several stands at once.** `search_schema` and `run_select` take `stands` instead of `stand`: stand
-names separated by commas or a pattern, `dev1,dev2,dev3` or `dev*`, at most 10 stands in one call. The
-stands are asked one after another, in the order `status` lists them, and the answer has a section per
-stand under its `stand / database / schema` line. A stand that is unreachable, has no login for the
-schema or rejects the query gets one line saying so under its header, and the other stands still answer.
-The 200 rows of `run_select` and the 100 matches of `search_schema` are shared among the stands, at least
-10 per stand, so the whole answer fits the budget. The call keeps to 25 of the client's 30 seconds: when
-the stands asked so far have used most of it, the rest are named as not tried, and the agent asks for
-them in another call.
+names separated by commas or a pattern, `dev1,dev2,dev3` or `dev*`, at most 100 stands in one call. The
+stands are asked all at the same time, so the call takes as long as the slowest stand, not the sum, and
+the answer lists them in the order `status` does, a section per stand under its `stand / database /
+schema` line. A stand that is unreachable, has no login for the schema or rejects the query gets one line
+saying so under its header, and the other stands still answer. Stands that answered with no rows, or no
+matches, are folded into one line naming them, so the stand that has what was asked for stands out. The
+200 rows of `run_select` and the 100 matches of `search_schema` are shared among the stands, at least 10
+per stand, so the whole answer fits the budget. The call keeps to 25 of the client's 30 seconds: a stand
+that has not answered by then is named as such, and the agent asks about it in another call.
 
 `run_select` with `stands: dev*`, `schema: shop` and `SELECT count(*) FROM orders WHERE id = 123`:
 

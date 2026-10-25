@@ -36,7 +36,7 @@ REFUSED = "refused"  # the read-only check turned the SQL down
 ERROR = "error"  # bad arguments, or PostgreSQL rejected the statement
 UNAVAILABLE = "unavailable"  # the database could not be reached
 FAILED = "failed"  # a bug in the server; its stderr log has the traceback
-SKIPPED = "skipped"  # a stand that a call over several stands had no time left for (stand_tools.py)
+SKIPPED = "skipped"  # a stand that had not answered when a call over several stands was out of time (stand_tools.py)
 
 # One write per line, always at the end of the file: several servers can share it, and
 # opening it anew for every line lets logrotate move it away without a restart. A symlink in

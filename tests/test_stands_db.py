@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pg8000.native
 import pytest
 
+from pg_mcp import sqlguard
 from pg_mcp.db import Settings
 from pg_mcp.querylog import QueryLog
 from pg_mcp.stand_tools import build_stand_tools
@@ -290,7 +292,7 @@ class TestData:
         query = "SELECT * FROM invoices WHERE id = 99"
         assert lines_of(tools["run_select"], stand="dev1", schema=BILLING, query=query)[-2:] == [
             "(0 rows)",
-            f"Schema {BILLING} is on dev2, dev4, dev9 as well; pass stands to ask up to 10 stands in one call.",
+            f"Schema {BILLING} is on dev2, dev4, dev9 as well; pass stands to ask up to 100 stands in one call.",
         ]
 
     def test_names_resolve_in_the_schema_of_the_login(self, tools: dict[str, Tool]) -> None:
@@ -385,6 +387,53 @@ class TestManyStands:
             f"dev4 / shop / {BILLING}",
             f"{BILLING}.invoices",
         ]
+
+    def test_stands_without_rows_are_folded_into_one_line(self, tools: dict[str, Tool]) -> None:
+        """Asked which stand has a row, the model reads the stand that has it and one line naming the rest."""
+        arguments = {"stands": "dev1,dev4", "schema": BILLING}
+        assert lines_of(tools["run_select"], query="SELECT id FROM invoices WHERE id = 3", **arguments) == [
+            f"dev4 / shop / {BILLING}",
+            "id",
+            "3",
+            "(1 row)",
+            "no rows on dev1",
+        ]
+        assert lines_of(tools["run_select"], query="SELECT id FROM invoices WHERE id = 99", **arguments) == [
+            "no rows on dev1, dev4"
+        ]
+        assert lines_of(tools["search_schema"], text="zzz", **arguments) == ["nothing matches on dev1, dev4"]
+        assert lines_of(tools["search_schema"], text="invoice", **arguments)[0] == f"dev1 / shop / {BILLING}"
+        assert lines_of(tools["run_select"], stands="dev1", schema=BILLING, query="SELECT 1 WHERE false")[-1] == (
+            "(0 rows)"  # one stand keeps its header: there is nothing to fold it into
+        )
+
+    def test_twenty_stands_are_asked_at_once(self, pool: Pool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Twenty stands that each take a second answer in about a second, not twenty."""
+        monkeypatch.delitem(sqlguard.FORBIDDEN_FUNCTIONS, "pg_sleep")  # here it stands in for a slow stand
+        settings = Settings.from_env(os.environ)
+        live = f"host={settings.host}\nport={settings.port}\ndbname={settings.database}\n"
+        stands_file = tmp_path / "many.conf"
+        stands_file.write_text("".join(f"[dev{n}.shop.{BILLING}]\n{live}\n" for n in range(1, 21)), encoding="utf-8")
+        registry = load_registry({"PG_MCP_STANDS": "*"}, [stands_file])
+        assert registry is not None
+        passfile = tmp_path / "pgpass"
+        passfile.write_text(f"*:*:*:{BILLING}:{PASSWORDS[BILLING]}\n", encoding="utf-8")
+        passfile.chmod(0o600)
+        many = Pool(registry, dict(os.environ, PGPASSFILE=str(passfile)), limit=2)
+        try:
+            tools = by_name(build_stand_tools(many, str(ROOT), profile="analyst"))
+            started = time.monotonic()
+            lines = lines_of(tools["run_select"], stands="dev*", schema=BILLING, query="SELECT pg_sleep(1), 1")
+            elapsed = time.monotonic() - started
+            assert elapsed < 8, elapsed  # twenty seconds one after another; here all twenty wait together
+            assert [line for line in lines if line.startswith("dev")] == [
+                f"dev{n} / shop / {BILLING}" for n in range(1, 21)
+            ]
+            assert set(many.outcomes.values()) == {"ok"}
+            assert many.open_count() == 2  # the twenty connections of the call, trimmed to the limit after it
+        finally:
+            many.close()
+        assert pool.open_count() <= pool.limit
 
     def test_a_list_in_stand_asks_those_stands(self, tools: dict[str, Tool]) -> None:
         arguments = {"schema": BILLING, "query": "SELECT count(*) FROM invoices"}
