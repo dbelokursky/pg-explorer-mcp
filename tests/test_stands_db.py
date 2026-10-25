@@ -234,14 +234,14 @@ class TestCompareSchema:
         assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b="ift1", schema=ORDERS) == [
             f"dev1 / shop / {ORDERS}  vs  ift1 / shop / {ORDERS}",
             "only on dev1:",
-            "  invoices | table",
+            f"  {ORDERS}.invoices | table",
             "only on ift1:",
-            "  shipments | table",
+            f"  {ORDERS}.shipments | table",
             "differ:",
-            "  orders.invoice_id: dev1 integer NOT NULL | ift1 integer",
-            "  orders.note only on ift1: text DEFAULT ''::text",
-            "  orders: constraint orders_invoice_id_check only on ift1: CHECK (invoice_id > 0)",
-            f"  orders: index orders_invoice_idx only on ift1: {index}",
+            f"  {ORDERS}.orders.invoice_id: dev1 integer NOT NULL | ift1 integer",
+            f"  {ORDERS}.orders.note only on ift1: text DEFAULT ''::text",
+            f"  {ORDERS}.orders: constraint orders_invoice_id_check only on ift1: CHECK (invoice_id > 0)",
+            f"  {ORDERS}.orders: index orders_invoice_idx only on ift1: {index}",
         ]
 
     def test_many_stands_against_a_reference(self, tools: dict[str, Tool]) -> None:
@@ -257,7 +257,7 @@ class TestCompareSchema:
         lines = lines_of(tools["compare_schema"], stand_a="dev1", stands="ift1", schema=ORDERS)
         assert lines[0] == f"dev1 / shop / {ORDERS}  vs  1 stands:"
         assert lines[1] == f"ift1 / shop / {ORDERS}"
-        assert "  orders.invoice_id: dev1 integer NOT NULL | ift1 integer" in lines
+        assert f"  {ORDERS}.orders.invoice_id: dev1 integer NOT NULL | ift1 integer" in lines
         assert lines[-1] == "same as dev1: 0; different: 1; not checked: 0"
 
     @pytest.mark.parametrize("stand_b", ["dev2", "dev4"])  # the same database, and the other one with other rows
@@ -286,6 +286,13 @@ class TestCompareSchema:
 
 
 class TestData:
+    def test_an_answer_without_rows_names_the_other_stands_with_the_schema(self, tools: dict[str, Tool]) -> None:
+        query = "SELECT * FROM invoices WHERE id = 99"
+        assert lines_of(tools["run_select"], stand="dev1", schema=BILLING, query=query)[-2:] == [
+            "(0 rows)",
+            f"Schema {BILLING} is on dev2, dev4, dev9 as well; pass stands to ask up to 10 stands in one call.",
+        ]
+
     def test_names_resolve_in_the_schema_of_the_login(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["run_select"], stand="dev1", schema=BILLING, query="SELECT count(*) FROM invoices")
         assert lines[:3] == [f"dev1 / shop / {BILLING}", "count", "2"]
@@ -299,6 +306,12 @@ class TestData:
     def test_a_login_reads_only_its_own_schema(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match=f"permission denied for schema {ORDERS}"):
             tools["run_select"].call({"stand": "dev1", "schema": BILLING, "query": f"SELECT * FROM {ORDERS}.orders"})
+
+    def test_a_guessed_column_and_a_guessed_schema_get_the_names_there_are(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=f"42703.* {ORDERS}\\.orders: id, invoice_id\\."):
+            tools["run_select"].call({"stand": "dev1", "schema": ORDERS, "query": "SELECT order_id FROM orders"})
+        with pytest.raises(ToolError, match=f"no schema 'public' .* Its schemas: {BILLING}, {ORDERS}\\."):
+            tools["run_select"].call({"stand": "dev1", "schema": "public", "query": "SELECT 1"})
 
     def test_a_table_of_another_schema_is_pointed_to(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match=f"42P01.* in schema {ORDERS}: call again with that schema"):
@@ -371,6 +384,21 @@ class TestManyStands:
             f"{BILLING}.invoices",
             f"dev4 / shop / {BILLING}",
             f"{BILLING}.invoices",
+        ]
+
+    def test_a_list_in_stand_asks_those_stands(self, tools: dict[str, Tool]) -> None:
+        arguments = {"schema": BILLING, "query": "SELECT count(*) FROM invoices"}
+        lines = lines_of(tools["run_select"], stand="dev1,dev4", **arguments)
+        assert lines == lines_of(tools["run_select"], stands="dev1,dev4", **arguments)
+        assert lines == [
+            f"dev1 / shop / {BILLING}",
+            "count",
+            "2",
+            "(1 row)",
+            f"dev4 / shop / {BILLING}",
+            "count",
+            "3",
+            "(1 row)",
         ]
 
     def test_an_unreachable_stand_does_not_hide_the_others(self, tools: dict[str, Tool]) -> None:

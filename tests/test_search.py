@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from pg_mcp import tools
-from pg_mcp.db import Database, QueryFailedError
-from pg_mcp.tools import PROFILES, SEARCH_LIMIT, Tool, ToolError, build_tools, missing_table_hint
+from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError
+from pg_mcp.tools import PROFILES, SEARCH_LIMIT, Tool, ToolError, build_tools, missing_table_hint, query_hint
 from tests.helpers import ROOT
 
 TABLE = ("sales", "orders", "r", 1200, "Заказы клиентов", None, None, None, None)
@@ -49,8 +49,7 @@ def test_tables_and_columns_come_back_one_per_line() -> None:
 
 def test_the_query_gets_the_spellings_the_schema_and_one_row_more_than_the_limit() -> None:
     db = CannedDatabase([])
-    with pytest.raises(ToolError, match="No readable tables in schema 'sales'"):  # nor any readable schema here
-        search(db, text=" Заказ ", schema='"sales"')
+    search(db, text=" Заказ ", schema='"sales"')
     assert db.params[0] == {"patterns": ["%Заказ%", "%заказ%", "%ЗАКАЗ%"], "schema": "sales", "limit": SEARCH_LIMIT + 1}
 
 
@@ -186,23 +185,158 @@ class TestMissingTableHint:
         assert hint.endswith("Таблица с таким именем доступна как shop.orders: укажите имя вместе со схемой.")
 
 
-class SchemasOnly(Database):
-    """Finds nothing, and knows which schemas hold readable tables."""
+class ShopAndHr(Database):
+    """shop has a readable table, hr only tables the role cannot read, and public none at all."""
 
-    def __init__(self, schemas: list[str]) -> None:
+    CUSTOMERS = ("shop", "customers", "r", 50, "Покупатели")
+
+    def __init__(self) -> None:
         super().__init__({"PGPORT": "not-a-number"})
-        self.schemas = schemas
 
-    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:  # noqa: ARG002
-        return [(name,) for name in self.schemas] if sql == tools.SCHEMAS_SQL else []
+    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
+        if sql == tools.SCHEMAS_SQL:
+            return [("shop",)]
+        if sql == tools.SCHEMA_HOLDS_RELATIONS_SQL:
+            return [(1,)] if params["schema"] in ("shop", "hr") else []
+        if params.get("schema") not in (None, "shop"):
+            return []
+        if sql == tools.LIST_TABLES_SQL:
+            return [self.CUSTOMERS]
+        if sql == tools.SEARCH_SQL and "%customer%" in params["patterns"]:
+            return [(*self.CUSTOMERS, None, None, None, None)]
+        if sql == tools.FIND_RELATION_SQL and params["name"] == "customers":
+            return [(1, *self.CUSTOMERS)]
+        if sql == tools.COLUMNS_SQL:
+            return [("id", "integer", True, None, None)]
+        return []
 
 
-def test_a_schema_without_readable_tables_names_the_ones_with_them() -> None:
-    """The model guesses "public"; one answer that names shop saves it a call to list_tables."""
-    with pytest.raises(
-        ToolError, match=r"No readable tables in schema 'public'\. Schemas with readable tables: shop\."
-    ):
-        search(SchemasOnly(["shop"]), text="customer", schema="public")
-    assert search(SchemasOnly(["shop"]), text="zzz", schema="shop") == [
-        "Nothing matches 'zzz'. Try a shorter piece of the name, another spelling, or list_tables."
-    ]
+def listing(db: Database, **arguments: object) -> list[str]:
+    tool = {tool.name: tool for tool in build_tools(db, str(ROOT))}["list_tables"]
+    return tool.call(arguments).splitlines()
+
+
+def described(db: Database, **arguments: object) -> list[str]:
+    tool = {tool.name: tool for tool in build_tools(db, str(ROOT))}["describe_table"]
+    return tool.call(arguments).splitlines()
+
+
+class TestGuessedSchema:
+    """The model guesses "public"; when not a single table is there, the tables of every schema answer it."""
+
+    def test_list_tables_shows_the_tables_of_every_schema(self) -> None:
+        assert listing(ShopAndHr(), schema="public") == [
+            "Schema 'public' has no tables, so these are the readable tables of all schemas:",
+            "shop.customers | table | ~50 rows | Покупатели",
+        ]
+
+    def test_search_schema_searches_every_schema(self) -> None:
+        assert search(ShopAndHr(), text="customer", schema="public") == [
+            "Schema 'public' has no tables, so the search went through all schemas:",
+            "shop.customers | table | ~50 rows | Покупатели",
+        ]
+        assert search(ShopAndHr(), text="zzz", schema="public")[1].startswith("Nothing matches 'zzz'.")
+
+    def test_describe_table_finds_the_table_the_name_means(self) -> None:
+        for arguments in ({"table": "customers", "schema": "public"}, {"table": "shop.customers", "schema": "public"}):
+            assert described(ShopAndHr(), **arguments)[:3] == [
+                "shop.customers | table | ~50 rows | Покупатели",
+                "columns:",
+                "  id integer NOT NULL",
+            ]
+
+    def test_a_schema_whose_tables_the_role_cannot_read_is_refused(self) -> None:
+        """hr: the answer is that the role reads nothing there, not the tables of shop."""
+        message = r"The current role cannot read any table in schema 'hr'\. Schemas with readable tables: shop\."
+        with pytest.raises(ToolError, match=message):
+            listing(ShopAndHr(), schema="hr")
+        with pytest.raises(ToolError, match=message):
+            search(ShopAndHr(), text="salary", schema="hr")
+        with pytest.raises(ToolError, match=r"No readable table or view named 'customers' in schema 'hr'\."):
+            described(ShopAndHr(), table="customers", schema="hr")
+
+    def test_a_system_schema_is_left_out_and_not_called_closed(self) -> None:
+        for schema in ("pg_catalog", "information_schema"):
+            with pytest.raises(ToolError, match=rf"Schema '{schema}' is a system one: list_tables and search_schema"):
+                listing(ShopAndHr(), schema=schema)
+
+    def test_the_schema_of_list_tables_is_read_as_the_other_tools_read_it(self) -> None:
+        assert listing(ShopAndHr(), schema=' "shop" ') == ["shop.customers | table | ~50 rows | Покупатели"]
+
+    def test_a_readable_schema_without_matches_has_nothing_to_show(self) -> None:
+        assert search(ShopAndHr(), text="zzz", schema="shop") == [
+            "Nothing matches 'zzz'. Try a shorter piece of the name, another spelling, or list_tables."
+        ]
+
+    @pytest.mark.usefixtures("russian")
+    def test_the_first_line_speaks_russian(self) -> None:
+        assert listing(ShopAndHr(), schema="public")[0] == (
+            "В схеме 'public' нет таблиц, поэтому здесь доступные для чтения таблицы всех схем:"
+        )
+        assert search(ShopAndHr(), text="customer", schema="public")[0] == (
+            "В схеме 'public' нет таблиц, поэтому поиск шёл по всем схемам:"
+        )
+
+
+class KnownTables(Database):
+    """Finds a relation by name as to_regclass would, and gives its columns; a name it cannot read fails."""
+
+    def __init__(self, tables: dict[str, tuple[str, list[str]]], *, down: bool = False) -> None:
+        super().__init__({"PGPORT": "not-a-number"})
+        self.tables = tables  # the name as the statement writes it: (schema.relation, columns)
+        self.down = down
+
+    def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
+        if self.down:
+            raise DatabaseUnavailableError("the connection is gone")
+        if sql == tools.RELATION_BY_NAME_SQL:
+            if params["name"].isdigit():
+                raise QueryFailedError("invalid name syntax", code="42602")
+            found = self.tables.get(params["name"])
+            return [(params["name"], *found[0].split("."))] if found else []
+        return [(column,) for column in self.tables[params["oid"]][1]]
+
+
+def no_column(column: str = "order_id") -> QueryFailedError:
+    message = f'column "{column}" does not exist'
+    return QueryFailedError(f"PostgreSQL: {message} (SQLSTATE 42703)", code="42703", server_message=message)
+
+
+ORDERS = ("shop.orders", ["id", "customer_id", "status", "created_at"])
+ITEMS = ("shop.order_items", ["order_id", "product_id", "quantity", "price"])
+
+
+class TestMissingColumnHint:
+    def test_the_columns_of_the_table_the_query_reads_follow_the_error(self) -> None:
+        db = KnownTables({"shop.orders": ORDERS})
+        assert query_hint(db, no_column(), "SELECT * FROM shop.orders WHERE order_id = 501", None) == (
+            'PostgreSQL: column "order_id" does not exist (SQLSTATE 42703) Columns of the tables the query reads: '
+            "shop.orders: id, customer_id, status, created_at."
+        )
+
+    def test_every_table_of_a_join_and_only_tables(self) -> None:
+        db = KnownTables({"orders": ORDERS, "shop.order_items": ITEMS})
+        query = "SELECT substring(o.note FROM 2) FROM orders o JOIN shop . order_items i ON i.order_no = o.id"
+        hint = query_hint(db, no_column("i.order_no"), query, None)
+        assert hint.endswith(
+            "shop.orders: id, customer_id, status, created_at; shop.order_items: order_id, product_id, quantity, price."
+        )
+
+    def test_a_wide_table_is_cut(self) -> None:
+        db = KnownTables({"wide": ("shop.wide", [f"c{number}" for number in range(50)])})
+        assert query_hint(db, no_column(), "SELECT x FROM wide", None).endswith(", c38, c39, ….")
+
+    @pytest.mark.parametrize(
+        ("db", "query"),
+        [
+            (KnownTables({}), "SELECT order_id FROM nowhere"),  # nothing the catalog knows
+            (KnownTables({"orders": ORDERS}), "SELECT order_id"),  # no table at all
+            (KnownTables({"orders": ORDERS}, down=True), "SELECT order_id FROM orders"),  # the connection went
+        ],
+    )
+    def test_otherwise_the_error_stays_as_it_was(self, db: KnownTables, query: str) -> None:
+        assert query_hint(db, no_column(), query, None) == str(no_column())
+
+    def test_other_errors_pass_through(self) -> None:
+        error = QueryFailedError("PostgreSQL: division by zero (SQLSTATE 22012)", code="22012")
+        assert query_hint(KnownTables({"orders": ORDERS}), error, "SELECT 1/0 FROM orders", None) == str(error)

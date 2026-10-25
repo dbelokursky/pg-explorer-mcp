@@ -154,6 +154,10 @@ EN: dict[str, str] = {
     "argument.analyze": "Run the query for real timings.",
     "status.version": "pg-mcp {version} on Python {python}, installed at {path}",
     "status.name": "server name: {name}",
+    "status.read_only": (
+        "access: read only. Nothing can be inserted, changed or deleted through this server: decline such "
+        "requests instead of asking the user to confirm them."
+    ),
     "status.target": "target: {target}",
     "status.profile": "profile: {profile} ({tools})",
     "status.language": "language: {language}",
@@ -184,19 +188,28 @@ EN: dict[str, str] = {
     "error.out_of_range": "{name} must be from {low} to {high}, got {number}",
     "error.flag": "{name} must be true or false",
     "error.no_tables": "The current role cannot read any table in this database. Ask the DBA to grant SELECT.",
-    "error.no_tables_in_schema": "No readable tables in schema {schema!r}. Schemas with readable tables: {visible}.",
+    "error.no_tables_in_schema": (
+        "The current role cannot read any table in schema {schema!r}. Schemas with readable tables: {visible}."
+    ),
+    "error.system_schema": (
+        "Schema {schema!r} is a system one: list_tables and search_schema leave system schemas out. "
+        "Schemas with readable tables: {visible}."
+    ),
     "error.ambiguous": "{name!r} exists in several schemas: {options}. Pass schema to pick one.",
     "error.not_found": "No readable table or view named {name!r}{where}. Call list_tables to see what exists.",
     "error.not_found_similar": "No readable table or view named {name!r}{where}. Similar names: {similar}.",
     "error.table_elsewhere": "{error} A table of that name is readable as {tables}: write the name with its schema.",
+    "error.columns_of": "{error} Columns of the tables the query reads: {tables}.",
     "error.in_schema": " in schema {schema!r}",
     "error.no_column": "No column {name!r} in {relation}. Columns: {columns}.",
     "error.explain_row_sources": (
         "explain_query takes a SELECT, WITH ... SELECT, VALUES or TABLE statement, without EXPLAIN."
     ),
     "list.more": "... more than {limit} entries; pass schema to narrow the list",
+    "list.guessed_schema": "Schema {schema!r} has no tables, so these are the readable tables of all schemas:",
     "search.nothing": "Nothing matches {text!r}. Try a shorter piece of the name, another spelling, or list_tables.",
     "search.more": "... more than {limit} matches; use a longer piece of text or pass schema",
+    "search.guessed_schema": "Schema {schema!r} has no tables, so the search went through all schemas:",
     "describe.columns": "columns:",
     "describe.constraints": "constraints:",
     "describe.referenced_by": "referenced by:",
@@ -314,7 +327,7 @@ EN: dict[str, str] = {
     "tool.list_schemas.description": (
         "Databases of a stand and the schemas with logins; call it first on a new stand."
     ),
-    "argument.stand": 'Stand, e.g. "dev7".',
+    "argument.stand": "One of the stands: {stands}.",
     "argument.stands": 'Instead of stand: "dev*" or "dev1,dev2", at most {limit}.',
     "argument.stand_status": "Stand to check; omit for the list.",
     "argument.database": "Only when the schema is in several databases.",
@@ -352,11 +365,19 @@ EN: dict[str, str] = {
     ),
     "stands.no_schema_argument": (
         "Pass schema: on stand {stand} the server reads data with the login of the schema you name. "
-        "list_schemas shows them."
+        "Its schemas: {schemas}."
     ),
     "stands.unknown_schema": (
-        "Stand {stand} has no schema {schema!r} that the server has a login for. Call list_schemas to see them."
+        "Stand {stand} has no schema {schema!r} that the server has a login for. Its schemas: {schemas}."
     ),
+    "stands.more_names": "{names} and more, {count} in all: list_schemas shows them",
+    "stands.more_stands": "{names} and more, {count} in all: status lists them",
+    "stands.ask_every": 'To look on every stand, call again with stands: "*" in place of stand.',
+    "stands.ask_several": (
+        "To look on several stands in one call, pass stands in place of stand: a list or a pattern, "
+        "at most {limit} stands."
+    ),
+    "stands.elsewhere": "Schema {schema} is on {stands} as well; pass stands to ask up to {limit} stands in one call.",
     "stands.unknown_schema_similar": (
         "Stand {stand} has no schema {schema!r} that the server has a login for. Similar: {similar}."
     ),
@@ -602,6 +623,10 @@ RU: dict[str, str] = {
     "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время.",
     "status.version": "pg-mcp {version} на Python {python}, установлен в {path}",
     "status.name": "имя сервера: {name}",
+    "status.read_only": (
+        "доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких "
+        "просьб отказывайтесь, а не просите пользователя их подтвердить."
+    ),
     "status.target": "адрес: {target}",
     "status.profile": "профиль: {profile} ({tools})",
     "status.language": "язык: {language}",
@@ -634,7 +659,12 @@ RU: dict[str, str] = {
     "error.flag": "Параметр {name} должен быть true или false",
     "error.no_tables": "Текущая роль не может читать ни одну таблицу в этой базе. Попросите DBA выдать права SELECT.",
     "error.no_tables_in_schema": (
-        "В схеме {schema!r} нет таблиц, доступных для чтения. Схемы с такими таблицами: {visible}."
+        "Текущая роль не может читать ни одну таблицу в схеме {schema!r}. "
+        "Схемы с таблицами, доступными для чтения: {visible}."
+    ),
+    "error.system_schema": (
+        "Схема {schema!r} системная: list_tables и search_schema системные схемы не показывают. "
+        "Схемы с таблицами, доступными для чтения: {visible}."
     ),
     "error.ambiguous": "{name!r} есть в нескольких схемах: {options}. Чтобы выбрать одну, передайте schema.",
     "error.not_found": (
@@ -645,16 +675,19 @@ RU: dict[str, str] = {
         "Среди доступных для чтения нет таблицы или представления {name!r}{where}. Похожие имена: {similar}."
     ),
     "error.table_elsewhere": "{error} Таблица с таким именем доступна как {tables}: укажите имя вместе со схемой.",
+    "error.columns_of": "{error} Колонки таблиц запроса: {tables}.",
     "error.in_schema": " в схеме {schema!r}",
     "error.no_column": "В {relation} нет колонки {name!r}. Колонки: {columns}.",
     "error.explain_row_sources": (
         "explain_query принимает команду SELECT, WITH ... SELECT, VALUES или TABLE без EXPLAIN."
     ),
     "list.more": "... записей больше {limit}; чтобы сузить список, передайте schema",
+    "list.guessed_schema": "В схеме {schema!r} нет таблиц, поэтому здесь доступные для чтения таблицы всех схем:",
     "search.nothing": (
         "Ничего не нашлось по {text!r}. Попробуйте фрагмент покороче, другое написание или list_tables."
     ),
     "search.more": "... совпадений больше {limit}; уточните фрагмент или передайте schema",
+    "search.guessed_schema": "В схеме {schema!r} нет таблиц, поэтому поиск шёл по всем схемам:",
     "describe.columns": "колонки:",
     "describe.constraints": "ограничения:",
     "describe.referenced_by": "на неё ссылаются:",
@@ -772,7 +805,7 @@ RU: dict[str, str] = {
     "stands.status_note": "Со stand ещё и проверяет этот стенд.",
     "tool.list_schemas.title": "Список схем",
     "tool.list_schemas.description": "Базы стенда и схемы с учётками; вызывайте первым на новом стенде.",
-    "argument.stand": 'Стенд, например "dev7".',
+    "argument.stand": "Один из стендов: {stands}.",
     "argument.stands": 'Вместо stand: "dev*" или "dev1,dev2", не больше {limit}.',
     "argument.stand_status": "Стенд для проверки; без него — список.",
     "argument.database": "Только если схема есть в нескольких базах.",
@@ -816,11 +849,20 @@ RU: dict[str, str] = {
     ),
     "stands.no_schema_argument": (
         "Передайте schema: на стенде {stand} сервер читает данные под учёткой схемы, которую вы назовёте. "
-        "list_schemas покажет схемы."
+        "Его схемы: {schemas}."
     ),
     "stands.unknown_schema": (
-        "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. "
-        "Вызовите list_schemas, чтобы увидеть схемы."
+        "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Его схемы: {schemas}."
+    ),
+    "stands.more_names": "{names} и другие, всего {count}: list_schemas покажет все",
+    "stands.more_stands": "{names} и другие, всего {count}: status покажет все",
+    "stands.ask_every": 'Чтобы посмотреть на всех стендах, вызовите ещё раз со stands: "*" вместо stand.',
+    "stands.ask_several": (
+        "Чтобы посмотреть на нескольких стендах одним вызовом, передайте stands вместо stand: список или шаблон, "
+        "не больше {limit} стендов."
+    ),
+    "stands.elsewhere": (
+        "Схема {schema} есть и на {stands}; передайте stands, чтобы спросить до {limit} стендов одним вызовом."
     ),
     "stands.unknown_schema_similar": (
         "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Похожие: {similar}."

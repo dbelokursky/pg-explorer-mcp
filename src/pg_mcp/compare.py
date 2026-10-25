@@ -140,11 +140,11 @@ class Comparison:
         parts = (
             (
                 t("compare.only_on", stand=self.a.target.stand),
-                [_relation_line(n, self.a.relations[n]) for n in self.only_a],
+                [_relation_line(f"{self.a.target.schema}.{n}", self.a.relations[n]) for n in self.only_a],
             ),
             (
                 t("compare.only_on", stand=self.b.target.stand),
-                [_relation_line(n, self.b.relations[n]) for n in self.only_b],
+                [_relation_line(f"{self.b.target.schema}.{n}", self.b.relations[n]) for n in self.only_b],
             ),
             (t("compare.differ"), self.differing),
         )
@@ -168,11 +168,15 @@ class Comparison:
 def comparison(a: Structure, b: Structure) -> Comparison:
     """Names are sorted by code point, as COLLATE "C" sorts them, so the answer does not depend
     on either server's locale. Definitions are compared whole and shortened only for display.
+
+    Every name in the answer carries its schema, as in list_tables: "returns | table" alone reads to a
+    model as two words, and a table on one stand only went unreported.
     """
     first, second = a.target.stand, b.target.stand
     differing: list[str] = []
     for name in sorted(set(a.relations) & set(b.relations)):
-        differing.extend(_relation_differences(name, a.relations[name], b.relations[name], first, second))
+        qualified = f"{a.target.schema}.{name}"
+        differing.extend(_relation_differences(qualified, a.relations[name], b.relations[name], first, second))
     only_a = sorted(set(a.relations) - set(b.relations))
     only_b = sorted(set(b.relations) - set(a.relations))
     return Comparison(a, b, only_a, only_b, differing)

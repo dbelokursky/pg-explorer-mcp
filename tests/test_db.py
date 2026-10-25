@@ -136,9 +136,21 @@ class TestStructure:
         # Before PostgreSQL 14 an empty table and a never analyzed one look the same.
         assert lines_of(tools["list_tables"], schema=ARCHIVE) == [f"{ARCHIVE}.orders | table | {never_analyzed(db)}"]
 
-    def test_unknown_schema_points_to_the_schemas_that_exist(self, tools: dict[str, Tool]) -> None:
-        with pytest.raises(ToolError, match=SCHEMA):
-            tools["list_tables"].call({"schema": "no_such_schema"})
+    def test_a_schema_without_tables_brings_the_tables_of_every_schema(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["list_tables"], schema="no_such_schema")
+        assert lines[0] == "Schema 'no_such_schema' has no tables, so these are the readable tables of all schemas:"
+        assert f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов" in lines
+
+    def test_a_schema_without_tables_does_not_hide_the_table_a_name_means(self, tools: dict[str, Tool]) -> None:
+        first = f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов"
+        assert lines_of(tools["describe_table"], table=f"{SCHEMA}.orders", schema="no_such_schema")[0] == first
+        assert lines_of(tools["sample_rows"], table=f"{SCHEMA}.customers", schema="public")[0] == f"{SCHEMA}.customers:"
+        with pytest.raises(ToolError, match=f"orders.*{SCHEMA}.orders, {ARCHIVE}.orders"):  # two tables of that name
+            tools["describe_table"].call({"table": "orders", "schema": "no_such_schema"})
+
+    def test_a_system_schema_is_left_out_and_not_called_closed(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match="Schema 'pg_catalog' is a system one"):
+            tools["list_tables"].call({"schema": "pg_catalog"})
 
     def test_describe_table_shows_columns_keys_and_indexes(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["describe_table"], table=f"{SCHEMA}.orders")
@@ -195,9 +207,10 @@ class TestStructure:
 
 
 class TestSearch:
-    def test_a_schema_without_readable_tables_names_the_ones_with_them(self, tools: dict[str, Tool]) -> None:
-        with pytest.raises(ToolError, match=f"No readable tables in schema 'no_such_schema'.*{SCHEMA}"):
-            tools["search_schema"].call({"text": "order", "schema": "no_such_schema"})
+    def test_a_schema_without_tables_is_searched_as_every_schema(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["search_schema"], text="заказ", schema="no_such_schema")
+        assert lines[0] == "Schema 'no_such_schema' has no tables, so the search went through all schemas:"
+        assert f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов" in lines
 
     def test_finds_tables_by_name_or_comment_in_either_alphabet(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["search_schema"], text="заказ", schema=SCHEMA) == [
@@ -307,6 +320,11 @@ class TestData:
         with pytest.raises(ToolError, match=hint):
             analyst["explain_query"].call({"query": "SELECT * FROM orders"})
 
+    def test_a_guessed_column_brings_the_columns_of_the_table(self, analyst: dict[str, Tool]) -> None:
+        hint = rf"42703.* Columns of the tables the query reads: {SCHEMA}\.orders: id, customer_id, total, note\."
+        with pytest.raises(ToolError, match=hint):
+            analyst["run_select"].call({"query": f"SELECT order_id FROM {SCHEMA}.orders"})
+
 
 @pytest.mark.usefixtures("russian")
 class TestRussian:
@@ -316,6 +334,7 @@ class TestRussian:
         text = tools["status"].call({})
         assert "база: подключено к " in text
         assert "лимиты: только чтение = on" in text
+        assert "доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя" in text
 
     def test_list_tables_names_kinds_and_estimates_in_russian(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["list_tables"], schema=SCHEMA) == [
@@ -475,6 +494,39 @@ class TestRoleScript:
             f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}"
         ]
         assert lines_of(tools["search_schema"], text="orders")[0].startswith("Nothing matches 'orders'.")
+
+    @pytest.mark.usefixtures("db")  # the tables of SCHEMA, which the role cannot read
+    def test_a_schema_the_role_cannot_read_is_refused_and_one_without_tables_answered(self, agent: Database) -> None:
+        tools = by_name(build_tools(agent, str(ROOT)))
+        refusal = rf"cannot read any table in schema '{SCHEMA}'\. Schemas with readable tables: {ROLE_SCHEMA}\."
+        with pytest.raises(ToolError, match=refusal):
+            tools["list_tables"].call({"schema": SCHEMA})
+        with pytest.raises(ToolError, match=refusal):
+            tools["search_schema"].call({"text": "order", "schema": SCHEMA})
+        assert lines_of(tools["list_tables"], schema="no_such_schema") == [
+            "Schema 'no_such_schema' has no tables, so these are the readable tables of all schemas:",
+            f"{ROLE_SCHEMA}.items | table | {never_analyzed(agent)}",
+        ]
+        assert lines_of(tools["describe_table"], table="items", schema="no_such_schema")[0].startswith(
+            f"{ROLE_SCHEMA}.items | table"
+        )
+        with pytest.raises(ToolError, match=f"No readable table or view named 'orders' in schema '{SCHEMA}'"):
+            tools["describe_table"].call({"table": "orders", "schema": SCHEMA})
+
+    def test_a_column_error_lists_only_the_tables_the_role_reads(
+        self, agent: Database, admin: pg8000.native.Connection
+    ) -> None:
+        # PostgreSQL reports the missing column first: the privilege is checked when the plan starts
+        admin.run(f"CREATE TABLE {ROLE_SCHEMA}.salaries (id int, amount numeric)")
+        admin.run(f"REVOKE ALL ON {ROLE_SCHEMA}.salaries FROM {ROLE}")
+        try:
+            tools = by_name(build_tools(agent, str(ROOT), profile="analyst"))
+            query = f"SELECT nosuch FROM {ROLE_SCHEMA}.items JOIN {ROLE_SCHEMA}.salaries USING (id)"
+            with pytest.raises(ToolError, match=rf"42703.* reads: {ROLE_SCHEMA}\.items: id\.$") as caught:
+                tools["run_select"].call({"query": query})
+            assert "amount" not in str(caught.value)
+        finally:
+            admin.run(f"DROP TABLE {ROLE_SCHEMA}.salaries")
 
     @pytest.mark.usefixtures("agent")
     def test_the_role_cannot_write_even_with_read_only_mode_switched_off(self) -> None:

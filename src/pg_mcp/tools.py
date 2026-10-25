@@ -50,12 +50,22 @@ DEFAULT_PROFILE = "explore"
 DEFAULT_NAME = "pg"  # the entry install.py writes; further databases are pg-<name>
 STRICTEST_PROFILE = "schema"
 
-# MCP tool annotations: clients may run read-only tools without asking the user.
-READ_ONLY_HINTS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+# MCP tool annotations: clients may run read-only tools without asking the user. destructiveHint and
+# idempotentHint mean something only when readOnlyHint is false, so they are left out; the title goes
+# here rather than beside the name, where clients of protocol 2025-06-18 look first and older ones never
+# look: clients of every version fall back to this one.
+READ_ONLY_HINTS = {"readOnlyHint": True, "openWorldHint": False}
 
 # The SQLSTATE of a table PostgreSQL could not find, and its name in the message in any language:
 # 'relation "orders" does not exist', 'отношение "orders" не существует', 'Relation »orders« ...'.
 UNDEFINED_TABLE = "42P01"
+UNDEFINED_COLUMN = "42703"
+# The relations a statement reads: the name after FROM or JOIN, its schema and quotes as written.
+_READ_RELATION = re.compile(
+    r'\b(?:from|join)\s+("[^"]+"|[^\s,;()".]+)(?:\s*\.\s*("[^"]+"|[^\s,;()".]+))?', re.IGNORECASE
+)
+TABLES_LISTED = 5  # the tables of a statement whose columns a column error lists
+COLUMNS_LISTED = 40
 _QUOTED_NAME = re.compile(r'["«»„“]\s*([^"«»„“”]+?)\s*["«»“”]')
 
 # pg_class.relkind values the tools show; each is named by the text kind.<relkind>.
@@ -85,6 +95,27 @@ LIST_TABLES_SQL = (
 )
 
 SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1\nLIMIT 50"
+
+# Whether a schema holds a table or view at all, readable or not. One that holds none was guessed,
+# "public" most often; one whose tables the role cannot read was not, and it is refused as before.
+SCHEMA_HOLDS_RELATIONS_SQL = """
+SELECT 1
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = CAST(:schema AS text) AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+LIMIT 1
+"""
+
+# A relation as the statement found it: to_regclass reads the name with its schema and quotes, or on
+# the search path of the session, as the statement did. Only one the role reads, as everywhere else:
+# PostgreSQL reports a missing column before it checks the privilege to read the table.
+RELATION_BY_NAME_SQL = """
+SELECT c.oid, n.nspname, c.relname
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.oid = to_regclass(CAST(:name AS text))
+  AND has_table_privilege(c.oid, 'SELECT')
+"""
 
 FIND_RELATION_SQL = (
     f"SELECT c.oid, n.nspname, c.relname, c.relkind, {_ESTIMATE}, obj_description(c.oid, 'pg_class')"
@@ -192,6 +223,8 @@ class Tool:
     required: tuple[str, ...] = ()
     budget: int = DEFAULT_BUDGET
     query_log: QueryLog | None = None
+    # A better answer than "Missing argument(s)" for the arguments and what is missing, or None.
+    missing_hint: Callable[[dict[str, Any], list[str]], str | None] | None = None
 
     def describe(self) -> dict[str, Any]:
         schema: dict[str, Any] = {"type": "object", "properties": self.properties, "additionalProperties": False}
@@ -199,10 +232,9 @@ class Tool:
             schema["required"] = list(self.required)
         return {
             "name": self.name,
-            "title": self.title,
             "description": self.description,
             "inputSchema": schema,
-            "annotations": dict(READ_ONLY_HINTS, title=self.title),
+            "annotations": {"title": self.title, **READ_ONLY_HINTS},
         }
 
     def call(self, arguments: Any) -> str:
@@ -248,7 +280,8 @@ class Tool:
         }
         missing = [name for name in self.required if arguments.get(name) in (None, "")]
         if missing:
-            raise ToolError(t("error.missing_arguments", missing=", ".join(missing)))
+            hint = self.missing_hint(arguments, missing) if self.missing_hint else None
+            raise ToolError(hint or t("error.missing_arguments", missing=", ".join(missing)))
         answer = self.handler(arguments)
         return answer.splitlines() if isinstance(answer, str) else answer
 
@@ -380,6 +413,7 @@ def status(
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
+        t("status.read_only"),
         t("status.target", target=db.describe_target()),
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),
@@ -408,6 +442,7 @@ def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None 
     """Readable tables, or with schemas (on a stand) the tables of those schemas."""
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema"))
+    schema = schema.strip().strip('"') if schema else None
     if schemas is None:
         rows = db.query(LIST_TABLES_SQL, schema=schema, limit=LIST_TABLES_LIMIT + 1)
     else:
@@ -417,8 +452,9 @@ def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None 
             raise ToolError(t("stands.no_tables", schemas=", ".join(schemas)))
         if schema is None:
             raise ToolError(t("error.no_tables"))
-        visible = ", ".join(row[0] for row in db.query(SCHEMAS_SQL)) or t("error.none")
-        raise ToolError(t("error.no_tables_in_schema", schema=schema, visible=visible))
+        if _guessed(db, schema):  # the question was what tables there are: those of every schema answer it
+            return [t("list.guessed_schema", schema=schema), *list_tables(db, None)]
+        raise ToolError(_closed_schema(db, schema))
     lines = [_describe_relation(*row) for row in rows[:LIST_TABLES_LIMIT]]
     if len(rows) > LIST_TABLES_LIMIT:
         lines.append(t("list.more", limit=LIST_TABLES_LIMIT))
@@ -446,14 +482,11 @@ def search_schema(
     if not rows:
         if schemas is None and params["schema"] is not None:
             visible = [row[0] for row in db.query(SCHEMAS_SQL)]
-            if params["schema"] not in visible:  # a guessed schema, "public" most often: name the real ones
-                raise ToolError(
-                    t(
-                        "error.no_tables_in_schema",
-                        schema=params["schema"],
-                        visible=", ".join(visible) or t("error.none"),
-                    )
-                )
+            if params["schema"] not in visible:
+                if _guessed(db, params["schema"]):  # "public" most often: the other schemas answer the question
+                    lead = t("search.guessed_schema", schema=params["schema"])
+                    return [lead, *search_schema(db, fragment, None, limit=limit)]
+                raise ToolError(_closed_schema(db, params["schema"], visible))
         return [t("search.nothing", text=fragment)]
     lines = []
     for row in rows[:limit]:
@@ -466,6 +499,26 @@ def search_schema(
     if len(rows) > limit:
         lines.append(t("search.more", limit=limit))
     return lines
+
+
+def _system(schema: str) -> bool:
+    """A schema the tools leave out, as _READABLE_RELATIONS does."""
+    return schema == "information_schema" or schema.startswith("pg_")
+
+
+def _guessed(db: Database, schema: str) -> bool:
+    """A schema without a single table or view, readable or not: the model made it up."""
+    return not _system(schema) and not db.query(SCHEMA_HOLDS_RELATIONS_SQL, schema=schema)
+
+
+def _closed_schema(db: Database, schema: str, visible: Sequence[str] | None = None) -> str:
+    """Why a schema that holds tables shows none: the tools leave system schemas out, or the role reads none.
+
+    Said plainly, so that a model answers "no access to hr" rather than "hr has no tables".
+    """
+    names = [row[0] for row in db.query(SCHEMAS_SQL)] if visible is None else visible
+    key = "error.system_schema" if _system(schema) else "error.no_tables_in_schema"
+    return t(key, schema=schema, visible=", ".join(names) or t("error.none"))
 
 
 def describe_table(db: Database, table: Any, schema: Any) -> list[str]:
@@ -506,7 +559,7 @@ def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str]
     try:
         _, rows, more = db.read_only(f"EXPLAIN ({options}) {query}", PLAN_LINES_LIMIT, cursor=False)
     except QueryFailedError as exc:
-        raise QueryFailedError(missing_table_hint(db, exc, schemas)) from exc
+        raise QueryFailedError(query_hint(db, exc, query, schemas)) from exc
     return _plan_lines(rows, more=more)
 
 
@@ -524,8 +577,50 @@ def run_select(
             return _format_rows(names, rows, more=more)
         names, rows, more = db.read_only(query, PLAN_LINES_LIMIT, cursor=False)
     except QueryFailedError as exc:
-        raise QueryFailedError(missing_table_hint(db, exc, schemas)) from exc
+        raise QueryFailedError(query_hint(db, exc, query, schemas)) from exc
     return _plan_lines(rows, more=more) if kind == "explain" else _format_rows(names, rows, more=more)
+
+
+def query_hint(db: Database, error: QueryFailedError, query: Any, schemas: Sequence[str] | None) -> str:
+    """The error, and what spares the model a call: where a missing table is, the columns of the tables read."""
+    if error.code == UNDEFINED_TABLE:
+        return missing_table_hint(db, error, schemas)
+    if error.code == UNDEFINED_COLUMN:
+        return missing_column_hint(db, error, query)
+    return str(error)
+
+
+def missing_column_hint(db: Database, error: QueryFailedError, query: Any) -> str:
+    """The error, and for a column PostgreSQL could not find, the columns of the tables the statement reads.
+
+    A model tends to guess a column ("order_id" for "id"); without the list it calls describe_table next.
+    """
+    text = query if isinstance(query, str) else ""
+    names = [f"{first}.{second}" if second else first for first, second in _READ_RELATION.findall(text)]
+    tables: dict[str, str] = {}
+    try:
+        for name in list(dict.fromkeys(names))[:TABLES_LISTED]:
+            tables.update(_columns_of(db, name))
+    except DatabaseUnavailableError:
+        return str(error)  # the hint is a courtesy: the error itself still has to reach the model
+    if not tables:
+        return str(error)
+    listed = "; ".join(f"{name}: {columns}" for name, columns in tables.items())
+    return t("error.columns_of", error=error, tables=listed)
+
+
+def _columns_of(db: Database, name: str) -> dict[str, str]:
+    """The relation a name means, as schema.name with its columns; nothing when it is not a relation."""
+    try:
+        found = db.query(RELATION_BY_NAME_SQL, name=name)
+        tables = {}
+        for oid, schema, relation in found:
+            columns = [str(row[0]) for row in db.query(COLUMNS_SQL, oid=oid)]
+            more = ", …" if len(columns) > COLUMNS_LISTED else ""
+            tables[f"{schema}.{relation}"] = ", ".join(columns[:COLUMNS_LISTED]) + more
+    except QueryFailedError:
+        return {}  # not a relation name after all: "FROM 2" in substring(), say
+    return tables
 
 
 def missing_table_hint(db: Database, error: QueryFailedError, schemas: Sequence[str] | None) -> str:
@@ -560,17 +655,26 @@ def _relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> 
 def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:
     """The pg_class row of the one readable relation the arguments name, or a ToolError with a hint."""
     name, schema = split_name(table, schema)
-    matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
-    if not matches and name != name.lower():
-        # Unquoted identifiers are folded to lower case, so "Orders" usually means orders.
-        name = name.lower()
-        matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
+    name, matches = _relations_by_name(db, name, schema)
+    if not matches and schema is not None and _guessed(db, schema):
+        # "public" most often: the name alone finds the table, or the schema it carries, as in shop.orders
+        name, schema = split_name(table, None)
+        name, matches = _relations_by_name(db, name, schema)
     if not matches:
         raise ToolError(_not_found(db, name, schema))
     if len(matches) > 1:
         options = ", ".join(f"{row[1]}.{row[2]}" for row in matches)
         raise ToolError(t("error.ambiguous", name=name, options=options))
     return tuple(matches[0])
+
+
+def _relations_by_name(db: Database, name: str, schema: str | None) -> tuple[str, list[Sequence[Any]]]:
+    matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
+    if not matches and name != name.lower():
+        # Unquoted identifiers are folded to lower case, so "Orders" usually means orders.
+        name = name.lower()
+        matches = db.query(FIND_RELATION_SQL, name=name, schema=schema)
+    return name, matches
 
 
 def split_name(table: Any, schema: Any) -> tuple[str, str | None]:

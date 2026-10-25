@@ -35,6 +35,7 @@ from pg_mcp.stands import (
     StandError,
     Target,
     exported_sections,
+    listed,
     load_registry,
     parse_service_file,
     registry_files,
@@ -311,7 +312,11 @@ class TestRegistry:
             ("billing", None, "Schema 'billing' exists in several databases of dev1: archive, orders. Pass database"),
             ("shipping", "archive", "Schema 'shipping' of dev1 is in orders, not in 'archive'. Pass one of those"),
             ("shiping", None, "Stand dev1 has no schema 'shiping' that the server has a login for. Similar: shipping."),
-            ("hr", None, "Stand dev1 has no schema 'hr' that the server has a login for. Call list_schemas"),
+            (
+                "hr",
+                None,
+                "Stand dev1 has no schema 'hr' that the server has a login for. Its schemas: billing, shipping.",
+            ),
         ],
     )
     def test_a_wrong_schema_is_explained(self, registry: Registry, schema: Any, database: Any, message: str) -> None:
@@ -431,6 +436,7 @@ class TestOfflineTools:
     ) -> None:
         lines = tools["status"].call({}).splitlines()
         assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in lines
+        assert any(line.startswith("access: read only. Nothing can be inserted") for line in lines)
         assert any(line.endswith("stands covers at most 10 stands per call") for line in lines)
         assert "pass stand to status to check that stand's connection" in lines
         assert pool.open_count() == 0
@@ -551,13 +557,58 @@ class TestOfflineTools:
         assert ("stand" in second, second["role"]) == (False, None)  # not the previous call's login
 
 
+def test_the_stand_argument_names_the_stands_of_the_registry(registry: Registry, tmp_path: Path) -> None:
+    """A model that knows the stands looks on each, not only on the one an example names."""
+    tools = by_name(build_stand_tools(Pool(registry, {}), str(ROOT), profile="analyst"))
+    assert tools["run_select"].describe()["inputSchema"]["properties"]["stand"]["description"] == (
+        "One of the stands: dev1–dev2, ift1."
+    )
+    names = [f"box{letter}" for letter in "abcdefghijklmnopqrst"]  # no numbers to fold into a range
+    many = loaded(STANDS_ON, [write(tmp_path / "many.conf", "".join(f"[{name}.db.s]\nhost=h\n\n" for name in names))])
+    listing = by_name(build_stand_tools(Pool(many, {}), str(ROOT)))["list_tables"]
+    assert listing.describe()["inputSchema"]["properties"]["stand"]["description"] == (
+        f"One of the stands: {', '.join(names[:12])} and more, 20 in all: status lists them."
+    )
+
+
+def test_an_answer_without_rows_names_the_other_stands_that_have_the_schema(registry: Registry) -> None:
+    pool = Pool(registry, {})
+    empty, found = ["id", "(0 rows)"], ["id", "1", "(1 row)"]
+    billing = registry.target("dev2", "billing")
+    assert stand_tools._elsewhere(pool, billing, empty) == [
+        "Schema billing is on dev1, ift1 as well; pass stands to ask up to 10 stands in one call."
+    ]
+    assert stand_tools._elsewhere(pool, billing, found) == []
+    assert stand_tools._elsewhere(pool, registry.target("dev1", "shipping"), empty) == []  # on dev1 only
+
+
+@pytest.mark.parametrize("tool", ["run_select", "explain_query"])
+def test_a_left_out_schema_is_answered_with_the_schemas_of_the_stand(pool: Pool, tool: str) -> None:
+    """A model sends schema: ""; the answer names what to pass, not only that something is missing."""
+    tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+    with pytest.raises(ToolError) as caught:
+        tools[tool].call({"stand": "dev1", "schema": "", "query": "SELECT 1"})
+    assert str(caught.value) == (
+        "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
+        "Its schemas: billing, shipping."
+    )
+    with pytest.raises(ToolError, match=r"^No stand 'dev11' in the registry\. Similar: dev1, dev2\.$"):
+        tools[tool].call({"stand": "dev11", "query": "SELECT 1"})
+    with pytest.raises(ToolError, match=r"^Missing argument\(s\): schema\.$"):  # no stand whose schemas to name
+        tools["run_select"].call({"stands": "dev*", "query": "SELECT 1"})
+
+
 class TestCompareSchema:
     """compare_schema without a database: the arguments, failures that name the stand, and the catalog reading."""
 
     @pytest.mark.parametrize(
         ("arguments", "message"),
         [
-            ({"stand_a": "dev1", "stand_b": "dev2"}, "Missing argument(s): schema."),
+            (
+                {"stand_a": "dev1", "stand_b": "dev2"},
+                "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
+                "Its schemas: billing, shipping.",
+            ),
             ({"stand_a": " ", "stand_b": "dev2", "schema": "billing"}, "Pass stand_a, one of: dev1–dev2, ift1."),
             (
                 {"stand_a": "dev1", "stand_b": "dev11", "schema": "billing"},
@@ -577,7 +628,7 @@ class TestCompareSchema:
             ),
             (
                 {"stand_a": "dev2", "stand_b": "dev1", "schema": "shipping"},
-                "Stand dev2 has no schema 'shipping' that the server has a login for. Call list_schemas to see them.",
+                "Stand dev2 has no schema 'shipping' that the server has a login for. Its schemas: billing.",
             ),
         ],
     )
@@ -714,16 +765,17 @@ class TestDifferences:
         assert differences(a, b) == [
             "dev7 / orders / shop  vs  dev12 / orders / shop",
             "only on dev7:",
-            "  archive | table",
+            "  shop.archive | table",
             "only on dev12:",
-            "  daily | view",
+            "  shop.daily | view",
             "differ:",
-            "  items: dev7 table | dev12 view",
-            "  orders.note only on dev12: text DEFAULT ''::text",
-            "  orders.total: dev7 numeric(12,2) NOT NULL | dev12 numeric(10,2)",
-            "  orders: constraint orders_status_check: dev7 CHECK (status = 'new') | dev12 CHECK (status = 'paid')",
-            "  orders: constraint orders_total_check only on dev12: CHECK (total > 0::numeric)",
-            f"  orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
+            "  shop.items: dev7 table | dev12 view",
+            "  shop.orders.note only on dev12: text DEFAULT ''::text",
+            "  shop.orders.total: dev7 numeric(12,2) NOT NULL | dev12 numeric(10,2)",
+            "  shop.orders: constraint orders_status_check: dev7 CHECK (status = 'new') "
+            "| dev12 CHECK (status = 'paid')",
+            "  shop.orders: constraint orders_total_check only on dev12: CHECK (total > 0::numeric)",
+            f"  shop.orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
         ]
 
     @pytest.mark.parametrize(
@@ -762,7 +814,7 @@ class TestDifferences:
             "dev1 / orders / billing  vs  2 stands:",
             "dev2 / orders / billing",
             "differ:",
-            "  invoices.note only on dev2: text",
+            "  billing.invoices.note only on dev2: text",
             "ift1 / orders / billing",
             "  ift1 / orders / billing: Connecting to ift1 timed out.",
             "same as dev1: 0; different: 1; not checked: 1",
@@ -786,9 +838,9 @@ class TestDifferences:
         other = structure("dev12", orders=Relation("r", constraints={"c": long_check[:-2] + "y)"}))
         assert differences(a, same)[-1] == "identical: 1 table, 0 columns"
         line = differences(a, other)[-1]
-        assert line.startswith("  orders: constraint c: dev7 CHECK (xxx")
+        assert line.startswith("  shop.orders: constraint c: dev7 CHECK (xxx")
         assert line.count("…") == 2
-        assert len(line) < 2 * 200 + 40
+        assert len(line) < 2 * 200 + 50  # two shortened definitions and the qualified name around them
 
     @pytest.mark.usefixtures("russian")
     def test_in_russian(self) -> None:
@@ -797,9 +849,9 @@ class TestDifferences:
         assert differences(a, b) == [
             "dev7 / orders / shop  vs  dev12 / orders / shop",
             "только на dev12:",
-            "  log | таблица",
+            "  shop.log | таблица",
             "отличаются:",
-            f"  orders: индекс orders_pkey только на dev7: {PRIMARY_KEY}",
+            f"  shop.orders: индекс orders_pkey только на dev7: {PRIMARY_KEY}",
         ]
         assert differences(a, structure("dev12", orders=a.relations["orders"]))[-1] == "одинаково: 1 таблица, 1 колонка"
 
@@ -945,6 +997,45 @@ class TestManyStands:
         with pytest.raises(ToolError, match="DELETE is not allowed"):
             tools["run_select"].call(arguments)
         assert (pool.open_count(), pool.outcomes) == (0, {})
+
+    @pytest.mark.parametrize(
+        ("tool", "arguments"),
+        [("run_select", {"schema": "billing", "query": "SELECT 1"}), ("search_schema", {"text": "order"})],
+    )
+    def test_an_unknown_stand_says_how_to_look_on_every_stand(
+        self, tools: dict[str, Tool], tool: str, arguments: dict[str, str]
+    ) -> None:
+        """Told only that there is no stand 'pg', a model asked the user which stand to take."""
+        with pytest.raises(ToolError) as caught:
+            tools[tool].call({"stand": "pg", **arguments})
+        assert str(caught.value) == (
+            "No stand 'pg' in the registry. Stands: dev1–dev2, ift1. "
+            'To look on every stand, call again with stands: "*" in place of stand.'
+        )
+        with pytest.raises(ToolError, match=r"^No stand 'pg' in the registry\. Stands: dev1–dev2, ift1\.$"):
+            tools["list_tables"].call({"stand": "pg"})  # it takes one stand only
+
+    def test_more_stands_than_one_call_asks_are_named_as_a_list_or_a_pattern(self, tmp_path: Path) -> None:
+        names = [f"dev{number}" for number in range(1, 13)]
+        many = loaded(
+            STANDS_ON, [write(tmp_path / "many.conf", "".join(f"[{name}.db.s]\nhost=h\n\n" for name in names))]
+        )
+        tools = by_name(build_stand_tools(Pool(many, {}), str(ROOT), profile="analyst"))
+        with pytest.raises(
+            ToolError, match=r"pass stands in place of stand: a list or a pattern, at most 10 stands\.$"
+        ):
+            tools["run_select"].call({"stand": "pg", "schema": "s", "query": "SELECT 1"})
+
+    @pytest.mark.parametrize("one", ["dev*", "dev2,dev1"])
+    def test_a_pattern_or_a_list_in_stand_goes_as_stands(self, tools: dict[str, Tool], one: str) -> None:
+        """Asked which stand has something, a model sends stand: "*"; no stand is named so."""
+        for name, arguments in (
+            ("run_select", {"schema": "billing", "database": "orders", "query": "SELECT 1"}),
+            ("search_schema", {"text": "order"}),
+        ):
+            assert tools[name].call({"stand": one, **arguments}) == tools[name].call({"stands": one, **arguments})
+        with pytest.raises(ToolError, match=r"^No stand '\*' in the registry\. Stands: dev1–dev2, ift1\.$"):
+            tools["list_tables"].call({"stand": "*"})  # one stand or none: no stands to take it as
 
     def test_search_without_schema_goes_database_by_database_on_each_stand(
         self, pool: Pool, tools: dict[str, Tool]
@@ -1136,3 +1227,17 @@ def test_a_registry_with_a_password_that_others_can_read_is_a_warning(tmp_path: 
     plain = write(tmp_path / "plain.conf", "[dev1.orders.billing]\nhost=db\n")
     plain.chmod(0o644)
     assert loaded(STANDS_ON, [plain]).warnings == []  # no password, nothing to protect
+
+
+def test_a_stand_names_its_schemas_when_the_schema_is_missing_or_unknown(registry: Registry) -> None:
+    with pytest.raises(StandError, match=r"Pass schema: .* Its schemas: billing, shipping\.$"):
+        registry.target("dev1", " ")
+    with pytest.raises(StandError, match=r"no schema 'public' .* Its schemas: billing\.$"):
+        registry.target("dev2", "public")
+
+
+def test_a_long_list_of_schemas_is_cut_with_its_count() -> None:
+    names = [f"s{number:02}" for number in range(20)]
+    assert listed(names[:3]) == "s00, s01, s02"
+    assert listed(names) == f"{', '.join(names[:15])} and more, 20 in all: list_schemas shows them"
+    assert listed([]) == "none"

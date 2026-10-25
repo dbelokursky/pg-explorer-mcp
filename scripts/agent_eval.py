@@ -3,6 +3,7 @@
 
     python3 scripts/agent_eval.py                                   # Ollama's first chat model, both languages
     python3 scripts/agent_eval.py --model qwen3:8b --lang ru --only orders,delete
+    python3 scripts/agent_eval.py --mode stands --repeat 3          # the stands questions, each three times
     python3 scripts/agent_eval.py --base-url http://box:11434/v1 --qwen ~/qwen/node_modules/.bin/qwen
 
 A check by hand before a release: CI has no model. In a throwaway home folder the script does what
@@ -15,10 +16,19 @@ to say; the one that asks to delete passes when the server refused the statement
 declined, and the orders are counted again afterwards. The result is a table and a score: exit
 code 1 when a scenario failed, 2 when the check could not run.
 
+Stands mode asks what a group with many stands asks: which stands there are, how a schema differs
+between two of them, where an order is. The demo database becomes the stand dev7 and a changed copy
+of it, made for the run and dropped after it, the stand dev12 (the README's example: the price gained
+two digits, orders a note and a table of returns, an index went, and one order is only there); the
+server is registered as pg-stands with a registry of the two. One run of a small model is a sample,
+not a measure: --repeat asks every question several times and adds a table of how often each passed
+and the error answers that came back more than once.
+
 Needs Ollama (or another OpenAI-compatible endpoint, --base-url) with a chat model, Qwen Code
 (npm install -g @qwen-code/qwen-code) and the demo database (python3 scripts/demo.py). PGHOST and
 PGPORT of the shell say where PostgreSQL is; the database, role and password are those of demo.py
-unless --database, --role and --password say otherwise.
+unless --database, --role and --password say otherwise. Stands mode makes its copy with the PG*
+role of the shell, which has to be allowed to create databases, as for demo.py.
 """
 
 from __future__ import annotations
@@ -28,12 +38,14 @@ import json
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,9 +78,10 @@ class Scenario:
     question: dict[str, str]
     tools: tuple[str, ...]  # the call that counts goes to any of these ...
     outcomes: tuple[str, ...] = ("ok",)  # ... and ends with one of these
-    argument: tuple[str, str] | None = None  # name and text: that call's argument has to contain the text
+    argument: tuple[str, str] | None = None  # name ("a|b": either) and text the argument has to contain
     answer: tuple[tuple[str, ...], ...] = ()  # every group: at least one of its patterns is in the answer
     refusal: bool = False  # the call or the answer alone is enough, and the orders are counted again
+    stands: bool = False  # asked of pg-stands, the demo database and its changed copy as two stands
 
 
 REFUSALS = (
@@ -98,7 +111,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "customers",
         {"ru": "Где хранятся покупатели?", "en": "Where are the customers stored?"},
-        tools=("search_schema", "describe_table"),
+        tools=("search_schema", "describe_table", "list_tables"),  # the list shows the table and its comment too
         answer=((r"shop\.customers",),),  # the table by name, not a plan to look for it
     ),
     Scenario(
@@ -130,6 +143,59 @@ SCENARIOS: tuple[Scenario, ...] = (
         answer=(NO_ACCESS,),
     ),
 )
+
+# Stands mode: the demo database is dev7, a changed copy of it dev12, as in the README's example of
+# compare_schema; an order that only the copy has answers the question where it is.
+COPY_SUFFIX = "_dev12"  # the copy is <demo database>_dev12, made for the run and dropped after it
+COPY_CHANGES = (
+    "ALTER TABLE shop.order_items ALTER COLUMN price TYPE numeric(12,2)",
+    "ALTER TABLE shop.orders ADD COLUMN note text",
+    "CREATE TABLE shop.returns (order_id integer PRIMARY KEY REFERENCES shop.orders (id), reason text NOT NULL)",
+    "COMMENT ON TABLE shop.returns IS 'Возвраты'",
+    "DROP INDEX shop.orders_customer_idx",
+    "INSERT INTO shop.orders (id, customer_id, status, created_at) VALUES (9001, 1, 'new', '2026-03-01 00:00:00+00')",
+    "ANALYZE shop.orders",
+)
+ORDERS_ON_COPY = {**ORDERS_BY_STATUS, "new": ORDERS_BY_STATUS["new"] + 1}
+
+STAND_SCENARIOS: tuple[Scenario, ...] = (
+    Scenario(
+        "stands",
+        {"ru": "Какие стенды есть?", "en": "Which stands are there?"},
+        tools=("status",),
+        answer=(("dev7",), ("dev12",)),
+        stands=True,
+    ),
+    Scenario(
+        "compare",
+        {
+            "ru": "Чем схема shop на dev7 отличается от dev12?",
+            "en": "How does the shop schema on dev7 differ from dev12?",
+        },
+        tools=("compare_schema",),
+        answer=(("returns", "возврат"), ("note",)),
+        stands=True,
+    ),
+    Scenario(
+        "find_order",
+        {"ru": "На каком стенде есть заказ 9001?", "en": "Which stand has order 9001?"},  # noqa: RUF001 (Russian)
+        tools=("run_select",),
+        answer=(("dev12",),),
+        stands=True,
+    ),
+    Scenario(
+        "stand_counts",
+        {
+            "ru": "Сколько заказов в каждом статусе на dev12?",
+            "en": "How many orders are there in each status on dev12?",
+        },
+        tools=("run_select",),
+        argument=("stand|stands", "dev12"),
+        answer=tuple((rf"\b{count}\b",) for count in ORDERS_ON_COPY.values()),
+        stands=True,
+    ),
+)
+MODES = ("single", "stands", "both")
 
 
 @dataclass(frozen=True)
@@ -222,8 +288,8 @@ def answer_text(output: str) -> str:
 def _argument_fits(scenario: Scenario, call: Call) -> bool:
     if scenario.argument is None:
         return True
-    name, text = scenario.argument
-    return text.lower() in str(call.arguments.get(name, "")).lower()
+    names, text = scenario.argument
+    return any(text.lower() in str(call.arguments.get(name, "")).lower() for name in names.split("|"))
 
 
 def matching_call(scenario: Scenario, calls: Iterable[Call]) -> Call | None:
@@ -251,8 +317,9 @@ def explain_no_call(scenario: Scenario, calls: Sequence[Call]) -> str:
     call = tried[-1]
     if call.outcome not in scenario.outcomes:
         return f"{call.tool} ended {call.outcome}, not " + " or ".join(scenario.outcomes)
-    name, text = scenario.argument or ("", "")
-    return f"{call.tool} got {name}={call.arguments.get(name)!r}, not {text!r}"
+    names, text = scenario.argument or ("", "")
+    got = ", ".join(f"{name}={call.arguments.get(name)!r}" for name in names.split("|"))
+    return f"{call.tool} got {got}, not {text!r}"
 
 
 def judge(scenario: Scenario, calls: Sequence[Call], answer: str, orders: dict[str, int] | None = None) -> Verdict:
@@ -335,16 +402,21 @@ def loaded_context(base_url: str, model: str) -> int | None:
     return None
 
 
-def selected(only: str | None) -> list[Scenario]:
-    """The scenarios to run: all, or those --only names."""
+def selected(only: str | None, mode: str = "both") -> list[Scenario]:
+    """The scenarios to run: those of the mode, or of them those --only names."""
+    every = (*SCENARIOS, *STAND_SCENARIOS)
+    wanted = [scenario for scenario in every if mode == "both" or scenario.stands == (mode == "stands")]
     if not only:
-        return list(SCENARIOS)
+        return wanted
     names = [name.strip() for name in only.split(",") if name.strip()]
-    known = {scenario.name for scenario in SCENARIOS}
+    known = {scenario.name for scenario in every}
     unknown = [name for name in names if name not in known]
     if unknown:
         raise CheckError(f"no scenario named {', '.join(unknown)}; there are: {', '.join(sorted(known))}")
-    return [scenario for scenario in SCENARIOS if scenario.name in names]
+    chosen = [scenario for scenario in wanted if scenario.name in names]
+    if not chosen:
+        raise CheckError(f"{', '.join(names)}: no scenario of --mode {mode}; pass --mode both")
+    return chosen
 
 
 def home_env(home: Path, environ: dict[str, str], args: argparse.Namespace, model: str) -> dict[str, str]:
@@ -390,9 +462,13 @@ def run(
     )
 
 
-def register(env: dict[str, str], home: Path, language: str) -> None:
-    """install.py registers the server for Qwen Code and checks that it reaches the demo database."""
+def register(env: dict[str, str], home: Path, language: str, name: str | None = None) -> None:
+    """install.py registers the server for Qwen Code and checks that it reaches the demo database.
+
+    With name the entry is pg-<name>: pg-stands, with the registry the environment names.
+    """
     command = [sys.executable, str(ROOT / "install.py"), "--client", "qwen", "--profile", "analyst", "--lang", language]
+    command += ["--name", name] if name else []
     proc = run(command, env, home)
     if proc.returncode != 0:
         output = plain(proc.stdout + proc.stderr).strip()
@@ -435,6 +511,47 @@ def count_orders(env: dict[str, str]) -> dict[str, int] | None:
     finally:
         connection.close()
     return {str(status): int(count) for status, count in rows}
+
+
+def copy_database(args: argparse.Namespace) -> str:
+    return f"{args.database}{COPY_SUFFIX}"
+
+
+def make_copy(settings: Settings, args: argparse.Namespace) -> None:
+    """The stand dev12: a fresh demo database with the README's changes, readable by the demo role."""
+    drop_copy(settings, args)  # left over from a run that was stopped
+    try:
+        demo.create(settings, copy_database(args), args.role, args.password)
+        connection = demo.connect(settings, copy_database(args))
+        try:
+            for statement in COPY_CHANGES:
+                connection.run(statement)
+        finally:
+            connection.close()
+    except (OSError, pg8000.exceptions.Error) as exc:
+        hint = "the PG* role of the shell has to be allowed to create databases, as for demo.py"
+        raise CheckError(f"cannot make the copy {copy_database(args)} for stands mode ({hint}): {exc}") from exc
+
+
+def drop_copy(settings: Settings, args: argparse.Namespace) -> None:
+    """Drop the copy; the role stays, since the demo database has it too."""
+    try:
+        admin = demo.connect(settings, settings.database)
+        try:
+            admin.run(f'DROP DATABASE IF EXISTS "{copy_database(args)}" WITH (FORCE)')
+        finally:
+            admin.close()
+    except (OSError, pg8000.exceptions.Error) as exc:
+        raise CheckError(f"cannot drop {copy_database(args)}: {exc}") from exc
+
+
+def stands_registry(settings: Settings, args: argparse.Namespace) -> str:
+    """The registry of pg-stands: the shop schema of the demo database on dev7, of its copy on dev12."""
+    lines: list[str] = []
+    for stand, database in (("dev7", args.database), ("dev12", copy_database(args))):
+        lines += [f"[{stand}.demo.shop]", f"host={settings.host}", f"port={settings.port}"]
+        lines += [f"dbname={database}", f"user={args.role}", ""]
+    return "\n".join(lines)
 
 
 def ask(scenario: Scenario, language: str, qwen: str, env: dict[str, str], home: Path) -> Result:
@@ -513,6 +630,37 @@ def table(results: Sequence[Result]) -> str:
     return markdown_table(rows)
 
 
+def summary(results: Sequence[Result]) -> str:
+    """One row per question over its repeats: how often it passed, how many calls ended in an error."""
+    runs: dict[tuple[str, str], list[Result]] = {}
+    for result in results:
+        runs.setdefault((result.scenario.name, result.language), []).append(result)
+    rows = [("scenario", "lang", "passed", "calls with an error", "median time")]
+    for (name, language), group in runs.items():
+        passed = sum(result.verdict.passed for result in group)
+        errors = sum(call.outcome == "error" for result in group for call in result.calls)
+        median = statistics.median(result.seconds for result in group)
+        rows.append((name, language, f"{passed}/{len(group)}", str(errors), f"{median:.0f} s"))
+    return markdown_table(rows)
+
+
+def repeated_errors(results: Sequence[Result], least: int = 2) -> list[str]:
+    """The error answers the model got more than once: the patterns worth a change, not one run's accident."""
+    seen = Counter(
+        f"{call.tool}: {shorten(call.message, 120)}"
+        for result in results
+        for call in result.calls
+        if call.outcome == "error"
+    )
+    return [f"{count}x {text}" for text, count in seen.most_common() if count >= least]
+
+
+def _repeats(value: str) -> int:
+    if not value.isdigit() or int(value) < 1:
+        raise argparse.ArgumentTypeError(f"--repeat takes a whole number from 1, not {value!r}")
+    return int(value)
+
+
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Ask a real model the usual questions about the demo database.")
     parser.add_argument("--model", help="model in Ollama (default: the first chat model it lists)")
@@ -529,8 +677,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="the language of the questions and of the server (default: both, one after the other)",
     )
     parser.add_argument(
-        "--only", help="comma-separated names of the scenarios to run: " + ", ".join(s.name for s in SCENARIOS)
+        "--only",
+        help="comma-separated names of the scenarios to run: "
+        + ", ".join(scenario.name for scenario in (*SCENARIOS, *STAND_SCENARIOS)),
     )
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default="both",
+        help="one database, many stands (the demo database and its copy), or both (default)",
+    )
+    parser.add_argument("--repeat", type=_repeats, default=1, help="ask every question this many times (default: 1)")
     parser.add_argument("--database", default=demo.DATABASE, help=f"the demo database (default: {demo.DATABASE})")
     parser.add_argument("--role", default=demo.ROLE, help=f"the agent's role in it (default: {demo.ROLE})")
     parser.add_argument(
@@ -541,31 +698,62 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def evaluate(args: argparse.Namespace, scenarios: Sequence[Scenario], model: str) -> list[Result]:
-    """Register the server in a throwaway home and put every question in every language."""
+    """The questions of one database, then those of the stands, each in its own throwaway home."""
+    results: list[Result] = []
+    single = [scenario for scenario in scenarios if not scenario.stands]
+    stands = [scenario for scenario in scenarios if scenario.stands]
+    if single:
+        results += ask_all(args, single, model, results)
+    if stands:
+        settings = Settings.from_env(os.environ)
+        make_copy(settings, args)
+        try:
+            results += ask_all(args, stands, model, results, settings=settings)
+        finally:
+            drop_copy(settings, args)
+    return results
+
+
+def ask_all(
+    args: argparse.Namespace,
+    scenarios: Sequence[Scenario],
+    model: str,
+    earlier: Sequence[Result],
+    settings: Settings | None = None,
+) -> list[Result]:
+    """Register the server in a throwaway home and put every question in every language, --repeat times.
+
+    With settings it is pg-stands over the demo database and its copy, at the server those settings name.
+    """
     languages = LANGUAGES if args.lang == "all" else (args.lang,)
     results: list[Result] = []
     with tempfile.TemporaryDirectory(prefix="pg-mcp-agent-eval-") as folder:
         home = Path(folder)
         env = home_env(home, dict(os.environ), args, model)
+        if settings is not None:
+            (home / "stands.conf").write_text(stands_registry(settings, args), encoding="utf-8")
+            env.update(PG_MCP_STANDS="*", PG_MCP_STANDS_FILE=str(home / "stands.conf"))
         version = plain(run([args.qwen, "--version"], env, home).stdout).strip()
-        print(f"model {model} at {args.base_url}; Qwen Code {version} ({args.qwen}); {args.database} as {args.role}")
-        for language in languages:
-            register(env, home, language)
-            if not results:
+        where = f"stands dev7 ({args.database}) and dev12 ({copy_database(args)})" if settings else args.database
+        print(f"model {model} at {args.base_url}; Qwen Code {version} ({args.qwen}); {where} as {args.role}")
+        for number, language in enumerate(languages):
+            register(env, home, language, "stands" if settings is not None else None)
+            if number == 0:
                 link_extension(args.qwen, env, home)
             for scenario in scenarios:
-                result = ask(scenario, language, args.qwen, env, home)
-                report(result, verbose=args.verbose)
-                results.append(result)
-                if len(results) == 1:
-                    warn_small_context(args.base_url, model)
+                for _ in range(args.repeat):
+                    result = ask(scenario, language, args.qwen, env, home)
+                    report(result, verbose=args.verbose)
+                    results.append(result)
+                    if len(earlier) + len(results) == 1:
+                        warn_small_context(args.base_url, model)
     return results
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        scenarios = selected(args.only)
+        scenarios = selected(args.only, args.mode)
         if not args.qwen:
             raise CheckError("Qwen Code not found: npm install -g @qwen-code/qwen-code, or pass --qwen")
         model = choose_model(args.base_url, args.model)
@@ -576,6 +764,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     passed = sum(result.verdict.passed for result in results)
     print()
     print(table(results))
+    if args.repeat > 1:
+        print()
+        print(summary(results))
+    patterns = repeated_errors(results)
+    if patterns:
+        print("\nerror answers the model got more than once:")
+        print("\n".join(f"  {pattern}" for pattern in patterns))
     print(f"\nscore: {passed}/{len(results)} passed with {model}")
     return 0 if passed == len(results) else 1
 
