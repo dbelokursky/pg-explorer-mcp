@@ -14,6 +14,7 @@ import fnmatch
 import re
 import stat
 import sys
+import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -26,7 +27,9 @@ from .i18n import plural, t
 DEFAULT_MAX_CONNECTIONS = 8
 DEFAULT_SOCKET_TIMEOUT_S = 10  # a dropped VPN should not hold the agent for long
 SCHEMAS_LISTED = 15  # schemas an error names before it says how many more there are
-MAX_STANDS_PER_CALL = 10  # stands one call may ask in turn: the client waits 30 seconds for an answer
+MAX_STANDS_PER_CALL = (
+    100  # stands one call asks at once: the answer has a section per stand, and the budget holds about that
+)
 _WILDCARDS = "*?["  # what makes an item of stands a pattern rather than a name
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")
 _STAND_NUMBER = re.compile(r"(\D*)(\d*)(.*)")
@@ -307,25 +310,48 @@ def exported_sections(text: str) -> set[str]:
 
 
 class Pool:
-    """Opens the registry's connections on demand and keeps only the most recently used ones."""
+    """Opens the registry's connections on demand and keeps only the most recently used ones.
+
+    A call over several stands asks them from threads, one per stand, so the pool is shared: its
+    bookkeeping runs under a lock, and a connection is never closed under a thread still using it.
+    """
 
     def __init__(self, registry: Registry, env: Mapping[str, str], limit: int = DEFAULT_MAX_CONNECTIONS) -> None:
         self.registry = registry
         self._env = env
         self._limit = max(1, limit)
         self._open: OrderedDict[str, Database] = OrderedDict()
+        self._users: dict[str, threading.Thread] = {}  # the thread that last took each connection
+        self._lock = threading.RLock()
         self._counters = Counters()
         self.current: Target | None = None
         self.outcomes: dict[str, str] = {}  # stand -> how a call over several stands ended there
 
     def database(self, target: Target) -> Database:
-        self.current = target
-        database = self._open.pop(target.name, None) or Database(target.env(self._env), counters=self._counters)
-        self._open[target.name] = database
-        while len(self._open) > self._limit:
-            _, oldest = self._open.popitem(last=False)
-            oldest.close()
+        with self._lock:
+            self.current = target
+            database = self._open.pop(target.name, None) or Database(target.env(self._env), counters=self._counters)
+            self._open[target.name] = database
+            self._users[target.name] = threading.current_thread()
+            self.trim()
         return database
+
+    def trim(self) -> None:
+        """Close the oldest connections beyond the limit, except those a worker thread is still using.
+
+        During a call over many stands the pool holds a connection per stand; the next call closes
+        the surplus. A stand that has not answered when the call is over keeps its connection until
+        its thread ends, so that nothing is closed under a running statement.
+        """
+        with self._lock:
+            for name in list(self._open):
+                if len(self._open) <= self._limit:
+                    return
+                user = self._users.get(name)
+                if user is not None and user is not threading.main_thread() and user.is_alive():
+                    continue
+                self._open.pop(name).close()
+                self._users.pop(name, None)
 
     @property
     def limit(self) -> int:
@@ -335,9 +361,11 @@ class Pool:
         return len(self._open)
 
     def close(self) -> None:
-        for database in self._open.values():
-            database.close()
-        self._open.clear()
+        with self._lock:
+            for database in self._open.values():
+                database.close()
+            self._open.clear()
+            self._users.clear()
 
     def refresh(self) -> bool:
         """Re-read the registry when its files changed, so an import shows up without a restart.
@@ -382,7 +410,7 @@ class Pool:
     def forget(self) -> None:
         """Forget the previous call, so that the query log describes this one only."""
         self.current = None
-        self.outcomes.clear()
+        self.outcomes = {}  # a new dict: a thread of the previous call that answers late writes into the old one
 
     def connect_timeout(self, target: Target) -> int:
         """Seconds a connection to the target may wait for an answer: the section's, else the entry's."""

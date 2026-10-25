@@ -16,8 +16,9 @@ import socket
 import ssl
 import stat
 import sys
+import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -61,10 +62,19 @@ class QueryFailedError(Exception):
 
 @dataclass
 class Counters:
-    """Statements run through read_only and the rows they returned, for the query log."""
+    """Statements run through read_only and the rows they returned, for the query log.
+
+    A call over several stands runs its statements in threads, so the counts are bumped under a lock.
+    """
 
     statements: int = 0
     rows: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def count(self, rows: int) -> None:
+        with self._lock:
+            self.statements += 1
+            self.rows += rows
 
 
 @dataclass(frozen=True)
@@ -180,8 +190,7 @@ class Database:
             columns = [str(column["name"]) for column in context.columns or []]
             rows = list(context.rows or [])
             returned = rows[:max_rows]
-            self._counters.statements += 1
-            self._counters.rows += len(returned)
+            self._counters.count(len(returned))
             return columns, returned, len(rows) > max_rows
         raise AssertionError("unreachable")
 

@@ -12,6 +12,7 @@ compare_schema reads one schema on two stands with its login on each.
 from __future__ import annotations
 
 import platform
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -381,7 +382,9 @@ def _search_stands(pool: Pool, stands: Sequence[str], args: Arguments, text: str
     def with_login(target: Target) -> list[str]:
         return search_schema(pool.database(target), text, target.schema, limit=limit)
 
-    return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    nothing = t("search.nothing", text=text.strip())
+    answers, late = _ask_stands(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    return _folded(pool, stands, answers, late, empty=lambda lines: lines[1:] == [nothing], key="stands.no_matches")
 
 
 def stand_describe(pool: Pool, args: Arguments) -> list[str]:
@@ -415,25 +418,30 @@ def _compare_many(pool: Pool, reference: Target, stands: Sequence[str], args: Ar
     base = read_structure(pool, reference)  # the reference failing fails the call: nothing to compare with
     detailed = len(stands) <= DETAILED_COMPARE_STANDS
     totals = {"same": 0, "differ": 0, "skipped": 0}
+    counting = threading.Lock()  # the stands are read in threads, and each adds itself to one total
 
     def run(stand: str) -> list[str]:
         try:
             target = pool.registry.target(stand, args.get("schema"), args.get("database"))
             structure = read_structure(pool, target)
         except StandError as exc:
-            totals["skipped"] += 1
             pool.outcomes[stand] = ERROR
+            with counting:
+                totals["skipped"] += 1
             return [stand, f"  {exc}"]
         except DatabaseUnavailableError as exc:
-            totals["skipped"] += 1
             pool.outcomes[stand] = UNAVAILABLE
+            with counting:
+                totals["skipped"] += 1
             return [target.label, f"  {exc}"]
         except (QueryFailedError, ToolError) as exc:
-            totals["skipped"] += 1
             pool.outcomes[stand] = ERROR
+            with counting:
+                totals["skipped"] += 1
             return [target.label, f"  {exc}"]
         pool.outcomes[stand] = OK
-        return _compared(base, structure, totals, detailed=detailed)
+        with counting:
+            return _compared(base, structure, totals, detailed=detailed)
 
     lines = [t("compare.many_header", a=reference.label, count=len(stands))]
     lines.extend(_each_stand(pool, stands, run))
@@ -480,7 +488,9 @@ def stand_run(pool: Pool, args: Arguments) -> list[str]:
     def with_login(target: Target) -> list[str]:
         return run_select(pool.database(target), query, limit, _database_schemas(pool, target))
 
-    return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    no_rows = plural("rows.count", 0)
+    answers, late = _ask_stands(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    return _folded(pool, stands, answers, late, empty=lambda lines: lines[-1] == no_rows, key="stands.no_rows")
 
 
 def _elsewhere(pool: Pool, target: Target, lines: Sequence[str]) -> list[str]:
@@ -556,25 +566,69 @@ def _complaint(pool: Pool, stand: str, args: Arguments) -> StandError | None:
 
 
 def _each_stand(pool: Pool, stands: Sequence[str], run: Callable[[str], list[str]]) -> list[str]:
-    """The lines of run on the stands in turn while the call has time for another; the rest are named as not tried."""
-    lines: list[str] = []
-    started = time.monotonic()
-    for index, stand in enumerate(stands):
-        if index and time.monotonic() - started + _reserve(pool, stand) > CALL_TIME_BUDGET_S:
-            rest = stands[index:]
-            lines.append(t("stands.out_of_time", stands=summarize(rest), budget=CALL_TIME_BUDGET_S))
-            pool.outcomes.update(dict.fromkeys(rest, SKIPPED))
-            break
-        lines.extend(run(stand))
+    """The lines of run on every stand, in the order of stands; the stands that have not answered in time last."""
+    answers, late = _ask_stands(pool, stands, run)
+    lines = [line for stand in stands if stand in answers for line in answers[stand]]
+    return [*lines, *_not_in_time(late)]
+
+
+def _ask_stands(
+    pool: Pool, stands: Sequence[str], run: Callable[[str], list[str]]
+) -> tuple[dict[str, list[str]], list[str]]:
+    """run on every stand at the same time, one thread each, for as long as the call may take.
+
+    The answers of the stands that made it, and the stands that did not: the client waits only so long
+    for the call, so the call does not wait for them. Their threads finish on their own, and the pool
+    keeps their connections until then. The time a call takes is that of its slowest stand, not the sum.
+    """
+    answers: dict[str, list[str]] = {}
+
+    def ask(stand: str) -> None:
+        try:
+            answers[stand] = run(stand)
+        except Exception as exc:  # whatever stops a thread is the stand's line, not a lost stand
+            pool.outcomes[stand] = ERROR
+            answers[stand] = [stand, f"  {exc}"]
+
+    threads = [threading.Thread(target=ask, args=(stand,), name=f"pg-mcp {stand}", daemon=True) for stand in stands]
+    deadline = time.monotonic() + CALL_TIME_BUDGET_S
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    late = [stand for stand in stands if stand not in answers]
+    pool.outcomes.update(dict.fromkeys(late, SKIPPED))
     pool.current = None  # the query log names the call's stands and their outcomes, not the last login
-    return lines
+    pool.trim()  # the connections the call opened beyond the limit, except those a late stand still uses
+    return answers, late
 
 
-def _reserve(pool: Pool, stand: str) -> int:
-    """Seconds the stand may take: a silent host costs the connect timeout, then a slow statement its own."""
-    return max(
-        pool.connect_timeout(target) + pool.statement_timeout(target) for target in pool.registry.of_stand(stand)
-    )
+def _not_in_time(late: Sequence[str]) -> list[str]:
+    return [t("stands.out_of_time", stands=summarize(late), budget=CALL_TIME_BUDGET_S)] if late else []
+
+
+def _folded(
+    pool: Pool,
+    stands: Sequence[str],
+    answers: dict[str, list[str]],
+    late: Sequence[str],
+    *,
+    empty: Callable[[list[str]], bool],
+    key: str,
+) -> list[str]:
+    """The answers in order, with the stands that answered but found nothing folded into one line.
+
+    Asked which of fifty stands has a row, a model reads one stand with rows and one line naming the rest.
+    """
+    folded = [
+        stand
+        for stand in stands
+        if len(stands) > 1 and pool.outcomes.get(stand) == OK and stand in answers and empty(answers[stand])
+    ]
+    lines = [line for stand in stands if stand in answers and stand not in folded for line in answers[stand]]
+    if folded:
+        lines.append(t(key, stands=summarize(folded)))
+    return [*lines, *_not_in_time(late)]
 
 
 def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target], list[str]]) -> list[str]:

@@ -437,7 +437,7 @@ class TestOfflineTools:
         lines = tools["status"].call({}).splitlines()
         assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in lines
         assert any(line.startswith("access: read only. Nothing can be inserted") for line in lines)
-        assert any(line.endswith("stands covers at most 10 stands per call") for line in lines)
+        assert any(line.endswith("stands covers at most 100 stands per call") for line in lines)
         assert "pass stand to status to check that stand's connection" in lines
         assert pool.open_count() == 0
 
@@ -576,7 +576,7 @@ def test_an_answer_without_rows_names_the_other_stands_that_have_the_schema(regi
     empty, found = ["id", "(0 rows)"], ["id", "1", "(1 row)"]
     billing = registry.target("dev2", "billing")
     assert stand_tools._elsewhere(pool, billing, empty) == [
-        "Schema billing is on dev1, ift1 as well; pass stands to ask up to 10 stands in one call."
+        "Schema billing is on dev1, ift1 as well; pass stands to ask up to 100 stands in one call."
     ]
     assert stand_tools._elsewhere(pool, billing, found) == []
     assert stand_tools._elsewhere(pool, registry.target("dev1", "shipping"), empty) == []  # on dev1 only
@@ -861,8 +861,69 @@ def silent_port() -> Iterator[str]:
     """A port that accepts TCP connections and never answers: a host behind a dropped VPN."""
     with socket.socket() as server:
         server.bind(("127.0.0.1", 0))
-        server.listen(1)
+        server.listen(8)  # room for the stands of one call to wait on it together
         yield str(server.getsockname()[1])
+
+
+class TestParallelStands:
+    """A call over several stands asks them all at once: it takes as long as the slowest stand, not the sum."""
+
+    @pytest.fixture
+    def pool(self, tmp_path: Path, unreachable_env: dict[str, str], silent_port: str) -> Pool:
+        text = "".join(
+            f"[{name}]\nhost=127.0.0.1\nport={silent_port}\nconnect_timeout=1\n\n"
+            for name in ("dev1.orders.billing", "dev2.orders.billing", "ift1.orders.billing")
+        )
+        return Pool(loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)]), unreachable_env, limit=1)
+
+    @pytest.fixture
+    def tools(self, pool: Pool) -> dict[str, Tool]:
+        return by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+
+    def test_three_silent_stands_cost_one_timeout_not_three(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        started = time.monotonic()
+        lines = tools["run_select"].call({"stands": "*", "schema": "billing", "query": "SELECT 1"}).splitlines()
+        assert time.monotonic() - started < 2.5  # one second of connect timeout each, at the same time
+        assert lines[::2] == [
+            "dev1 / orders / billing",
+            "dev2 / orders / billing",
+            "ift1 / orders / billing",
+        ]  # in the order of the registry, however the stands finished
+        assert all(line.startswith("  ") for line in lines[1::2])  # what stopped each, under its label
+        assert pool.outcomes == {"dev1": "unavailable", "dev2": "unavailable", "ift1": "unavailable"}
+        assert pool.open_count() == 1  # the call opened three, the surplus is closed once it is over
+
+    def test_stands_that_have_not_answered_in_time_are_named(
+        self, monkeypatch: pytest.MonkeyPatch, pool: Pool, tools: dict[str, Tool]
+    ) -> None:
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0)
+        arguments = {"stands": "*", "schema": "billing", "query": "SELECT 1"}
+        assert tools["run_select"].call(arguments).splitlines() == [
+            "dev1–dev2, ift1: no answer within the 0 seconds of the call; ask about them in another call."
+        ]
+        assert pool.outcomes == {"dev1": "skipped", "dev2": "skipped", "ift1": "skipped"}
+        assert pool.open_count() == 3  # their threads are still waiting on the host: nothing is closed under them
+        deadline = time.monotonic() + 5
+        while pool.open_count() > 1 and time.monotonic() < deadline:
+            time.sleep(0.1)
+            pool.trim()
+        assert pool.open_count() == 1  # once the threads gave up, the next call's trim closed the surplus
+
+    def test_a_failing_thread_is_the_line_of_its_stand(self, pool: Pool) -> None:
+        def run(stand: str) -> list[str]:
+            if stand == "dev2":
+                raise RuntimeError("a bug in the worker")
+            return [stand, "  fine"]
+
+        assert stand_tools._each_stand(pool, ["dev1", "dev2", "ift1"], run) == [
+            "dev1",
+            "  fine",
+            "dev2",
+            "  a bug in the worker",
+            "ift1",
+            "  fine",
+        ]
+        assert pool.outcomes == {"dev2": "error"}
 
 
 class TestSilentHost:
@@ -948,15 +1009,15 @@ class TestManyStands:
             registry.matching(raw)
         assert str(caught.value).startswith(message)
 
-    def test_at_most_ten_stands_fit_in_one_call(self) -> None:
-        registry = Registry([Target(f"dev{n}", "orders", "billing", {"host": "db"}, "x") for n in range(1, 13)])
-        ten = ",".join(f"dev{n}" for n in range(1, 11))
-        assert registry.matching(ten) == [f"dev{n}" for n in range(1, 11)]
+    def test_at_most_a_hundred_stands_fit_in_one_call(self) -> None:
+        registry = Registry([Target(f"dev{n}", "orders", "billing", {"host": "db"}, "x") for n in range(1, 102)])
+        hundred = ",".join(f"dev{n}" for n in range(1, 101))
+        assert registry.matching(hundred) == [f"dev{n}" for n in range(1, 101)]
         with pytest.raises(StandError) as caught:
             registry.matching("dev*")
         assert str(caught.value) == (
-            "'dev*' means 12 stands (dev1–dev12), and one call covers at most 10. "
-            "Narrow the pattern or name up to 10 stands separated by commas."
+            "'dev*' means 101 stands (dev1–dev101), and one call covers at most 100. "
+            "Narrow the pattern or name up to 100 stands separated by commas."
         )
 
     @pytest.mark.parametrize(
@@ -1016,13 +1077,13 @@ class TestManyStands:
             tools["list_tables"].call({"stand": "pg"})  # it takes one stand only
 
     def test_more_stands_than_one_call_asks_are_named_as_a_list_or_a_pattern(self, tmp_path: Path) -> None:
-        names = [f"dev{number}" for number in range(1, 13)]
+        names = [f"dev{number}" for number in range(1, 102)]
         many = loaded(
             STANDS_ON, [write(tmp_path / "many.conf", "".join(f"[{name}.db.s]\nhost=h\n\n" for name in names))]
         )
         tools = by_name(build_stand_tools(Pool(many, {}), str(ROOT), profile="analyst"))
         with pytest.raises(
-            ToolError, match=r"pass stands in place of stand: a list or a pattern, at most 10 stands\.$"
+            ToolError, match=r"pass stands in place of stand: a list or a pattern, at most 100 stands\.$"
         ):
             tools["run_select"].call({"stand": "pg", "schema": "s", "query": "SELECT 1"})
 
@@ -1063,17 +1124,6 @@ class TestManyStands:
         assert lines[0] == "dev1 / archive"
         assert lines[2:] == ["dev2", "  Stand dev2 has no database 'archive' in the registry. Databases: orders."]
         assert pool.outcomes == {"dev1": "unavailable", "dev2": "error"}
-
-    def test_the_rest_are_named_when_the_call_runs_out_of_time(
-        self, monkeypatch: pytest.MonkeyPatch, pool: Pool, tools: dict[str, Tool]
-    ) -> None:
-        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0)
-        arguments = {"stands": "*", "schema": "billing", "database": "orders", "query": "SELECT 1"}
-        lines = tools["run_select"].call(arguments).splitlines()
-        assert lines[0] == "dev1 / orders / billing"
-        assert lines[2] == "dev2, ift1: not tried, the call would exceed its 0 seconds; ask for them in another call."
-        assert len(lines) == 3
-        assert pool.outcomes == {"dev1": "unavailable", "dev2": "skipped", "ift1": "skipped"}
 
     def test_the_query_log_has_one_line_with_the_outcome_of_each_stand(self, pool: Pool, tmp_path: Path) -> None:
         log = tmp_path / "queries.jsonl"
@@ -1145,14 +1195,6 @@ class TestEntry:
     ) -> None:
         status = self.answers(dict(env, PG_MCP_MAX_CONNECTIONS=raw))[2]
         assert f"at most {connections} connections stay open" in status
-
-
-def test_the_time_reserve_of_a_stand_covers_a_silent_host_and_a_slow_statement(tmp_path: Path) -> None:
-    text = "[dev1.orders.billing]\nhost=db\n\n[dev1.orders.shipping]\nhost=db\nconnect_timeout=3\n"
-    registry = loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)])
-    assert stand_tools._reserve(Pool(registry, {}), "dev1") == 15  # 10 seconds to connect, 5 for the statement
-    pool = Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "2", "PG_MCP_STATEMENT_TIMEOUT_MS": "1500"})
-    assert stand_tools._reserve(pool, "dev1") == 5  # the section's 3 seconds over the entry's 2, plus 2 rounded up
 
 
 # Every request to the model carries tools/list, and local models run with small contexts.
