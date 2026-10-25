@@ -902,8 +902,11 @@ class TestParallelStands:
             "dev1–dev2, ift1: no answer within the 0 seconds of the call; ask about them in another call."
         ]
         assert pool.outcomes == {"dev1": "skipped", "dev2": "skipped", "ift1": "skipped"}
-        assert pool.open_count() == 3  # their threads are still waiting on the host: nothing is closed under them
         deadline = time.monotonic() + 5
+        while pool.open_count() < 3 and time.monotonic() < deadline:
+            time.sleep(0.02)  # the threads register their connections on their own time
+        pool.trim()
+        assert pool.open_count() == 3  # their threads are still waiting on the host: nothing is closed under them
         while pool.open_count() > 1 and time.monotonic() < deadline:
             time.sleep(0.1)
             pool.trim()
