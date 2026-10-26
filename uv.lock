@@ -533,7 +533,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pg-mcp-explorer"
+name = "pg-explorer-mcp"
 version = "0.7.0"
 source = { editable = "." }
 
