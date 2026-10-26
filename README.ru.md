@@ -1,10 +1,13 @@
-# pg-mcp
+# pg-explorer-mcp
 
 [English](README.md) | **Русский**
 
-[![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
-[![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
-[![downloads](https://img.shields.io/github/downloads/dbelokursky/pg-mcp/total)](https://github.com/dbelokursky/pg-mcp/releases)
+До версии 0.8.0 сервер назывался pg-mcp. Что сделать после обновления, сказано в разделе
+[«Обновление и удаление»](#обновление-и-удаление).
+
+[![tests](https://github.com/dbelokursky/pg-explorer-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-explorer-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/dbelokursky/pg-explorer-mcp)](https://github.com/dbelokursky/pg-explorer-mcp/releases)
+[![downloads](https://img.shields.io/github/downloads/dbelokursky/pg-explorer-mcp/total)](https://github.com/dbelokursky/pg-explorer-mcp/releases)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 MCP-сервер, который даёт агенту доступ **только на чтение** к базе PostgreSQL, а через одну запись — и к
@@ -56,8 +59,8 @@ stdio. Работает на Python 3.9+ без установки пакето�
 Нужны Python 3.9+, GigaCode CLI (или Qwen Code) и роль в базе, которую выдал DBA.
 
 ```bash
-git clone https://github.com/dbelokursky/pg-mcp.git
-cd pg-mcp
+git clone https://github.com/dbelokursky/pg-explorer-mcp.git
+cd pg-explorer-mcp
 export PGHOST=db.example.com PGDATABASE=app PGUSER=mcp_agent   # где база и под какой ролью
 python3 install.py --lang ru                                     # регистрация и проверка
 gigacode extensions link "$(pwd)"                                # контекст и команда /pg:setup
@@ -91,14 +94,14 @@ PGDATABASE=pg_mcp_demo PGUSER=mcp_demo_agent python3 install.py --profile analys
 ### 1. Код
 
 ```bash
-git clone https://github.com/dbelokursky/pg-mcp.git
+git clone https://github.com/dbelokursky/pg-explorer-mcp.git
 ```
 
-Без git: возьмите `pg-mcp-<версия>.zip` из последнего выпуска на
-[странице Releases](https://github.com/dbelokursky/pg-mcp/releases) и распакуйте его в любую папку: внутри папка
-`pg-mcp` со всем, что нужно серверу, а рядом с архивом лежит `SHA256SUMS` с его контрольной суммой.
-У архива есть аттестация происхождения: `gh attestation verify pg-mcp-<версия>.zip --repo
-dbelokursky/pg-mcp` подтверждает, что его собрал GitHub из тега этого репозитория. Папку потом не
+Без git: возьмите `pg-explorer-mcp-<версия>.zip` из последнего выпуска на
+[странице Releases](https://github.com/dbelokursky/pg-explorer-mcp/releases) и распакуйте его в любую папку: внутри папка
+`pg-explorer-mcp` со всем, что нужно серверу, а рядом с архивом лежит `SHA256SUMS` с его контрольной суммой.
+У архива есть аттестация происхождения: `gh attestation verify pg-explorer-mcp-<версия>.zip --repo
+dbelokursky/pg-explorer-mcp` подтверждает, что его собрал GitHub из тега этого репозитория. Папку потом не
 переносите: путь к ней записывается в настройки агента. Если всё же перенесли — повторите шаг 5.
 
 ### 2. Python 3.9 или новее
@@ -183,7 +186,7 @@ py -3 install.py                                # Windows
   "mcpServers": {
     "pg": {
       "command": "/usr/bin/python3",
-      "args": ["-I", "/Users/me/pg-mcp/run.py"],
+      "args": ["-I", "/Users/me/pg-explorer-mcp/run.py"],
       "timeout": 30000,
       "env": {
         "PGHOST": "db.example.com",
@@ -244,7 +247,7 @@ Qwen Code.
 ### 6. Расширение
 
 ```bash
-gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extensions link …
+gigacode extensions link /путь/к/pg-explorer-mcp     # для Qwen Code: qwen extensions link …
 ```
 
 Расширение даёт агенту короткий контекст (с чего начинать, что пароль в чат не просят, отвечать на
@@ -276,7 +279,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 `status`:
 
 ```text
-pg-mcp 0.7.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
+pg-mcp 0.7.0 на Python 3.9.6, установлен в /Users/me/pg-explorer-mcp
 имя сервера: pg
 доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких просьб отказывайтесь, а не просите пользователя их подтвердить.
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
@@ -389,9 +392,10 @@ user=shop_reader
 - обязателен только `host`; `port` (5432), `dbname` (часть имени про базу), `user` (имя схемы),
   `sslmode`, `sslrootcert` и `connect_timeout` (10 секунд) — по желанию;
 - пароли — в файл паролей, строка на учётку, как и для одной базы;
-- сервер читает `~/.pg-mcp/stands.conf` (на Windows `%APPDATA%\pg-mcp\stands.conf` или файл из
+- сервер читает `~/.pg-explorer-mcp/stands.conf` (на Windows `%APPDATA%\pg-explorer-mcp\stands.conf` или файл из
   `PG_EXPLORER_MCP_STANDS_FILE`) и ваш `~/.pg_service.conf`; при одинаковых именах побеждает первый файл.
-  Секции с другими именами — обычные сервисы psql, сервер их не трогает;
+  Пока в новой папке нет `stands.conf`, читается тот, что pg-mcp 0.7.0 записал в `~/.pg-mcp/`, и импорт с
+  выгрузками работают с той же папкой. Секции с другими именами — обычные сервисы psql, сервер их не трогает;
 - те же секции понимает psql: `psql service=dev7.demo.shop`.
 
 **2. Запись.**
@@ -417,7 +421,7 @@ python3 install.py import pg-service ~/.pg_service.conf --write
 выражению `(dev|ift)\d+` (`--stand-pattern` его меняет); база — та, что в подключении, схема — его
 учётка, ведь на стенде у каждой схемы учётка с тем же именем. Предпросмотр перечисляет, что будет
 записано и что пропущено и почему; пароли не показываются никогда. `--write` переписывает
-`~/.pg-mcp/stands.conf` (дополняя то, что там есть, или заменяя с `--prune`), добавляет пароли в файл
+`~/.pg-explorer-mcp/stands.conf` (дополняя то, что там есть, или заменяя с `--prune`), добавляет пароли в файл
 паролей, не трогая остальные его строки, оставляет датированную копию обоих файлов и регистрирует
 `pg-stands`; при любом сбое ничего не меняется. Сохранённые пароли DBeaver читаются из его файлов,
 пока DBeaver хранит их под своим ключом по умолчанию; при включённом защищённом хранилище они
@@ -440,8 +444,8 @@ python3 install.py export pgadmin --write --stands 'dev*,ift2'
 | Инструмент | `export` | Что пишет | Дальше |
 |---|---|---|---|
 | DBeaver | `dbeaver` | `data-sources-pg-mcp.json` рядом с `data-sources.json` DBeaver или в папке из `--workspace` | Перезапустить DBeaver |
-| DataGrip и IDE JetBrains с инструментами БД | `datagrip` | `.idea/dataSources.xml` и `dataSources.local.xml` в `~/.pg-mcp/datagrip` или в проекте из `--project` (сначала закройте его) | Открыть папку как проект |
-| pgAdmin 4 | `pgadmin` | `~/.pg-mcp/pgadmin-servers.json` | Tools > Import/Export Servers > Import |
+| DataGrip и IDE JetBrains с инструментами БД | `datagrip` | `.idea/dataSources.xml` и `dataSources.local.xml` в `~/.pg-explorer-mcp/datagrip` или в проекте из `--project` (сначала закройте его) | Открыть папку как проект |
+| pgAdmin 4 | `pgadmin` | `~/.pg-explorer-mcp/pgadmin-servers.json` | Tools > Import/Export Servers > Import |
 | psql, pgcli | `pg-service` | Секции `~/.pg_service.conf`, схема первой в search_path | `psql "service=dev7.demo.shop"` |
 | Расширение PostgreSQL для VS Code (Microsoft) | `vscode-pgsql` | `pgsql.connections` в настройках пользователя; для Cursor и Windsurf — `--editor cursor` или `windsurf` | Перезагрузить окно |
 | SQLTools | `sqltools` | `sqltools.connections` в настройках пользователя, с пустым паролем | Перезагрузить окно |
@@ -451,7 +455,7 @@ python3 install.py export pgadmin --write --stands 'dev*,ift2'
 файла остаётся датированная копия, права файла сохраняются, а файл-ссылка остаётся ссылкой. Подключения,
 которые уже есть в DBeaver с тем же хостом, портом, базой и пользователем, пропускаются: чаще всего
 стенды пришли как раз из DBeaver. В `~/.pg_service.conf` каждая выгруженная секция стоит под строкой
-`# pg-mcp export`: следующая выгрузка переписывает только такие секции, сервер не считает их стендами,
+`# pg-explorer-mcp export`: следующая выгрузка переписывает только такие секции, сервер не считает их стендами,
 а одноимённая секция, которую вы написали сами, остаётся как есть, и её стенд пропускается. Настройки
 TLS стенда, `sslmode` и `sslrootcert`, переносятся тоже. Файл настроек с комментариями не трогается:
 выгрузка печатает, что добавить в него вручную. Расширение
@@ -632,7 +636,7 @@ dev3 / demo / shop
 к файлу (`~` можно) — перед запуском `install.py` или добавьте её потом в блок `env` сервера:
 
 ```bash
-export PG_EXPLORER_MCP_QUERY_LOG=~/pg-mcp-queries.jsonl
+export PG_EXPLORER_MCP_QUERY_LOG=~/pg-explorer-mcp-queries.jsonl
 python3 install.py
 ```
 
@@ -663,7 +667,7 @@ python3 install.py
 дата-время; дата без времени в `--until` включает весь день):
 
 ```bash
-python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl ~/pg-mcp-queries.jsonl.1.gz --since 2026-10-20
+python3 scripts/querylog_report.py ~/pg-explorer-mcp-queries.jsonl ~/pg-explorer-mcp-queries.jsonl.1.gz --since 2026-10-20
 ```
 
 Сводка считает вызовы по инструментам, по пользователям ОС и в режиме стендов по стендам (вызов на
@@ -674,7 +678,7 @@ python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl ~/pg-mcp-queries.jsonl
 считаются:
 
 ```text
-Files: /home/anna/pg-mcp-queries.jsonl (13 lines, 1 broken)
+Files: /home/anna/pg-explorer-mcp-queries.jsonl (13 lines, 1 broken)
 Calls: 12  ok 8  error 1  refused 2  unavailable 1  failed 0
 Period: 2026-10-22 09:12:03 .. 2026-10-22 16:41:05 UTC
 Users: 2  Tools: 7
@@ -713,12 +717,14 @@ Refused by the SQL check (2)
 
 Файл лежит на машине пользователя: это журнал, а не защищённый аудит. Аудит доступа к данным ведут на
 сервере PostgreSQL (`pgaudit` или `log_statement`); соединения сервера помечены
-`application_name = 'pg-mcp'`. Почему так — в [ADR 0005](docs/adr/0005-query-log.md).
+`application_name = 'pg-explorer-mcp'`. Почему так — в [ADR 0005](docs/adr/0005-query-log.md).
 
 ## Настройки
 
 Все настройки — переменные окружения в блоке `env` сервера `pg` в настройках агента.
-`install.py` переносит их туда из терминала.
+`install.py` переносит их туда из терминала. В настройках, которые записал pg-mcp 0.7.0 и раньше, они
+называются `PG_MCP_*`. Эти имена по-прежнему работают, при обеих переменных побеждает `PG_EXPLORER_MCP_*`,
+а `install.py` пишет только новые имена.
 
 | Переменная | По умолчанию | Что задаёт |
 |---|---|---|
@@ -739,7 +745,7 @@ Refused by the SQL check (2)
 | `PG_EXPLORER_MCP_NAME` | `pg` | имя записи, которое показывает `status`; его пишет `install.py --name` |
 | `PG_EXPLORER_MCP_SOCKET_TIMEOUT_S` | `30`, для стендов `10` | сколько секунд ждать нового подключения; открытый сокет ждёт не меньше таймаута запроса плюс 5 секунд |
 | `PG_EXPLORER_MCP_STANDS` | — (выключено) | `*` или шаблоны имён стендов вроде `dev*,ift2`: одна запись для [многих стендов](#много-стендов) |
-| `PG_EXPLORER_MCP_STANDS_FILE` | `~/.pg-mcp/stands.conf`, на Windows `%APPDATA%\pg-mcp\stands.conf` | реестр стендов |
+| `PG_EXPLORER_MCP_STANDS_FILE` | `~/.pg-explorer-mcp/stands.conf`, на Windows `%APPDATA%\pg-explorer-mcp\stands.conf` | реестр стендов |
 | `PGSERVICEFILE` | `~/.pg_service.conf`, на Windows `%APPDATA%\postgresql\.pg_service.conf` | ваши сервисы psql; стенды читаются и оттуда |
 | `PG_EXPLORER_MCP_MAX_CONNECTIONS` | `8` | сколько подключений держит открытыми запись стендов |
 
@@ -803,22 +809,36 @@ psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owne
 
 ## Обновление и удаление
 
-Обновление клона: `git pull` в папке pg-mcp и перезапуск агента. Обновление распакованного архива:
-возьмите новый `pg-mcp-<версия>.zip` на [странице Releases](https://github.com/dbelokursky/pg-mcp/releases),
-удалите старую папку `pg-mcp`, распакуйте новую на её место и перезапустите агента. `install.py`
+Обновление клона: `git pull` в его папке и перезапуск агента. Обновление распакованного архива:
+возьмите новый `pg-explorer-mcp-<версия>.zip` на [странице Releases](https://github.com/dbelokursky/pg-explorer-mcp/releases),
+удалите старую папку, распакуйте новую на её место и перезапустите агента. `install.py`
 повторять нужно, только если путь к папке изменился или вы сменили Python, профиль или язык.
 
+**С pg-mcp 0.7.0 и раньше.**
+
+- Клону достаточно `git pull` и перезапуска. Настройки агента указывают на его `run.py`, расширение само
+  появится под новым именем, а старые переменные `PG_MCP_*`, реестр стендов в `~/.pg-mcp/` и прежние
+  выгрузки продолжают работать.
+- Архив теперь распаковывается в `pg-explorer-mcp/`, а не в `pg-mcp/`. Один раз запустите `install.py` из
+  новой папки: он перепишет пути в настройках агента. Затем подключите расширение заново.
+- GigaCode хранит расширение, подключённое до 0.8.0, в `~/.gigacode/extensions/pg-mcp` (Qwen Code — в
+  `~/.qwen/extensions/pg-mcp`) и не даёт подключить новое, пока эта папка есть. Сначала удалите её;
+  `install.py` называет её, если находит.
+- Подключения сервера теперь помечены `application_name = 'pg-explorer-mcp'`: если DBA фильтрует по
+  `pg-mcp`, фильтру нужно новое имя.
+
 Удаление: уберите `pg` (и записи `pg-<имя>`, если есть) из `mcpServers` в настройках агента (копии прежних настроек лежат рядом),
-выполните `gigacode extensions uninstall pg-mcp` и удалите папку.
+выполните `gigacode extensions uninstall pg-explorer-mcp` и удалите папку. Расширение, подключённое до 0.8.0,
+удаляется вместе с папкой `~/.gigacode/extensions/pg-mcp`.
 
 ## Вопросы и ответы
 
 **Нужны ли интернет, pip или права администратора?** Нет. Всё, что нужно серверу, лежит в
 репозитории; нужен только сетевой доступ к базе.
 
-**Это тот же `pg-mcp`, что на PyPI?** Нет, там другой проект с тем же именем. Этого сервера на PyPI
-нет, он ставится только с GitHub — клоном или архивом выпуска ([шаг 1](#1-код)): `pip install pg-mcp`
-и `uvx pg-mcp` поставят другой проект.
+**Пакет `pg-mcp` на PyPI — это этот сервер?** Нет, это другой проект; до 0.8.0 этот сервер тоже назывался
+pg-mcp. На PyPI его нет, он ставится только с GitHub — клоном или архивом выпуска ([шаг 1](#1-код)):
+`pip install pg-mcp` и `uvx pg-mcp` поставят другой проект.
 
 **Может ли агент что-то изменить в базе?** Нет. Даже если модель обманет текст из самих данных,
 запрос остановят права роли, транзакция только для чтения и проверка текста.
@@ -850,6 +870,6 @@ JetBrains ([другие агенты и редакторы](#другие-аг�
 
 ## Лицензия
 
-pg-mcp распространяется под лицензией MIT ([LICENSE](LICENSE)). Пакеты, которые он несёт в
+pg-explorer-mcp распространяется под лицензией MIT ([LICENSE](LICENSE)). Пакеты, которые он несёт в
 `src/pg_explorer_mcp/_vendor` без изменений, остаются под своими лицензиями — они перечислены в
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

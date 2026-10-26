@@ -5,18 +5,18 @@
 ## Reporting a vulnerability
 
 Report it privately through
-[GitHub Security Advisories](https://github.com/dbelokursky/pg-mcp/security/advisories/new) rather
+[GitHub Security Advisories](https://github.com/dbelokursky/pg-explorer-mcp/security/advisories/new) rather
 than in a public issue. Say what the server could be made to do, with the statement or call that does
 it; a fix lands in the next release and the advisory names you unless you ask otherwise.
 
 ## Supported versions
 
-The latest release on the [Releases page](https://github.com/dbelokursky/pg-mcp/releases) and the
+The latest release on the [Releases page](https://github.com/dbelokursky/pg-explorer-mcp/releases) and the
 `develop` branch. Older releases get no fixes: update with `git pull` or the new archive.
 
 ## What the server guarantees, and in which order
 
-pg-mcp gives an agent read-only access to PostgreSQL. Three layers keep it read-only, and they are
+pg-explorer-mcp gives an agent read-only access to PostgreSQL. Three layers keep it read-only, and they are
 meant to hold in this order ([ADR 0002](docs/adr/0002-read-only-sql-policy.md), in Russian):
 
 1. **The privileges of the PostgreSQL role.** This is the security boundary. The role the agent
@@ -44,7 +44,7 @@ A report that gets past layer 3 alone is worth sending; one that gets past layer
 ## Безопасность
 
 Об уязвимости сообщайте приватно через
-[GitHub Security Advisories](https://github.com/dbelokursky/pg-mcp/security/advisories/new), не в
+[GitHub Security Advisories](https://github.com/dbelokursky/pg-explorer-mcp/security/advisories/new), не в
 открытом issue: что сервер можно заставить сделать и каким запросом или вызовом. Поддерживается
 последний выпуск и ветка `develop`.
 
