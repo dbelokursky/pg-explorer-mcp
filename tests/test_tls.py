@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from pg_mcp.db import Database, Settings
-from pg_mcp.tools import build_tools
+from pg_explorer_mcp.db import Database, Settings
+from pg_explorer_mcp.tools import build_tools
 from tests.helpers import ROOT
 
 pytestmark = [

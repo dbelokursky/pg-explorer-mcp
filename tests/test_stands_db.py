@@ -19,12 +19,12 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
-from pg_mcp import sqlguard
-from pg_mcp.db import Settings
-from pg_mcp.querylog import QueryLog
-from pg_mcp.stand_tools import build_stand_tools
-from pg_mcp.stands import Pool, load_registry
-from pg_mcp.tools import Tool, ToolError
+from pg_explorer_mcp import sqlguard
+from pg_explorer_mcp.db import Settings
+from pg_explorer_mcp.querylog import QueryLog
+from pg_explorer_mcp.stand_tools import build_stand_tools
+from pg_explorer_mcp.stands import Pool, load_registry
+from pg_explorer_mcp.tools import Tool, ToolError
 from tests.helpers import ROOT, unreachable_database_env
 
 pytestmark = pytest.mark.integration

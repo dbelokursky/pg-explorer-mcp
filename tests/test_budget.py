@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from pg_mcp.budget import DEFAULT_BUDGET, MIN_BUDGET, budget_from_env, fit_to_budget, shorten
+from pg_explorer_mcp.budget import DEFAULT_BUDGET, MIN_BUDGET, budget_from_env, fit_to_budget, shorten
 
 HEADER = "sales.orders | table | ~1.2k rows | Заказы клиентов"
 
@@ -78,6 +78,6 @@ def test_budget_comes_from_the_environment_with_a_floor(env: dict[str, str], exp
 
 
 def test_garbage_budget_falls_back_to_the_default(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="pg_mcp.budget"):
+    with caplog.at_level(logging.WARNING, logger="pg_explorer_mcp.budget"):
         assert budget_from_env({"PG_MCP_MAX_RESPONSE_CHARS": "lots"}) == DEFAULT_BUDGET
     assert "is not a number" in caplog.text

@@ -10,8 +10,8 @@ from pathlib import Path
 import pg8000.exceptions
 import pytest
 
-from pg_mcp import db
-from pg_mcp.db import Database, DatabaseUnavailableError, Settings, read_pgpass
+from pg_explorer_mcp import db
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, Settings, read_pgpass
 
 
 def settings(**overrides: str) -> Settings:

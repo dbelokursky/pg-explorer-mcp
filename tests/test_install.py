@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import install
-from pg_mcp import clients, exports, imports
+from pg_explorer_mcp import clients, exports, imports
 from tests.helpers import ROOT
 from tests.test_imports import dbeaver_workspace, postgres
 

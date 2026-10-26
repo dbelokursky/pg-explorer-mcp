@@ -12,8 +12,8 @@ from collections.abc import Iterator
 import demo
 import pytest
 
-from pg_mcp.db import Database
-from pg_mcp.tools import Tool, ToolError, build_tools
+from pg_explorer_mcp.db import Database
+from pg_explorer_mcp.tools import Tool, ToolError, build_tools
 from tests.helpers import ROOT
 
 pytestmark = pytest.mark.integration

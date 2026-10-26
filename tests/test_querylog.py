@@ -12,9 +12,9 @@ from typing import Any
 
 import pytest
 
-from pg_mcp.db import Database
-from pg_mcp.querylog import QueryLog
-from pg_mcp.tools import Tool, ToolError, build_tools
+from pg_explorer_mcp.db import Database
+from pg_explorer_mcp.querylog import QueryLog
+from pg_explorer_mcp.tools import Tool, ToolError, build_tools
 from tests.helpers import ROOT
 
 

@@ -10,10 +10,10 @@ from pathlib import Path
 import pytest
 import release
 
-import pg_mcp
+import pg_explorer_mcp
 from tests.helpers import ROOT
 
-VERSION = pg_mcp.__version__
+VERSION = pg_explorer_mcp.__version__
 
 
 @pytest.fixture(scope="module")
@@ -32,9 +32,9 @@ def archive(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def fake_root(tmp_path: Path, changelog_version: str) -> Path:
     """A tree that declares version 1.2.0 everywhere; the CHANGELOG's first section has the version asked for."""
-    (tmp_path / "src" / "pg_mcp").mkdir(parents=True)
+    (tmp_path / "src" / "pg_explorer_mcp").mkdir(parents=True)
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "pg-mcp"\nversion = "1.2.0"\n', encoding="utf-8")
-    (tmp_path / "src" / "pg_mcp" / "__init__.py").write_text('__version__ = "1.2.0"\n', encoding="utf-8")
+    (tmp_path / "src" / "pg_explorer_mcp" / "__init__.py").write_text('__version__ = "1.2.0"\n', encoding="utf-8")
     for manifest in ("gigacode-extension.json", "qwen-extension.json"):
         (tmp_path / manifest).write_text('{"name": "pg-mcp", "version": "1.2.0"}\n', encoding="utf-8")
     (tmp_path / "CHANGELOG.md").write_text(
@@ -57,7 +57,7 @@ def fake_archive(path: Path, install_py: str) -> Path:
 def test_the_version_is_read_from_every_file(tmp_path: Path) -> None:
     assert release.versions(fake_root(tmp_path, "1.2.0")) == {
         "pyproject.toml": "1.2.0",
-        "src/pg_mcp/__init__.py": "1.2.0",
+        "src/pg_explorer_mcp/__init__.py": "1.2.0",
         "CHANGELOG.md": "1.2.0",
         "gigacode-extension.json": "1.2.0",
         "qwen-extension.json": "1.2.0",

@@ -6,7 +6,7 @@
     python3 scripts/release.py check pg-mcp-0.7.0.zip   unpack the archive and start the server from it
 
 .github/workflows/release.yml runs these when a tag is pushed. The version lives in pyproject.toml,
-src/pg_mcp/__init__.py, both extension manifests and the first versioned heading of CHANGELOG.md
+src/pg_explorer_mcp/__init__.py, both extension manifests and the first versioned heading of CHANGELOG.md
 (tests/test_version.py keeps them in step), and the tag must be v<version>. The check does what a
 user without git does: unpacks the archive on its own, away from the checkout, and runs
 `install.py --check` from the folder against a port where nothing listens. The server must start
@@ -36,8 +36,8 @@ FOLDER = "pg-mcp"
 REQUIRED = (
     "run.py",
     "install.py",
-    "src/pg_mcp/__init__.py",
-    "src/pg_mcp/_vendor/pg8000/__init__.py",
+    "src/pg_explorer_mcp/__init__.py",
+    "src/pg_explorer_mcp/_vendor/pg8000/__init__.py",
     "scripts/check_vendor.py",
     "gigacode-extension.json",
     "qwen-extension.json",
@@ -57,7 +57,9 @@ def versions(root: Path = ROOT) -> dict[str, str]:
     """The version each file declares; for CHANGELOG.md, its first versioned heading."""
     found = {
         "pyproject.toml": _first(root / "pyproject.toml", r'^version = "([^"]+)"'),
-        "src/pg_mcp/__init__.py": _first(root / "src" / "pg_mcp" / "__init__.py", r'^__version__ = "([^"]+)"'),
+        "src/pg_explorer_mcp/__init__.py": _first(
+            root / "src" / "pg_explorer_mcp" / "__init__.py", r'^__version__ = "([^"]+)"'
+        ),
         "CHANGELOG.md": _first(root / "CHANGELOG.md", r"^## (\d+\.\d+\.\d+)(?=\s)"),
     }
     for manifest in ("gigacode-extension.json", "qwen-extension.json"):

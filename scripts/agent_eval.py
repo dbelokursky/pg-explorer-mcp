@@ -55,7 +55,7 @@ import client_smoke  # the throwaway home with the password in a pass file, as t
 import demo  # the demo database: its names, and a connection to count the orders again
 import pg8000.exceptions
 
-from pg_mcp.db import Settings
+from pg_explorer_mcp.db import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASE_URL = "http://localhost:11434/v1"

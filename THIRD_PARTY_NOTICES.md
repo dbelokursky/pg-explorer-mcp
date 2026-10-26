@@ -1,6 +1,6 @@
 # Third-party notices
 
-pg-mcp ships these packages unchanged inside `src/pg_mcp/_vendor`, so that it runs on a plain Python
+pg-mcp ships these packages unchanged inside `src/pg_explorer_mcp/_vendor`, so that it runs on a plain Python
 without installing anything (`scripts/check_vendor.py` checks them against their wheels). Each keeps
 its own licence, reproduced below. pg-mcp itself is under the MIT licence in `LICENSE`.
 

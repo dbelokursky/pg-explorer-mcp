@@ -7,8 +7,8 @@ from collections.abc import Iterator
 
 import pytest
 
-import pg_mcp  # noqa: F401  (puts the vendored packages, pg8000 among them, on sys.path)
-from pg_mcp import i18n
+import pg_explorer_mcp  # noqa: F401  (puts the vendored packages, pg8000 among them, on sys.path)
+from pg_explorer_mcp import i18n
 from tests.helpers import unreachable_database_env
 
 INTEGRATION = os.environ.get("PG_MCP_IT") == "1"

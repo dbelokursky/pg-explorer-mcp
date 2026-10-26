@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from pg_mcp.db import Database
-from pg_mcp.tools import PROFILES, Tool, build_tools, profile_from_env
+from pg_explorer_mcp.db import Database
+from pg_explorer_mcp.tools import PROFILES, Tool, build_tools, profile_from_env
 from tests.helpers import ROOT
 
 

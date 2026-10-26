@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from pg_mcp import imports
-from pg_mcp.aes import encrypt_cbc
-from pg_mcp.db import read_pgpass
-from pg_mcp.imports import (
+from pg_explorer_mcp import imports
+from pg_explorer_mcp.aes import encrypt_cbc
+from pg_explorer_mcp.db import read_pgpass
+from pg_explorer_mcp.imports import (
     Connection,
     ImportRefusedError,
     compile_pattern,
@@ -25,7 +25,7 @@ from pg_mcp.imports import (
     stand_of,
     write,
 )
-from pg_mcp.stands import load_registry
+from pg_explorer_mcp.stands import load_registry
 
 PATTERN = compile_pattern(imports.DEFAULT_STAND_PATTERN)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pg_mcp.sqlguard import SqlRejectedError, check_read_only, forbidden_function
+from pg_explorer_mcp.sqlguard import SqlRejectedError, check_read_only, forbidden_function
 
 
 @pytest.mark.parametrize(
