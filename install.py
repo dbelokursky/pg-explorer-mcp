@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register pg-mcp in GigaCode CLI (or Qwen Code) and check that it starts.
+"""Register pg-explorer-mcp in GigaCode CLI (or Qwen Code) and check that it starts.
 
     python3 install.py            register in ~/.gigacode/settings.json, then check
     python3 install.py --check    only start the server and call status
@@ -37,17 +37,17 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pg_explorer_mcp import clients, exports, i18n, imports
+from pg_explorer_mcp import clients, environment, exports, i18n, imports
 from pg_explorer_mcp.i18n import t
 
 MIN_PYTHON = (3, 9)
 ROOT = Path(__file__).resolve().parent
 RUN_PY = str(ROOT / "run.py")
 SERVER_NAME = "pg"  # further databases register as pg-<name>
-STANDS_NAME = "stands"  # the entry an import registers: pg-stands, with PG_MCP_STANDS=*
+STANDS_NAME = "stands"  # the entry an import registers: pg-stands, with PG_EXPLORER_MCP_STANDS=*
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
 SETTINGS_FILES = {"gigacode": "~/.gigacode/settings.json", "qwen": "~/.qwen/settings.json"}
-EXTENSION_CLIENTS = ("gigacode", "qwen")  # the clients that link pg-mcp as an extension too
+EXTENSION_CLIENTS = ("gigacode", "qwen")  # the clients that link pg-explorer-mcp as an extension too
 COPIED_ENV = (
     "PGHOST",
     "PGPORT",
@@ -56,19 +56,24 @@ COPIED_ENV = (
     "PGSSLMODE",
     "PGSSLROOTCERT",
     "PGPASSFILE",
-    "PG_MCP_STATEMENT_TIMEOUT_MS",
-    "PG_MCP_MAX_RESPONSE_CHARS",
-    "PG_MCP_PROFILE",
-    "PG_MCP_QUERY_LOG",
-    "PG_MCP_SOCKET_TIMEOUT_S",
+    "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS",
+    "PG_EXPLORER_MCP_MAX_RESPONSE_CHARS",
+    "PG_EXPLORER_MCP_PROFILE",
+    "PG_EXPLORER_MCP_QUERY_LOG",
+    "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S",
     # many stands in one entry (ADR 0006)
-    "PG_MCP_STANDS",
-    "PG_MCP_STANDS_FILE",
+    "PG_EXPLORER_MCP_STANDS",
+    "PG_EXPLORER_MCP_STANDS_FILE",
     "PGSERVICEFILE",
-    "PG_MCP_MAX_CONNECTIONS",
+    "PG_EXPLORER_MCP_MAX_CONNECTIONS",
 )
 PROFILES = ("schema", "explore", "analyst")
 YES = ("y", "yes", "д", "да")
+
+
+def shell_env() -> dict[str, str]:
+    """This shell's variables, with the PG_MCP_* names of pg-mcp 0.7.0 read as their new twins."""
+    return environment.with_legacy_names(os.environ)
 
 
 def server_name(name: str | None = None) -> str:
@@ -78,12 +83,13 @@ def server_name(name: str | None = None) -> str:
 
 def server_entry(profile: str | None = None, language: str | None = None, name: str | None = None) -> dict[str, Any]:
     entry: dict[str, Any] = {"command": sys.executable, "args": ["-I", RUN_PY], "timeout": 30000}
-    env = {variable: os.environ[variable] for variable in COPIED_ENV if os.environ.get(variable)}
-    env["PG_MCP_NAME"] = server_name(name)  # status says which entry, and so which database, it is
+    shell = shell_env()
+    env = {variable: shell[variable] for variable in COPIED_ENV if shell.get(variable)}
+    env["PG_EXPLORER_MCP_NAME"] = server_name(name)  # status says which entry, and so which database, it is
     if profile:
-        env["PG_MCP_PROFILE"] = profile
+        env["PG_EXPLORER_MCP_PROFILE"] = profile
     if language:
-        env["PG_MCP_LANG"] = language
+        env["PG_EXPLORER_MCP_LANG"] = language
     entry["env"] = env
     return entry
 
@@ -121,7 +127,7 @@ def check(entry: dict[str, Any]) -> bool:
             "params": {
                 "protocolVersion": "2025-06-18",
                 "capabilities": {},
-                "clientInfo": {"name": "pg-mcp install.py"},
+                "clientInfo": {"name": "pg-explorer-mcp install.py"},
             },
         },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -180,7 +186,7 @@ def main(argv: list[str]) -> int:
     # The help texts are in the chosen language, so --lang is read before the parser is built.
     early = argparse.ArgumentParser(add_help=False)
     early.add_argument("--lang", choices=i18n.LANGUAGES)
-    language = early.parse_known_args(argv)[0].lang or i18n.language_from_env(os.environ, i18n.system_locale())[0]
+    language = early.parse_known_args(argv)[0].lang or i18n.language_from_env(shell_env(), i18n.system_locale())[0]
     i18n.use(language)
     if sys.version_info < MIN_PYTHON:
         sys.exit(t("install.old_python", need=".".join(map(str, MIN_PYTHON)), have=platform.python_version()))
@@ -207,7 +213,7 @@ def main(argv: list[str]) -> int:
     exporter.add_argument("--stands", default="*", help=t("export.help.stands"))
     exporter.add_argument("--write", action="store_true", help=t("export.help.write"))
     exporter.add_argument("--workspace", help=t("install.help.workspace"))
-    exporter.add_argument("--project", help=t("export.help.project", path=exports.default_project(os.environ)))
+    exporter.add_argument("--project", help=t("export.help.project", path=exports.default_project(shell_env())))
     exporter.add_argument("--editor", choices=list(exports.EDITORS), default="vscode", help=t("export.help.editor"))
     exporter.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
     args = parser.parse_args(argv)
@@ -227,7 +233,7 @@ def main(argv: list[str]) -> int:
     if not args.check:
         print()
         if args.client in EXTENSION_CLIENTS:
-            print(t("install.next", client=args.client, path=ROOT))
+            link_hints(args.client)
         print(t("install.restart"))
         offer_clients(name, entry, besides=args.client)
         if args.name is None:
@@ -236,13 +242,31 @@ def main(argv: list[str]) -> int:
     return 0 if ok else 1
 
 
+def link_hints(client: str) -> None:
+    """How to link the extension, and which folder an extension linked as pg-mcp left in the client."""
+    print(t("install.next", client=client, path=ROOT))
+    old = old_extension(client)
+    if old is not None:
+        print(t("install.old_extension", path=old))
+
+
+def old_extension(client: str) -> Path | None:
+    """The client's folder of the extension linked as pg-mcp before 0.8.0, when there is one (ADR 0007).
+
+    The client loads it under the new name from the manifest, but cannot remove it by either name, and
+    refuses a new link while it is there. Its format is the client's, so install.py only names it.
+    """
+    folder = Path(SETTINGS_FILES[client]).expanduser().parent / "extensions" / "pg-mcp"
+    return folder if folder.is_dir() else None
+
+
 def install_into(key: str, name: str, entry: dict[str, Any]) -> bool:
     """Register the entry with one client: its file, or the text to paste for a client without one."""
     client = clients.CLIENTS[key]
     if key in SETTINGS_FILES:
         register(Path(SETTINGS_FILES[key]).expanduser(), entry, name)
         return True
-    path = client.path(os.environ, Path.home(), name)
+    path = client.path(shell_env(), Path.home(), name)
     if path is None:
         show(client, name, entry)
         return True
@@ -259,7 +283,7 @@ def install_into(key: str, name: str, entry: dict[str, Any]) -> bool:
 
 def show(client: clients.Client, name: str, entry: dict[str, Any]) -> None:
     """Print the entry in the client's format and where it goes; nothing is written."""
-    path = client.path(os.environ, Path.home(), name)
+    path = client.path(shell_env(), Path.home(), name)
     if path is None:
         print(t("clients.where_paste", client=client.label))
     else:
@@ -269,7 +293,7 @@ def show(client: clients.Client, name: str, entry: dict[str, Any]) -> None:
 
 def offer_clients(name: str, entry: dict[str, Any], *, besides: str) -> None:
     """At a terminal: offer to register the entry with the other clients installed on this machine."""
-    found = clients.installed(os.environ, Path.home(), besides=besides)
+    found = clients.installed(shell_env(), Path.home(), besides=besides)
     if not found or not sys.stdin.isatty():
         return
     labels = ", ".join(client.label for client in found)
@@ -294,7 +318,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
 
 def import_command(args: argparse.Namespace, language: str) -> int:
-    """Preview, or with --write bring, the connections of DBeaver or a pg_service.conf file into pg-mcp."""
+    """Preview, or with --write bring, the connections of DBeaver or a pg_service.conf file into pg-explorer-mcp."""
     try:
         connections = _connections(args)
         pattern = imports.compile_pattern(args.stand_pattern)
@@ -303,7 +327,7 @@ def import_command(args: argparse.Namespace, language: str) -> int:
         return 1
     if connections is None:
         return 2
-    registry_file, passfile = imports.default_files(os.environ)
+    registry_file, passfile = imports.default_files(shell_env())
     result = imports.plan(connections, pattern)
     for line in imports.preview(result, registry_file, passfile):
         print(line)
@@ -321,7 +345,7 @@ def import_command(args: argparse.Namespace, language: str) -> int:
     for line in written:
         print(line)
     entry = server_entry(args.profile, language, STANDS_NAME)
-    entry["env"]["PG_MCP_STANDS"] = "*"
+    entry["env"]["PG_EXPLORER_MCP_STANDS"] = "*"
     install_into(args.client, server_name(STANDS_NAME), entry)
     ok = check(entry)
     print()
@@ -333,7 +357,7 @@ def import_command(args: argparse.Namespace, language: str) -> int:
 
 def _connections(args: argparse.Namespace) -> list[imports.Connection] | None:
     if args.source == "dbeaver":
-        folder = Path(args.workspace).expanduser() if args.workspace else imports.dbeaver_workspace(os.environ)
+        folder = Path(args.workspace).expanduser() if args.workspace else imports.dbeaver_workspace(shell_env())
         if folder is None:
             print(t("import.no_dbeaver"))
             return None
@@ -349,7 +373,7 @@ def _connections(args: argparse.Namespace) -> list[imports.Connection] | None:
 
 def offer_import(language: str) -> None:
     """At a terminal, when DBeaver is on this machine: offer to show what an import would do."""
-    folder = imports.dbeaver_workspace(os.environ)
+    folder = imports.dbeaver_workspace(shell_env())
     if folder is None or not sys.stdin.isatty():
         return
     try:
@@ -368,11 +392,11 @@ def offer_import(language: str) -> None:
 def export_command(args: argparse.Namespace) -> int:
     """Preview, or with --write make, the stand connections in a database tool."""
     try:
-        items, warnings = exports.connections(os.environ, args.stands.split(","))
+        items, warnings = exports.connections(shell_env(), args.stands.split(","))
         export = exports.prepare(
             args.tool,
             items,
-            os.environ,
+            shell_env(),
             Path.home(),
             workspace=_folder(args.workspace),
             project=_folder(args.project),
@@ -415,15 +439,15 @@ def offer_export(*, besides: str | None = None) -> None:
     if not sys.stdin.isatty():
         return
     try:
-        items, _ = exports.connections(os.environ)
+        items, _ = exports.connections(shell_env())
     except exports.ExportRefusedError:
         return
     ready: list[tuple[exports.Export, str]] = []
-    for tool, editor in exports.installed(os.environ, Path.home()):
+    for tool, editor in exports.installed(shell_env(), Path.home()):
         if tool == besides:
             continue
         try:
-            export = exports.prepare(tool, items, os.environ, Path.home(), editor=editor or "vscode")
+            export = exports.prepare(tool, items, shell_env(), Path.home(), editor=editor or "vscode")
         except exports.ExportRefusedError:
             continue
         if export.files:
@@ -449,7 +473,7 @@ def offer_export(*, besides: str | None = None) -> None:
 def _export_now(tool: str, items: list[exports.Connection], editor: str) -> None:
     """Prepare one export and write it. It is prepared only now: both VS Code extensions change one file."""
     try:
-        export = exports.prepare(tool, items, os.environ, Path.home(), editor=editor or "vscode")
+        export = exports.prepare(tool, items, shell_env(), Path.home(), editor=editor or "vscode")
     except exports.ExportRefusedError as exc:
         print(exc)
         return

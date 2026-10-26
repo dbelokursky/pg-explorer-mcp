@@ -1,4 +1,4 @@
-"""Start the pg-mcp server from a checkout, the way MCP clients do: python -I run.py
+"""Start the pg-explorer-mcp server from a checkout, the way MCP clients do: python -I run.py
 
 -I keeps PYTHONPATH, the user's site-packages and the current directory out of
 sys.path, so the server imports only its own package and the dependencies

@@ -94,7 +94,7 @@ jobs:
     name: integration (Windows, PostgreSQL 17)
     runs-on: windows-latest
     env:
-      PG_MCP_IT: "1"
+      PG_EXPLORER_MCP_IT: "1"
       PGHOST: localhost
       PGUSER: postgres
       PGDATABASE: pg_mcp_it
@@ -141,7 +141,7 @@ jobs:
         options: >-
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      PG_MCP_IT: "1"
+      PG_EXPLORER_MCP_IT: "1"
       PGHOST: localhost
       PGUSER: postgres
       PGPASSWORD: postgres

@@ -590,7 +590,9 @@ def _ask_stands(
             pool.outcomes[stand] = ERROR
             answers[stand] = [stand, f"  {exc}"]
 
-    threads = [threading.Thread(target=ask, args=(stand,), name=f"pg-mcp {stand}", daemon=True) for stand in stands]
+    threads = [
+        threading.Thread(target=ask, args=(stand,), name=f"pg-explorer-mcp {stand}", daemon=True) for stand in stands
+    ]
     deadline = time.monotonic() + CALL_TIME_BUDGET_S
     for thread in threads:
         thread.start()

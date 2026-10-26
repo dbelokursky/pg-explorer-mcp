@@ -168,7 +168,9 @@ class TestPgService:
 
     def test_the_copies_an_export_wrote_are_not_brought_back(self, tmp_path: Path) -> None:
         path = tmp_path / "service.conf"
-        path.write_text("# pg-mcp export\n[dev7.orders.billing]\nhost=db\n\n[reports]\nhost=db\n", encoding="utf-8")
+        path.write_text(
+            "# pg-explorer-mcp export\n[dev7.orders.billing]\nhost=db\n\n[reports]\nhost=db\n", encoding="utf-8"
+        )
         assert [connection.name for connection in read_pg_service(path)] == ["reports"]
 
     def test_an_unreadable_file_is_refused(self, tmp_path: Path) -> None:
@@ -209,7 +211,7 @@ class TestPlan:
             ),
             ("orders", "no stand in the folder, the name or the host"),
             ("no host on dev7", "no host"),
-            ("no user on dev7", "no user: pg-mcp reads a schema with the login of the same name"),
+            ("no user on dev7", "no user: pg-explorer-mcp reads a schema with the login of the same name"),
             ("odd on dev7", "'my db' cannot be a part of a section name (letters, digits, _ $ - only)"),
         ]
 
@@ -233,7 +235,7 @@ class TestPlan:
 
 class TestWrite:
     def test_writes_the_registry_and_the_password_file_the_server_can_read(self, tmp_path: Path) -> None:
-        registry_file, passfile = tmp_path / "pg-mcp" / "stands.conf", tmp_path / "pgpass"
+        registry_file, passfile = tmp_path / "pg-explorer-mcp" / "stands.conf", tmp_path / "pgpass"
         odd = connection(name="ift1 orders", host="ift1-db", password="p:w\\d")  # noqa: S106
         result = plan([connection(), odd], PATTERN)
         lines = write(result, registry_file, passfile)
@@ -249,7 +251,7 @@ class TestWrite:
         if sys.platform != "win32":
             assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
             assert stat.S_IMODE(registry_file.stat().st_mode) == 0o600
-        registry = load_registry({"PG_MCP_STANDS": "*"}, [registry_file])
+        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [registry_file])
         assert registry is not None
         assert [target.name for target in registry.targets] == ["dev7.orders.billing", "ift1.orders.billing"]
 
@@ -294,14 +296,14 @@ class TestWrite:
         with pytest.raises(ImportRefusedError, match="Nothing was changed"):
             write(plan([connection()], PATTERN), registry_file, passfile)
         assert registry_file.read_text(encoding="utf-8") == "[dev1.orders.billing]\nhost=old-db\n"
-        assert list(tmp_path.glob("*.pg-mcp-new")) == []
+        assert list(tmp_path.glob("*.pg-explorer-mcp-new")) == []
 
     def test_nothing_to_write_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ImportRefusedError, match="nothing to import"):
             write(plan([], PATTERN), tmp_path / "stands.conf", tmp_path / "pgpass")
 
     def test_the_default_files_follow_the_environment(self, tmp_path: Path) -> None:
-        env = {"PG_MCP_STANDS_FILE": str(tmp_path / "s.conf"), "PGPASSFILE": str(tmp_path / "p")}
+        env = {"PG_EXPLORER_MCP_STANDS_FILE": str(tmp_path / "s.conf"), "PGPASSFILE": str(tmp_path / "p")}
         assert imports.default_files(env) == (tmp_path / "s.conf", tmp_path / "p")
 
 

@@ -41,12 +41,14 @@ def test_the_log_is_off_unless_a_file_is_named(
 
 
 def test_a_home_relative_path_is_expanded() -> None:
-    assert QueryLog.from_env({"PG_MCP_QUERY_LOG": "~/queries.jsonl"}).path == str(Path.home() / "queries.jsonl")
+    assert QueryLog.from_env({"PG_EXPLORER_MCP_QUERY_LOG": "~/queries.jsonl"}).path == str(
+        Path.home() / "queries.jsonl"
+    )
 
 
 def test_every_call_leaves_one_line_whatever_its_outcome(unreachable_env: dict[str, str], log_file: Path) -> None:
     db = Database(unreachable_env)
-    tools = tools_with(QueryLog.from_env({"PG_MCP_QUERY_LOG": str(log_file)}, db), db)
+    tools = tools_with(QueryLog.from_env({"PG_EXPLORER_MCP_QUERY_LOG": str(log_file)}, db), db)
     assert f"query log: {log_file}" in tools["status"].call({})
     with pytest.raises(ToolError):
         tools["run_select"].call({"query": "DELETE FROM orders"})
@@ -105,7 +107,7 @@ def test_a_relative_path_is_refused_and_nothing_is_written(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     db = Database(unreachable_env)
-    status = tools_with(QueryLog.from_env({"PG_MCP_QUERY_LOG": "queries.jsonl"}, db), db)["status"].call({})
+    status = tools_with(QueryLog.from_env({"PG_EXPLORER_MCP_QUERY_LOG": "queries.jsonl"}, db), db)["status"].call({})
     assert "query log: queries.jsonl, not written: the path must be absolute" in status
     assert list(tmp_path.iterdir()) == []
 

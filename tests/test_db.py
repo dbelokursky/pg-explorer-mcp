@@ -1,6 +1,6 @@
 """Integration tests against a real PostgreSQL.
 
-Run them with PG_MCP_IT=1 and the usual PG* variables pointing at a database
+Run them with PG_EXPLORER_MCP_IT=1 and the usual PG* variables pointing at a database
 where the tests may create and drop the schemas mcp_it, mcp_it_archive and
 mcp_it_role and the roles mcp_it_agent and mcp_it_login.
 """
@@ -419,7 +419,7 @@ class TestDefences:
             db.query("SELECT 1; COMMIT; SELECT 2")
 
     def test_a_slow_statement_is_cancelled_by_postgresql(self) -> None:
-        database = Database(env_with(PG_MCP_STATEMENT_TIMEOUT_MS="200"))
+        database = Database(env_with(PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS="200"))
         try:
             with pytest.raises(QueryFailedError, match="statement timeout"):
                 database.read_only(SLOW_STATEMENT, 1, cursor=True)
@@ -429,7 +429,7 @@ class TestDefences:
 
     def test_the_socket_outwaits_the_statement_timeout(self) -> None:
         """A short socket timeout must not cut a running statement, or it would be run again."""
-        database = Database(env_with(PG_MCP_SOCKET_TIMEOUT_S="1", PG_MCP_STATEMENT_TIMEOUT_MS="2500"))
+        database = Database(env_with(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S="1", PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS="2500"))
         try:
             started = time.monotonic()
             with pytest.raises(QueryFailedError, match="statement timeout"):
@@ -440,7 +440,7 @@ class TestDefences:
 
     def test_lost_connection_is_reopened(self, db: Database, admin: pg8000.native.Connection) -> None:
         db.server_info()
-        admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-mcp'")
+        admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-explorer-mcp'")
         assert db.server_info()["read_only"] == "on"
 
 

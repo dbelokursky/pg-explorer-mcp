@@ -1,4 +1,4 @@
-# Разработка pg-mcp
+# Разработка pg-explorer-mcp
 
 ## Окружение
 
@@ -29,7 +29,7 @@ uvx pre-commit install
 | `uv run mypy` | проверка типов в режиме strict |
 | `uv run python scripts/check_vendor.py` | целостность `src/pg_explorer_mcp/_vendor` и его манифест `requirements.txt` |
 | `python3 scripts/client_smoke.py --qwen "$(command -v qwen)"` | проверка в настоящем клиенте, Qwen Code (`npm install -g @qwen-code/qwen-code`), по переменным `PG*`; модель не нужна |
-| `python3 scripts/querylog_report.py <журнал> [--since ДАТА] [--until ДАТА] [--by user\|tool\|stand\|day] [--format text\|json\|csv]` | сводка по журналу запросов (`PG_MCP_QUERY_LOG`) для администратора группы: вызовы по инструментам, пользователям и стендам, медиана и 95-й процентиль, самые долгие и отклонённые проверкой SQL запросы; база не нужна |
+| `python3 scripts/querylog_report.py <журнал> [--since ДАТА] [--until ДАТА] [--by user\|tool\|stand\|day] [--format text\|json\|csv]` | сводка по журналу запросов (`PG_EXPLORER_MCP_QUERY_LOG`) для администратора группы: вызовы по инструментам, пользователям и стендам, медиана и 95-й процентиль, самые долгие и отклонённые проверкой SQL запросы; база не нужна |
 | `python3 scripts/agent_eval.py` | прогон типовых вопросов через настоящую модель на демо-базе: какие инструменты она вызвала и что ответила; нужны Ollama с моделью и Qwen Code, см. ниже |
 
 Интеграционные тесты ходят в настоящий PostgreSQL. Они создают и удаляют схемы `mcp_it`,
@@ -39,7 +39,7 @@ uvx pre-commit install
 TLS-прослойку со своим сертификатом, самому серверу TLS не нужен):
 
 ```bash
-PG_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov
+PG_EXPLORER_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov
 ```
 
 CI гоняет то же самое, но на PR — сокращённый набор, а на push в `develop` и `main` и ночью на
@@ -63,8 +63,8 @@ CI проверяет сервер в Qwen Code — открытой основ�
 
 1. `python3 install.py` с переменными `PG*` тестовой базы — в конце `database: connected`.
 2. `gigacode mcp list`, если эта команда есть в вашей версии, — у сервера `pg` статус `Connected`.
-3. `gigacode extensions link .`, затем `gigacode extensions list` — расширение `pg-mcp` с командой
-   `/pg:setup` и контекстом `pg-mcp-context.md`.
+3. `gigacode extensions link .`, затем `gigacode extensions list` — расширение `pg-explorer-mcp` с командой
+   `/pg:setup` и контекстом `pg-explorer-mcp-context.md`.
 4. В GigaCode: «Проверь подключение к базе» (агент вызывает `status`), «Какие таблицы есть?»
    (`list_tables`) и просьба удалить строки — агент должен получить отказ проверки SQL.
 
@@ -126,20 +126,20 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 2. PR в `develop`, затем PR `develop` → `main`. Если с прошлого выпуска менялась выгрузка в
    инструменты БД (`src/pg_explorer_mcp/exports.py`), откройте её результат в DataGrip и в VS Code с
    расширениями PostgreSQL и SQLTools на машине, где они есть: CI проверяет только psql и pgAdmin.
-3. Аннотированный тег на коммит слияния в `main`: `git tag -a vX.Y.Z -m "pg-mcp X.Y.Z"`,
+3. Аннотированный тег на коммит слияния в `main`: `git tag -a vX.Y.Z -m "pg-explorer-mcp X.Y.Z"`,
    `git push origin vX.Y.Z`.
 
 Пуш тега запускает `.github/workflows/release.yml`: он сверяет тег с версией в файлах, собирает
-`pg-mcp-X.Y.Z.zip` из дерева тега (`git archive`; `.github` в архив не попадает по `export-ignore` в
+`pg-explorer-mcp-X.Y.Z.zip` из дерева тега (`git archive`; `.github` в архив не попадает по `export-ignore` в
 `.gitattributes`), распаковывает архив и запускает из него `install.py --check` без базы
 (`scripts/release.py check`), считает `SHA256SUMS` и публикует GitHub Release с заметками из раздела
-этой версии в `CHANGELOG.md`. Так pg-mcp берут пользователи без git (README, шаг 1). Та же сборка с
+этой версии в `CHANGELOG.md`. Так pg-explorer-mcp берут пользователи без git (README, шаг 1). Та же сборка с
 проверкой, но без публикации, идёт в каждом PR и при ручном запуске — `gh workflow run release.yml
 --ref <ветка>` (флаг `build_only` включён по умолчанию; снимать его есть смысл только на теге, чтобы
 опубликовать выпуск повторно); архив остаётся в артефактах запуска. По имени файла GitHub находит для
 ручного запуска только workflow из `main`; пока его там нет, подойдёт числовой id из
-`gh api repos/dbelokursky/pg-mcp/actions/workflows`:
-`gh api -X POST repos/dbelokursky/pg-mcp/actions/workflows/<id>/dispatches -f ref=<ветка> -f 'inputs[build_only]=true'`.
+`gh api repos/dbelokursky/pg-explorer-mcp/actions/workflows`:
+`gh api -X POST repos/dbelokursky/pg-explorer-mcp/actions/workflows/<id>/dispatches -f ref=<ветка> -f 'inputs[build_only]=true'`.
 
 ## Раскладка
 

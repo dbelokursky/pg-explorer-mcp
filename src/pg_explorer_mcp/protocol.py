@@ -65,7 +65,11 @@ class Server:
     """Turns one incoming JSON-RPC line into at most one reply line."""
 
     def __init__(
-        self, tools: list[Tool], name: str = "pg-mcp", version: str = __version__, instructions: str | None = None
+        self,
+        tools: list[Tool],
+        name: str = "pg-explorer-mcp",
+        version: str = __version__,
+        instructions: str | None = None,
     ) -> None:
         self._instructions = instructions
         self._tools = {tool.name: tool for tool in tools}

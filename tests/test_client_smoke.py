@@ -11,13 +11,13 @@ import pytest
 
 MCP_LIST = (
     "Configured MCP servers:\n"
-    "\x1b[32m✓\x1b[0m pg: /usr/bin/python3 -I /opt/pg-mcp/run.py (stdio) - Connected\n"
+    "\x1b[32m✓\x1b[0m pg: /usr/bin/python3 -I /opt/pg-explorer-mcp/run.py (stdio) - Connected\n"
     "\x1b[31m✗\x1b[0m pg2: /usr/bin/python3 -I /opt/other/run.py (stdio) - Disconnected\n"
 )
-EXTENSIONS = """✓ pg-mcp (0.3.0)
+EXTENSIONS = """✓ pg-explorer-mcp (0.3.0)
  Description: Read-only PostgreSQL access for the agent.
  Context files:
-  /opt/pg-mcp/pg-mcp-context.md
+  /opt/pg-explorer-mcp/pg-explorer-mcp-context.md
  Commands:
   /pg:setup
 """
@@ -32,10 +32,21 @@ def test_other_or_disconnected_servers_do_not_count(name: str) -> None:
     assert not client_smoke.server_connected(MCP_LIST, name)
 
 
-def test_the_extension_is_checked_for_version_context_and_command() -> None:
-    assert client_smoke.extension_missing(EXTENSIONS, "0.3.0") == []
-    assert client_smoke.extension_missing(EXTENSIONS, "0.4.0") == ["pg-mcp (0.4.0)"]
-    assert client_smoke.extension_missing(EXTENSIONS.replace("/pg:setup", ""), "0.3.0") == ["/pg:setup"]
+def manifest(version: str = "0.3.0", name: str = "pg-explorer-mcp") -> dict[str, str]:
+    return {"name": name, "version": version, "contextFileName": f"{name}-context.md"}
+
+
+def test_the_extension_is_checked_for_name_version_context_and_command() -> None:
+    assert client_smoke.extension_missing(EXTENSIONS, manifest()) == []
+    assert client_smoke.extension_missing(EXTENSIONS, manifest("0.4.0")) == ["pg-explorer-mcp (0.4.0)"]
+    assert client_smoke.extension_missing(EXTENSIONS.replace("/pg:setup", ""), manifest()) == ["/pg:setup"]
+
+
+def test_the_name_and_context_file_come_from_the_manifest() -> None:
+    assert client_smoke.extension_missing(EXTENSIONS, manifest(name="pg-mcp")) == [
+        "pg-mcp (0.3.0)",
+        "pg-mcp-context.md",
+    ]
 
 
 def test_the_password_moves_into_a_password_file(tmp_path: Path) -> None:

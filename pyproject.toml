@@ -98,7 +98,7 @@ minversion = "8.4"
 testpaths = ["tests"]
 pythonpath = [".", "scripts"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
-markers = ["integration: needs a real PostgreSQL (run with PG_MCP_IT=1 and the usual PG* variables)"]
+markers = ["integration: needs a real PostgreSQL (run with PG_EXPLORER_MCP_IT=1 and the usual PG* variables)"]
 xfail_strict = true
 
 [tool.coverage.run]

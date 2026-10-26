@@ -291,8 +291,8 @@ class Tool:
 
 
 def profile_from_env(env: Mapping[str, str]) -> tuple[str, str | None]:
-    """The profile PG_MCP_PROFILE names, and a warning when the value is unusable."""
-    raw = env.get("PG_MCP_PROFILE") or DEFAULT_PROFILE
+    """The profile PG_EXPLORER_MCP_PROFILE names, and a warning when the value is unusable."""
+    raw = env.get("PG_EXPLORER_MCP_PROFILE") or DEFAULT_PROFILE
     if raw.strip().lower() in PROFILES:
         return raw.strip().lower(), None
     return STRICTEST_PROFILE, t("warning.profile", value=raw, choices=", ".join(PROFILES), fallback=STRICTEST_PROFILE)

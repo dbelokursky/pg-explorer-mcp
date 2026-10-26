@@ -25,6 +25,7 @@ from typing import Any
 import pg8000.exceptions
 import pg8000.native
 
+from . import environment
 from .i18n import t
 
 # No route to the host: with the stands behind a VPN, the usual sign that the VPN is down.
@@ -110,10 +111,12 @@ class Settings:
             password=env.get("PGPASSWORD") or read_pgpass(passfile, host, port, database, user),
             sslmode=sslmode,
             sslrootcert=env.get("PGSSLROOTCERT") or None,
-            statement_timeout_ms=_int_setting(env, "PG_MCP_STATEMENT_TIMEOUT_MS", DEFAULT_STATEMENT_TIMEOUT_MS),
+            statement_timeout_ms=_int_setting(
+                env, "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS", DEFAULT_STATEMENT_TIMEOUT_MS
+            ),
             passfile=passfile,
-            socket_timeout_s=_int_setting(env, "PG_MCP_SOCKET_TIMEOUT_S", SOCKET_TIMEOUT_S),
-            search_path=env.get("PG_MCP_SEARCH_PATH") or None,
+            socket_timeout_s=_int_setting(env, "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S", SOCKET_TIMEOUT_S),
+            search_path=env.get("PG_EXPLORER_MCP_SEARCH_PATH") or None,
         )
 
     def describe(self) -> str:
@@ -129,7 +132,7 @@ class Database:
         self._config_error: str | None = None
         self._counters = counters or Counters()  # shared by all connections of a stands pool
         try:
-            self.settings = Settings.from_env(os.environ if env is None else env)
+            self.settings = Settings.from_env(environment.with_legacy_names(os.environ) if env is None else env)
         except ValueError as exc:
             self._config_error = str(exc)
 
@@ -233,7 +236,7 @@ class Database:
                     unix_sock=str(Path(socket_dir) / f".s.PGSQL.{settings.port}") if socket_dir else None,
                     ssl_context=ssl_context,
                     timeout=connect_timeout(settings),
-                    application_name="pg-mcp",
+                    application_name="pg-explorer-mcp",
                 )
                 break
             except (pg8000.exceptions.Error, OSError) as exc:

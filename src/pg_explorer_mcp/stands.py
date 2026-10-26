@@ -36,8 +36,10 @@ _STAND_NUMBER = re.compile(r"(\D*)(\d*)(.*)")
 _RANGE = "\u2013"  # an en dash between the first and the last stand of a run
 _PASSWORD_LINE = re.compile(r"^\s*password\s*=", re.MULTILINE)
 # install.py export writes this line above every section it puts into a service file: such a section
-# is a copy of a stand for psql, not a stand of its own, and the next export may rewrite it.
-EXPORTED = "# pg-mcp export"
+# is a copy of a stand for psql, not a stand of its own, and the next export may rewrite it. Sections
+# that pg-mcp 0.7.0 exported carry the old line; they are ours too, and an export rewrites them (ADR 0007).
+EXPORTED = "# pg-explorer-mcp export"
+EXPORT_MARKS = (EXPORTED, "# pg-mcp export")
 
 
 class StandError(Exception):
@@ -77,20 +79,20 @@ class Target:
             "APPDATA",
             "PGSSLMODE",
             "PGSSLROOTCERT",
-            "PG_MCP_STATEMENT_TIMEOUT_MS",
-            "PG_MCP_SOCKET_TIMEOUT_S",
+            "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS",
+            "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S",
         )
         env = {key: base[key] for key in keep if base.get(key)}
-        env.setdefault("PG_MCP_SOCKET_TIMEOUT_S", str(DEFAULT_SOCKET_TIMEOUT_S))
+        env.setdefault("PG_EXPLORER_MCP_SOCKET_TIMEOUT_S", str(DEFAULT_SOCKET_TIMEOUT_S))
         env["PGHOST"] = self.options["host"]
         env["PGPORT"] = self.options.get("port", "5432")
         env["PGDATABASE"] = self.options.get("dbname", self.database)
         env["PGUSER"] = self.options.get("user", self.schema)
-        env["PG_MCP_SEARCH_PATH"] = self.schema
+        env["PG_EXPLORER_MCP_SEARCH_PATH"] = self.schema
         optional = (
             ("sslmode", "PGSSLMODE"),
             ("sslrootcert", "PGSSLROOTCERT"),
-            ("connect_timeout", "PG_MCP_SOCKET_TIMEOUT_S"),
+            ("connect_timeout", "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S"),
             ("password", "PGPASSWORD"),
         )
         for option, variable in optional:
@@ -106,7 +108,7 @@ class Registry:
     warnings: list[str] = field(default_factory=list)
     paths: list[Path] = field(default_factory=list)  # every file looked at, present or not
     state: dict[str, tuple[int, int] | None] = field(default_factory=dict)  # mtime and size per path
-    patterns: list[str] = field(default_factory=list)  # the PG_MCP_STANDS patterns the stands were chosen by
+    patterns: list[str] = field(default_factory=list)  # the PG_EXPLORER_MCP_STANDS patterns the stands were chosen by
 
     def changed(self) -> bool:
         """Whether any of the files looked at has changed since the registry was read."""
@@ -197,8 +199,8 @@ def listed(names: Sequence[str], limit: int = SCHEMAS_LISTED) -> str:
 
 
 def stands_enabled(env: Mapping[str, str]) -> list[str] | None:
-    """The stand name patterns PG_MCP_STANDS asks for, or None when stands are off."""
-    raw = env.get("PG_MCP_STANDS", "").strip()
+    """The stand name patterns PG_EXPLORER_MCP_STANDS asks for, or None when stands are off."""
+    raw = env.get("PG_EXPLORER_MCP_STANDS", "").strip()
     if not raw or raw.lower() in ("off", "no", "false", "0"):
         return None
     return [pattern.strip().lower() for pattern in raw.split(",") if pattern.strip()]
@@ -207,8 +209,7 @@ def stands_enabled(env: Mapping[str, str]) -> list[str] | None:
 def registry_files(env: Mapping[str, str]) -> list[Path]:
     """The stands file the import writes, then the user's own pg_service.conf."""
     home = Path(env["APPDATA"]) if sys.platform == "win32" and env.get("APPDATA") else Path.home()
-    folder = "pg-mcp" if sys.platform == "win32" else ".pg-mcp"
-    own = env.get("PG_MCP_STANDS_FILE") or str(home / folder / "stands.conf")
+    own = env.get("PG_EXPLORER_MCP_STANDS_FILE") or str(_own_registry(home))
     if env.get("PGSERVICEFILE"):
         service = env["PGSERVICEFILE"]
     elif sys.platform == "win32":
@@ -218,10 +219,17 @@ def registry_files(env: Mapping[str, str]) -> list[Path]:
     return [Path(own).expanduser(), Path(service).expanduser()]
 
 
+def _own_registry(home: Path) -> Path:
+    """stands.conf in the folder of pg-explorer-mcp, or in that of pg-mcp 0.7.0 while only it has one."""
+    hidden = "" if sys.platform == "win32" else "."
+    new, old = (home / f"{hidden}{name}" / "stands.conf" for name in ("pg-explorer-mcp", "pg-mcp"))
+    return old if old.exists() and not new.exists() else new
+
+
 def load_registry(
     env: Mapping[str, str], files: Sequence[Path] | None = None, patterns: Sequence[str] | None = None
 ) -> Registry | None:
-    """Read the stands; None when PG_MCP_STANDS is off. Never raises: problems become warnings."""
+    """Read the stands; None when PG_EXPLORER_MCP_STANDS is off. Never raises: problems become warnings."""
     patterns = stands_enabled(env) if patterns is None else list(patterns)
     if patterns is None:
         return None
@@ -303,7 +311,7 @@ def exported_sections(text: str) -> set[str]:
     previous = ""
     for raw in text.splitlines():
         line = raw.strip()
-        if line.startswith("[") and line.endswith("]") and previous.startswith(EXPORTED):
+        if line.startswith("[") and line.endswith("]") and previous.startswith(EXPORT_MARKS):
             found.add(line[1:-1].strip())
         previous = line
     return found
@@ -414,12 +422,12 @@ class Pool:
 
     def connect_timeout(self, target: Target) -> int:
         """Seconds a connection to the target may wait for an answer: the section's, else the entry's."""
-        raw = target.env(self._env)["PG_MCP_SOCKET_TIMEOUT_S"]
+        raw = target.env(self._env)["PG_EXPLORER_MCP_SOCKET_TIMEOUT_S"]
         return int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_SOCKET_TIMEOUT_S
 
     def statement_timeout(self, target: Target) -> int:
         """Seconds a statement on the target may run before PostgreSQL stops it, rounded up."""
-        raw = target.env(self._env).get("PG_MCP_STATEMENT_TIMEOUT_MS", "")
+        raw = target.env(self._env).get("PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS", "")
         milliseconds = int(raw) if raw.isdigit() and int(raw) > 0 else DEFAULT_STATEMENT_TIMEOUT_MS
         return -(-milliseconds // 1000)
 

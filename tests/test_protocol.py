@@ -73,7 +73,7 @@ class TestLegacyProtocol:
         result = call(server, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})["result"]
         assert result["protocolVersion"] == "2025-06-18"
         assert result["capabilities"] == {"tools": {"listChanged": False}}
-        assert result["serverInfo"]["name"] == "pg-mcp"
+        assert result["serverInfo"]["name"] == "pg-explorer-mcp"
         assert "status" in result["instructions"]
 
     def test_tools_list_keeps_registration_order_and_marks_tools_read_only(self, server: Server) -> None:
@@ -189,7 +189,7 @@ class TestModernProtocol:
         assert result["resultType"] == "complete"
         assert result["supportedVersions"] == ["2026-07-28"]
         assert result["capabilities"] == {"tools": {"listChanged": False}}
-        assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "pg-mcp"
+        assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "pg-explorer-mcp"
         assert "status" in result["instructions"]
         assert (result["ttlMs"], result["cacheScope"]) == (LIST_TTL_MS, "private")
 

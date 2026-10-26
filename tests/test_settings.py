@@ -34,13 +34,13 @@ class TestSettings:
         [("10", "5000", 10), ("10", "60000", 65), ("0", "5000", 30), ("30", "0", 30)],
     )
     def test_the_socket_outwaits_the_statement_timeout(self, socket_s: str, statement_ms: str, expected: int) -> None:
-        s = settings(PG_MCP_SOCKET_TIMEOUT_S=socket_s, PG_MCP_STATEMENT_TIMEOUT_MS=statement_ms)
+        s = settings(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S=socket_s, PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS=statement_ms)
         assert db.socket_timeout(s) == expected
 
     def test_connecting_waits_only_its_own_timeout(self) -> None:
-        s = settings(PG_MCP_SOCKET_TIMEOUT_S="1", PG_MCP_STATEMENT_TIMEOUT_MS="5000")
+        s = settings(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S="1", PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS="5000")
         assert (db.connect_timeout(s), db.socket_timeout(s)) == (1, 10)
-        assert db.connect_timeout(settings(PG_MCP_SOCKET_TIMEOUT_S="0")) == 30
+        assert db.connect_timeout(settings(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S="0")) == 30
 
     def test_settings_problem_reaches_the_tools_as_a_hint(self) -> None:
         with pytest.raises(DatabaseUnavailableError, match="Connection settings are invalid"):

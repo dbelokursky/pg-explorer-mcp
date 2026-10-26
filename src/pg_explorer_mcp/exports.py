@@ -29,9 +29,11 @@ from .clients import app_data
 from .db import pgpass_path
 from .i18n import plural, t
 from .imports import ImportRefusedError, dbeaver_workspace, read_dbeaver
-from .stands import EXPORTED, Target, load_registry, registry_files, summarize
+from .stands import EXPORT_MARKS, EXPORTED, Target, load_registry, registry_files, summarize
 
 NAMESPACE = uuid.UUID("6f0f7a4e-2b43-4d0b-8a5e-3d1f2a9c7e10")  # stable ids: a re-export updates, never duplicates
+# This file and the ids of the connections keep the name pg-mcp: DBeaver and VS Code tie a user's own
+# settings of a connection to them, and a new name would make the next export start over (ADR 0007).
 DBEAVER_FILE = "data-sources-pg-mcp.json"  # DBeaver loads every data-sources*.json of a project
 
 
@@ -171,7 +173,7 @@ def _section(line: str) -> str | None:
 
 
 def _exported(lines: Sequence[str], header: int) -> bool:
-    return header > 0 and lines[header - 1].strip().startswith(EXPORTED)
+    return header > 0 and lines[header - 1].strip().startswith(EXPORT_MARKS)
 
 
 def _setting(line: str) -> bool:
@@ -183,7 +185,7 @@ def _setting(line: str) -> bool:
 
 
 def dbeaver(items: Sequence[Connection], previous: Mapping[str, Any] | None = None) -> str:
-    """pg-mcp's own data-sources file: a folder per stand, PgPass authentication, the schema as default.
+    """pg-explorer-mcp's own data-sources file: a folder per stand, PgPass authentication, the schema as default.
 
     previous is the file as an earlier export left it: its connections stay unless these replace them.
     """
@@ -515,7 +517,7 @@ def prepare(
 
 
 def _dbeaver_export(items: Sequence[Connection], env: Mapping[str, str], home: Path, workspace: Path | None) -> Export:
-    """Into pg-mcp's own file of the DBeaver workspace, leaving out what DBeaver has of its own.
+    """Into pg-explorer-mcp's own file of the DBeaver workspace, leaving out what DBeaver has of its own.
 
     The stands most often come from DBeaver in the first place (install.py import dbeaver).
     """
@@ -615,7 +617,7 @@ def write(export: Export) -> list[str]:
 def _stage(path: Path, text: str) -> tuple[Path, Path, Path]:
     """Write the new text next to the file the path is, readable by its owner only."""
     real = path.resolve()  # a link (into a dotfiles repository, say) stays a link to the changed file
-    temporary = real.with_name(real.name + ".pg-mcp-new")
+    temporary = real.with_name(real.name + ".pg-explorer-mcp-new")
     real.parent.mkdir(parents=True, exist_ok=True)
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

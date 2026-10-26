@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Sum up the query log for the administrator of a group: who asked what, and what was refused.
 
-    python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl
+    python3 scripts/querylog_report.py ~/pg-explorer-mcp-queries.jsonl
     python3 scripts/querylog_report.py queries.jsonl queries.jsonl.1 queries.jsonl.2.gz --since 2026-10-20
     python3 scripts/querylog_report.py queries.jsonl --format csv --by user > users.csv
 
-The log is what PG_MCP_QUERY_LOG collects (README, "Query log"): one JSON line per tool call. Name
+The log is what PG_EXPLORER_MCP_QUERY_LOG collects (README, "Query log"): one JSON line per tool call. Name
 every file to read, rotated ones (.1, .gz) included; gzip is told by content, not by name. --since
 and --until take a UTC date or date-time; a bare date in --until covers that whole day. A line that
 is not a JSON object with time, tool, outcome and duration_ms, say one cut by a crash or by rotation,

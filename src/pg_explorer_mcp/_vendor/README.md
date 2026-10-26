@@ -38,7 +38,7 @@ a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427  python_dateuti
 1. Впишите нужные версии в `requirements.txt` и скачайте по нему wheel-файлы в пустую папку:
 
    ```bash
-   python3 -m pip download --no-deps --only-binary :all: -d /tmp/pg-mcp-wheels \
+   python3 -m pip download --no-deps --only-binary :all: -d /tmp/pg-explorer-mcp-wheels \
      -r src/pg_explorer_mcp/_vendor/requirements.txt
    ```
 
@@ -46,7 +46,7 @@ a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427  python_dateuti
    распакуйте новые:
 
    ```bash
-   for w in /tmp/pg-mcp-wheels/*.whl; do python3 -I -m zipfile -e "$w" src/pg_explorer_mcp/_vendor/; done
+   for w in /tmp/pg-explorer-mcp-wheels/*.whl; do python3 -I -m zipfile -e "$w" src/pg_explorer_mcp/_vendor/; done
    ```
 
 3. Обновите таблицу и хеши выше и прогоните все тесты, включая интеграционные, на Python 3.9.
