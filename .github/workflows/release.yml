@@ -14,7 +14,7 @@ on:
       - scripts/release.py
       - tests/test_release.py
       - pyproject.toml
-      - src/pg_mcp/__init__.py
+      - src/pg_explorer_mcp/__init__.py
       - gigacode-extension.json
       - qwen-extension.json
       - CHANGELOG.md

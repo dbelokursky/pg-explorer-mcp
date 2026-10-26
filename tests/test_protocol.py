@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from pg_mcp import protocol
-from pg_mcp.budget import DEFAULT_BUDGET
-from pg_mcp.protocol import (
+from pg_explorer_mcp import protocol
+from pg_explorer_mcp.budget import DEFAULT_BUDGET
+from pg_explorer_mcp.protocol import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -21,7 +21,7 @@ from pg_mcp.protocol import (
     Server,
     negotiate_protocol_version,
 )
-from pg_mcp.tools import Tool, ToolError
+from pg_explorer_mcp.tools import Tool, ToolError
 from tests.helpers import MODERN_META, rpc
 
 
@@ -37,7 +37,7 @@ def _crash(args: dict[str, Any]) -> str:  # noqa: ARG001
 def server(monkeypatch: pytest.MonkeyPatch) -> Server:
     """A server with fake tools; version negotiation and the response budget are out of the way."""
     monkeypatch.setattr(protocol, "negotiate_protocol_version", lambda requested: "2025-06-18")  # noqa: ARG005
-    monkeypatch.setattr("pg_mcp.tools.fit_to_budget", lambda lines, budget: lines)  # noqa: ARG005
+    monkeypatch.setattr("pg_explorer_mcp.tools.fit_to_budget", lambda lines, budget: lines)  # noqa: ARG005
     return Server(
         [
             Tool(
@@ -229,7 +229,7 @@ def test_every_tool_answer_goes_through_the_budget(monkeypatch: pytest.MonkeyPat
         seen.append((lines, budget))
         return ["… cut"]
 
-    monkeypatch.setattr("pg_mcp.tools.fit_to_budget", fake_budget)
+    monkeypatch.setattr("pg_explorer_mcp.tools.fit_to_budget", fake_budget)
     tool = Tool("echo", "Echo", "Echo", {"text": {"type": "string"}}, lambda args: "echo: " + args["text"])
     assert tool.call({"text": "hi"}) == "… cut"
     assert seen == [(["echo: hi"], DEFAULT_BUDGET)]

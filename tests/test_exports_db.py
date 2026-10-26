@@ -15,8 +15,8 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
-from pg_mcp import exports
-from pg_mcp.db import Settings
+from pg_explorer_mcp import exports
+from pg_explorer_mcp.db import Settings
 
 pytestmark = pytest.mark.integration
 

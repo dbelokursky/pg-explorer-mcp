@@ -37,8 +37,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pg_mcp import clients, exports, i18n, imports
-from pg_mcp.i18n import t
+from pg_explorer_mcp import clients, exports, i18n, imports
+from pg_explorer_mcp.i18n import t
 
 MIN_PYTHON = (3, 9)
 ROOT = Path(__file__).resolve().parent

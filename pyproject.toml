@@ -3,7 +3,7 @@ requires = ["uv_build>=0.13.1,<0.14"]
 build-backend = "uv_build"
 
 [project]
-# pg-mcp on PyPI is another project with the same package and command: pip would take one for the other.
+# pg-mcp on PyPI is another project, with a pg_mcp package and a pg-mcp command of its own.
 name = "pg-explorer-mcp"
 version = "0.7.0"
 description = "Read-only PostgreSQL MCP server for GigaCode CLI and other agents, with no runtime dependencies"
@@ -23,15 +23,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 # None at run time: pg8000 and its pure-Python dependencies are vendored in
-# src/pg_mcp/_vendor, so a plain checkout runs without pip or network access.
+# src/pg_explorer_mcp/_vendor, so a plain checkout runs without pip or network access.
 dependencies = []
 
 [project.scripts]
-pg-mcp = "pg_mcp.__main__:main"
-
-[tool.uv.build-backend]
-# The package keeps its name whatever the distribution is called; uv_build would look for pg_explorer_mcp.
-module-name = "pg_mcp"
+pg-explorer-mcp = "pg_explorer_mcp.__main__:main"
 
 [dependency-groups]
 dev = [
@@ -45,7 +41,7 @@ dev = [
 [tool.ruff]
 target-version = "py39"
 line-length = 120
-extend-exclude = ["src/pg_mcp/_vendor"]
+extend-exclude = ["src/pg_explorer_mcp/_vendor"]
 
 [tool.ruff.lint]
 select = [
@@ -73,7 +69,7 @@ ignore = [
 "tests/**" = ["S101", "S603", "S607", "S608", "PLR0915", "FBT003", "RUF001"]
 "install.py" = ["T201", "S603"]
 # The Russian catalog: Cyrillic letters that look Latin are the point there, not a trick.
-"src/pg_mcp/i18n.py" = ["RUF001"]
+"src/pg_explorer_mcp/i18n.py" = ["RUF001"]
 "scripts/**" = ["T201", "S603"]
 
 [tool.ruff.format]
@@ -84,7 +80,7 @@ python_version = "3.9"
 strict = true
 warn_unreachable = true
 files = ["src", "tests", "run.py", "install.py", "scripts"]
-exclude = ["src/pg_mcp/_vendor/"]
+exclude = ["src/pg_explorer_mcp/_vendor/"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
@@ -107,7 +103,7 @@ xfail_strict = true
 
 [tool.coverage.run]
 branch = true
-source = ["pg_mcp"]
+source = ["pg_explorer_mcp"]
 omit = ["*/_vendor/*"]
 
 [tool.coverage.report]

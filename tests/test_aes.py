@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from pg_mcp import aes
+from pg_explorer_mcp import aes
 
 KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
 

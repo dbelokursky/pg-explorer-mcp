@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
-from pg_mcp import __main__ as entry
-from pg_mcp import i18n, stand_tools
-from pg_mcp.compare import (
+from pg_explorer_mcp import __main__ as entry
+from pg_explorer_mcp import i18n, stand_tools
+from pg_explorer_mcp.compare import (
     RELATIONS_SQL,
     SCHEMA_CONSTRAINTS_SQL,
     SCHEMA_INDEXES_SQL,
@@ -26,10 +26,10 @@ from pg_mcp.compare import (
     differences,
     read_structure,
 )
-from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
-from pg_mcp.querylog import QueryLog
-from pg_mcp.stand_tools import STAND_ONLY_TOOLS, STAND_PROFILES, build_stand_tools
-from pg_mcp.stands import (
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_explorer_mcp.querylog import QueryLog
+from pg_explorer_mcp.stand_tools import STAND_ONLY_TOOLS, STAND_PROFILES, build_stand_tools
+from pg_explorer_mcp.stands import (
     Pool,
     Registry,
     StandError,
@@ -42,7 +42,7 @@ from pg_mcp.stands import (
     stands_enabled,
     summarize,
 )
-from pg_mcp.tools import PROFILES, Tool, ToolError, build_tools
+from pg_explorer_mcp.tools import PROFILES, Tool, ToolError, build_tools
 from tests.helpers import ROOT, rpc
 
 STANDS_ON = {"PG_MCP_STANDS": "*"}

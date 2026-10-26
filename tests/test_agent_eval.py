@@ -19,7 +19,7 @@ import demo
 import pytest
 from agent_eval import Call, Result, Scenario, Verdict, judge
 
-from pg_mcp.db import Settings
+from pg_explorer_mcp.db import Settings
 
 BY_NAME = {scenario.name: scenario for scenario in (*agent_eval.SCENARIOS, *agent_eval.STAND_SCENARIOS)}
 BASE_URL = "http://box:11434/v1"

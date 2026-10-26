@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 
-from pg_mcp import __main__ as entry
+from pg_explorer_mcp import __main__ as entry
 from tests.helpers import ROOT, rpc
 
 

@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from pg_mcp import tools
-from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError
-from pg_mcp.tools import PROFILES, SEARCH_LIMIT, Tool, ToolError, build_tools, missing_table_hint, query_hint
+from pg_explorer_mcp import tools
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError
+from pg_explorer_mcp.tools import PROFILES, SEARCH_LIMIT, Tool, ToolError, build_tools, missing_table_hint, query_hint
 from tests.helpers import ROOT
 
 TABLE = ("sales", "orders", "r", 1200, "Заказы клиентов", None, None, None, None)

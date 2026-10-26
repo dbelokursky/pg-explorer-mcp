@@ -179,7 +179,7 @@ jobs:
       - name: servers.json as the export writes it
         run: |
           uv run python - <<'EOF'
-          from pg_mcp.exports import Connection, pgadmin
+          from pg_explorer_mcp.exports import Connection, pgadmin
           items = [
               Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orders", "billing", None),
               Connection("dev7", "orders", "shipping", "dev7-db.example", 5432, "orders", "shipping_ro", "verify-full", "/certs/ca.pem"),

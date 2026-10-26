@@ -851,4 +851,4 @@ These documents are in Russian. How to report a vulnerability is in [SECURITY.md
 ## License
 
 pg-mcp is under the MIT license ([LICENSE](LICENSE)). The packages it ships unchanged in
-`src/pg_mcp/_vendor` keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+`src/pg_explorer_mcp/_vendor` keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

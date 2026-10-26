@@ -27,7 +27,7 @@ uvx pre-commit install
 | `uv run ruff check --fix` | линтер с автоисправлениями |
 | `uv run ruff format` | форматирование |
 | `uv run mypy` | проверка типов в режиме strict |
-| `uv run python scripts/check_vendor.py` | целостность `src/pg_mcp/_vendor` и его манифест `requirements.txt` |
+| `uv run python scripts/check_vendor.py` | целостность `src/pg_explorer_mcp/_vendor` и его манифест `requirements.txt` |
 | `python3 scripts/client_smoke.py --qwen "$(command -v qwen)"` | проверка в настоящем клиенте, Qwen Code (`npm install -g @qwen-code/qwen-code`), по переменным `PG*`; модель не нужна |
 | `python3 scripts/querylog_report.py <журнал> [--since ДАТА] [--until ДАТА] [--by user\|tool\|stand\|day] [--format text\|json\|csv]` | сводка по журналу запросов (`PG_MCP_QUERY_LOG`) для администратора группы: вызовы по инструментам, пользователям и стендам, медиана и 95-й процентиль, самые долгие и отклонённые проверкой SQL запросы; база не нужна |
 | `python3 scripts/agent_eval.py` | прогон типовых вопросов через настоящую модель на демо-базе: какие инструменты она вызвала и что ответила; нужны Ollama с моделью и Qwen Code, см. ниже |
@@ -120,11 +120,11 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 
 ## Выпуск
 
-1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_mcp/__init__.py` и
+1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_explorer_mcp/__init__.py` и
    обоих манифестах расширения, раздел «Не выпущено» в `CHANGELOG.md` становится `## X.Y.Z — дата`.
    `python3 scripts/release.py version` печатает версию, когда все файлы согласны.
 2. PR в `develop`, затем PR `develop` → `main`. Если с прошлого выпуска менялась выгрузка в
-   инструменты БД (`src/pg_mcp/exports.py`), откройте её результат в DataGrip и в VS Code с
+   инструменты БД (`src/pg_explorer_mcp/exports.py`), откройте её результат в DataGrip и в VS Code с
    расширениями PostgreSQL и SQLTools на машине, где они есть: CI проверяет только psql и pgAdmin.
 3. Аннотированный тег на коммит слияния в `main`: `git tag -a vX.Y.Z -m "pg-mcp X.Y.Z"`,
    `git push origin vX.Y.Z`.
@@ -145,8 +145,8 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 
 | Путь | Что там |
 |---|---|
-| `src/pg_mcp/` | пакет сервера |
-| `src/pg_mcp/_vendor/` | pg8000 и его зависимости на чистом Python, как их выпустили на PyPI |
+| `src/pg_explorer_mcp/` | пакет сервера |
+| `src/pg_explorer_mcp/_vendor/` | pg8000 и его зависимости на чистом Python, как их выпустили на PyPI |
 | `run.py` | запуск из клона репозитория: `python -I run.py` |
 | `install.py` | регистрация сервера в настройках GigaCode или Qwen Code |
 | `tests/` | тесты pytest; общие фикстуры в `conftest.py`, помощники в `helpers.py` |
@@ -156,7 +156,7 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 ## Правила
 
 - **Без зависимостей в рантайме.** Только стандартная библиотека Python 3.9+. Если без пакета
-  не обойтись, он должен быть на чистом Python и попасть в `src/pg_mcp/_vendor/` по инструкции
+  не обойтись, он должен быть на чистом Python и попасть в `src/pg_explorer_mcp/_vendor/` по инструкции
   из его README.
 - **Ветки и PR.** Ветки от `develop` с префиксом `feature/` или `fix/`, PR в `develop`, слияние
   только при зелёном CI.
@@ -169,11 +169,11 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
   `develop` с macOS; его запускает слияние от имени владельца — автослияние, включённое сразу
   после открытия PR (`gh pr merge --auto --merge`), или секрет `AUTOMERGE_TOKEN` с личным токеном
   владельца (права на содержимое и PR этого репозитория).
-- **Тексты на двух языках.** Всё, что читают модель и пользователь, — в `src/pg_mcp/i18n.py`,
+- **Тексты на двух языках.** Всё, что читают модель и пользователь, — в `src/pg_explorer_mcp/i18n.py`,
   по ключу в каждом из словарей `EN` и `RU`; в коде — только `t("ключ")` или `plural("ключ", n)`.
   `tests/test_i18n.py` сверяет ключи, формы множественного числа и плейсхолдеры. Журнал и ошибки
   JSON-RPC остаются английскими (ADR 0004).
-- **Версия в нескольких файлах.** `pyproject.toml`, `src/pg_mcp/__init__.py`, оба манифеста
+- **Версия в нескольких файлах.** `pyproject.toml`, `src/pg_explorer_mcp/__init__.py`, оба манифеста
   расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`, а тег
   выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
 - **Почему так.** Решения про стек и инструменты описаны в [docs/adr/](docs/adr/); прежде чем

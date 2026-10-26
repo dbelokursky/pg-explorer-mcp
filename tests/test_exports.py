@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from pg_mcp import exports
-from pg_mcp.exports import Connection, Export, ExportRefusedError
+from pg_explorer_mcp import exports
+from pg_explorer_mcp.exports import Connection, Export, ExportRefusedError
 from tests.test_imports import dbeaver_workspace, postgres
 
 BILLING = Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orders", "billing", None)

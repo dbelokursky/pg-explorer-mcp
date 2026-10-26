@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from pg_mcp import clients
-from pg_mcp.clients import CLIENTS, ClientConfigError
+from pg_explorer_mcp import clients
+from pg_explorer_mcp.clients import CLIENTS, ClientConfigError
 
 ENTRY = {
     "command": "/usr/bin/python3",

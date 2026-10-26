@@ -21,12 +21,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "src" / "pg_mcp" / "_vendor"))  # the driver ships with the server
+sys.path.insert(0, str(ROOT / "src" / "pg_explorer_mcp" / "_vendor"))  # the driver ships with the server
 
 import pg8000.exceptions  # noqa: E402
 import pg8000.native  # noqa: E402
 
-from pg_mcp.db import Settings  # noqa: E402
+from pg_explorer_mcp.db import Settings  # noqa: E402
 
 DEMO_SQL = ROOT / "docs" / "demo.sql"
 DATABASE = "pg_mcp_demo"

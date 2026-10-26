@@ -20,9 +20,9 @@ import pg8000.exceptions
 import pg8000.native
 import pytest
 
-from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
-from pg_mcp.querylog import QueryLog
-from pg_mcp.tools import Tool, ToolError, build_tools
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_explorer_mcp.querylog import QueryLog
+from pg_explorer_mcp.tools import Tool, ToolError, build_tools
 from tests.helpers import ROOT
 
 pytestmark = pytest.mark.integration

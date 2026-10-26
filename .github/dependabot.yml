@@ -1,5 +1,5 @@
 # Keeps CI actions and development tools fresh. The vendored runtime packages in
-# src/pg_mcp/_vendor are updated by hand, as src/pg_mcp/_vendor/README.md describes:
+# src/pg_explorer_mcp/_vendor are updated by hand, as src/pg_explorer_mcp/_vendor/README.md describes:
 # a pip entry here would only bump their requirements.txt, and scripts/check_vendor.py
 # would fail that pull request. Dependabot alerts cover them all the same: the
 # dependency graph reads that requirements.txt without any entry in this file.

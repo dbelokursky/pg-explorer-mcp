@@ -1,6 +1,6 @@
 # Install once with `uvx pre-commit install`; the hooks then run on every commit.
 # CI runs the same checks (see .github/workflows/tests.yml), so skipping them only delays the bad news.
-exclude: ^src/pg_mcp/_vendor/
+exclude: ^src/pg_explorer_mcp/_vendor/
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
