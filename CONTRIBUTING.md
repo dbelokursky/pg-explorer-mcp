@@ -27,7 +27,7 @@ uvx pre-commit install
 | `uv run ruff check --fix` | линтер с автоисправлениями |
 | `uv run ruff format` | форматирование |
 | `uv run mypy` | проверка типов в режиме strict |
-| `uv run python scripts/check_vendor.py` | целостность `src/pg_mcp/_vendor` |
+| `uv run python scripts/check_vendor.py` | целостность `src/pg_mcp/_vendor` и его манифест `requirements.txt` |
 | `python3 scripts/client_smoke.py --qwen "$(command -v qwen)"` | проверка в настоящем клиенте, Qwen Code (`npm install -g @qwen-code/qwen-code`), по переменным `PG*`; модель не нужна |
 | `python3 scripts/querylog_report.py <журнал> [--since ДАТА] [--until ДАТА] [--by user\|tool\|stand\|day] [--format text\|json\|csv]` | сводка по журналу запросов (`PG_MCP_QUERY_LOG`) для администратора группы: вызовы по инструментам, пользователям и стендам, медиана и 95-й процентиль, самые долгие и отклонённые проверкой SQL запросы; база не нужна |
 | `python3 scripts/agent_eval.py` | прогон типовых вопросов через настоящую модель на демо-базе: какие инструменты она вызвала и что ответила; нужны Ollama с моделью и Qwen Code, см. ниже |
