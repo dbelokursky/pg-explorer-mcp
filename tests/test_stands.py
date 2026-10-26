@@ -89,9 +89,13 @@ class TestServiceFile:
 
     def test_the_sections_an_export_wrote_are_known_by_the_line_above_them(self) -> None:
         text = (
-            "# pg-mcp export\n[dev1.orders.billing]\nhost=db\n\n# mine\n[dev2.orders.billing]\nhost=db\n"
-            "# pg-mcp export\n\n[dev3.orders.billing]\nhost=db\n"
+            "# pg-explorer-mcp export\n[dev1.orders.billing]\nhost=db\n\n# mine\n[dev2.orders.billing]\nhost=db\n"
+            "# pg-explorer-mcp export\n\n[dev3.orders.billing]\nhost=db\n"
         )
+        assert exported_sections(text) == {"dev1.orders.billing"}
+
+    def test_the_sections_pg_mcp_0_7_exported_are_known_too(self) -> None:
+        text = "# pg-mcp export\n[dev1.orders.billing]\nhost=db\n\n# mine\n[dev2.orders.billing]\nhost=db\n"
         assert exported_sections(text) == {"dev1.orders.billing"}
 
     def test_lines_it_cannot_read_are_reported_by_number(self) -> None:
@@ -114,14 +118,37 @@ def test_pg_mcp_stands_takes_patterns_in_any_case() -> None:
 
 
 class TestRegistryFiles:
-    def test_defaults_are_in_the_home_folder(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.fixture
+    def home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        """A home folder of the test's own: a real one may hold the registry of pg-mcp 0.7.0."""
         monkeypatch.setattr(sys, "platform", "linux")
-        assert registry_files({}) == [Path.home() / ".pg-mcp" / "stands.conf", Path.home() / ".pg_service.conf"]
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        return tmp_path
+
+    def test_defaults_are_in_the_home_folder(self, home: Path) -> None:
+        assert registry_files({}) == [home / ".pg-explorer-mcp" / "stands.conf", home / ".pg_service.conf"]
+
+    def test_the_registry_of_pg_mcp_0_7_is_read_while_there_is_no_new_one(self, home: Path) -> None:
+        (home / ".pg-mcp").mkdir()
+        old = write(home / ".pg-mcp" / "stands.conf", sections())
+        assert registry_files({})[0] == old
+        (home / ".pg-explorer-mcp").mkdir()
+        new = write(home / ".pg-explorer-mcp" / "stands.conf", sections())
+        assert registry_files({})[0] == new
+
+    def test_windows_reads_the_old_registry_in_appdata_too(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        (tmp_path / "pg-mcp").mkdir()
+        old = write(tmp_path / "pg-mcp" / "stands.conf", sections())
+        assert registry_files({"APPDATA": str(tmp_path)})[0] == old
 
     def test_windows_keeps_them_in_appdata(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(sys, "platform", "win32")
         assert registry_files({"APPDATA": str(tmp_path)}) == [
-            tmp_path / "pg-mcp" / "stands.conf",
+            tmp_path / "pg-explorer-mcp" / "stands.conf",
             tmp_path / "postgresql" / ".pg_service.conf",
         ]
 
@@ -152,7 +179,9 @@ class TestLoadRegistry:
         assert loaded({"PG_EXPLORER_MCP_STANDS": "dev*"}, [own]).stands() == ["dev1", "dev2", "dev7"]
 
     def test_copies_an_export_wrote_are_not_stands(self, tmp_path: Path) -> None:
-        service = write(tmp_path / "service.conf", "# pg-mcp export\n[dev3.orders.billing]\nhost=db\n" + sections())
+        service = write(
+            tmp_path / "service.conf", "# pg-explorer-mcp export\n[dev3.orders.billing]\nhost=db\n" + sections()
+        )
         assert [target.name for target in loaded(STANDS_ON, [service]).targets] == list(NAMES)
 
     def test_the_import_file_wins_over_pg_service_conf(self, tmp_path: Path) -> None:

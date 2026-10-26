@@ -1,4 +1,4 @@
-# pg-mcp
+# pg-explorer-mcp
 
 Each `pg` MCP server gives read-only access to one PostgreSQL database. There may be several, one per
 database: `pg`, and `pg-<name>` for every further one. An entry for many stands (usually `pg-stands`)
@@ -17,7 +17,7 @@ reaches dozens of stands through the same tools.
 - To learn how a schema differs between two stands (tables, columns, constraints, indexes), call
   `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand; with
   `stands` instead of `stand_b` it sets several stands against `stand_a` (at most 100) and says which differ.
-- To bring the user's DBeaver or `pg_service.conf` connections into pg-mcp, run `/pg:import`: it previews
+- To bring the user's DBeaver or `pg_service.conf` connections into pg-explorer-mcp, run `/pg:import`: it previews
   first and writes only after the user confirms.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.
 - Never ask the user to paste a database password into the chat; it belongs in ~/.pgpass.

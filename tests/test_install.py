@@ -14,7 +14,7 @@ from pg_explorer_mcp import clients, exports, imports
 from tests.helpers import ROOT
 from tests.test_imports import dbeaver_workspace, postgres
 
-ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-mcp/run.py"]}
+ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-explorer-mcp/run.py"]}
 
 
 @pytest.fixture
@@ -107,7 +107,20 @@ def test_register_writes_the_entry_then_checks_it(
     entry = read(tmp_path / ".qwen" / "settings.json")
     assert isinstance(entry, dict)
     assert entry["mcpServers"]["pg"]["env"]["PG_EXPLORER_MCP_PROFILE"] == "schema"
-    assert "qwen extensions link" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "qwen extensions link" in output
+    assert "linked as pg-mcp" not in output
+
+
+def test_an_extension_linked_as_pg_mcp_is_pointed_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    old = tmp_path / ".qwen" / "extensions" / "pg-mcp"
+    old.mkdir(parents=True)
+    install.main(["--client", "qwen"])
+    assert f"{old} still holds the extension linked as pg-mcp before 0.8.0" in capsys.readouterr().out
+    assert old.is_dir()  # the client's own folder: install.py only says what to delete
 
 
 def test_check_reports_a_server_that_does_not_start(capsys: pytest.CaptureFixture[str]) -> None:
@@ -155,7 +168,7 @@ def test_language_comes_from_the_locale_and_is_written_into_the_entry(
     ],
 )
 def test_a_connection_is_recognised_in_either_language(line: str) -> None:
-    assert install.ready(f"pg-mcp 0.3.0 on Python 3.9.6\n{line}\nlimits: read only = on")
+    assert install.ready(f"pg-explorer-mcp 0.3.0 on Python 3.9.6\n{line}\nlimits: read only = on")
 
 
 def test_an_unavailable_database_is_not_a_connection() -> None:
@@ -170,7 +183,7 @@ def test_an_unavailable_database_is_not_a_connection() -> None:
     ],
 )
 def test_an_entry_for_stands_is_ready_once_it_finds_them(line: str) -> None:
-    assert install.ready(f"pg-mcp 0.3.0 on Python 3.9.6\nserver name: pg-stands\n{line}")
+    assert install.ready(f"pg-explorer-mcp 0.3.0 on Python 3.9.6\nserver name: pg-stands\n{line}")
 
 
 @pytest.mark.parametrize("codepage", ["cp1252", "cp866"])
@@ -195,7 +208,7 @@ def test_a_code_page_without_cyrillic_or_dashes_does_not_crash_the_output(
 
 def test_old_python_is_refused_in_the_chosen_language(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "version_info", (3, 8, 18))
-    with pytest.raises(SystemExit, match=r"pg-mcp нужен Python 3\.9 или новее"):
+    with pytest.raises(SystemExit, match=r"pg-explorer-mcp нужен Python 3\.9 или новее"):
         install.main(["--lang", "ru", "--check"])
 
 
@@ -275,7 +288,7 @@ def test_import_previews_and_writes_nothing(
     assert "[dev7.orders.billing]  dev7-db.example:5432" in out
     assert "This was a preview, nothing was written." in out
     assert "s3cret" not in out
-    assert "pw" not in out.replace("pg-mcp", "")
+    assert "pw" not in out.replace("pg-explorer-mcp", "")
     assert not (tmp_path / "stands.conf").exists()
     assert not (tmp_path / "pgpass").exists()
 
@@ -349,7 +362,7 @@ def test_a_terminal_user_is_offered_the_dbeaver_preview(
     monkeypatch.setattr("builtins.input", lambda prompt: (sys.stdout.write(prompt), next(answers))[1])
     install.offer_import("en")
     out = capsys.readouterr().out
-    assert "Show what an import would bring into pg-mcp?" in out
+    assert "Show what an import would bring into pg-explorer-mcp?" in out
     assert "2 connections go into" in out
     assert "To import them, run:" in out
     assert "--write" in out
@@ -488,7 +501,7 @@ def test_export_previews_then_writes(
     assert f"записан {service}" in out
     assert 'psql "service=ift2.orders.billing"' in out
     assert service.read_text(encoding="utf-8").startswith(
-        "# pg-mcp export\n[ift2.orders.billing]\nhost=ift2-db.example\n"
+        "# pg-explorer-mcp export\n[ift2.orders.billing]\nhost=ift2-db.example\n"
     )
 
 

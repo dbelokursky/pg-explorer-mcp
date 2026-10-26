@@ -236,7 +236,7 @@ class Database:
                     unix_sock=str(Path(socket_dir) / f".s.PGSQL.{settings.port}") if socket_dir else None,
                     ssl_context=ssl_context,
                     timeout=connect_timeout(settings),
-                    application_name="pg-mcp",
+                    application_name="pg-explorer-mcp",
                 )
                 break
             except (pg8000.exceptions.Error, OSError) as exc:

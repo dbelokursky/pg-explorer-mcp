@@ -285,7 +285,7 @@ def _registry_text(registry_file: Path, targets: Sequence[Target], *, prune: boo
         sections[target.name] = dict(target.options)
     when = datetime.date.today().isoformat()
     out = [
-        f"# Stands of pg-mcp, written by install.py import on {when}. Sections are stand.database.schema;",
+        f"# Stands of pg-explorer-mcp, written by install.py import on {when}. Sections are stand.database.schema;",
         "# the server reads this file when it starts. Passwords belong in the password file.",
         "",
     ]
@@ -351,7 +351,7 @@ def _escape(part: str) -> str:
 
 
 def _temporary(path: Path) -> Path:
-    return path.with_name(path.name + ".pg-mcp-new")
+    return path.with_name(path.name + ".pg-explorer-mcp-new")
 
 
 def _prepare(path: Path, text: str) -> None:

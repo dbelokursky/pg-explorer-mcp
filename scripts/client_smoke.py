@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check pg-mcp in a real MCP client: Qwen Code, the open-source base of GigaCode CLI.
+"""Check pg-explorer-mcp in a real MCP client: Qwen Code, the open-source base of GigaCode CLI.
 
     python3 scripts/client_smoke.py --qwen "$(command -v qwen)"
 
@@ -39,10 +39,11 @@ def server_connected(mcp_list: str, name: str = "pg") -> bool:
     return any(line.match(entry.strip()) for entry in plain(mcp_list).splitlines())
 
 
-def extension_missing(extensions: str, version: str) -> list[str]:
-    """What `qwen extensions list` does not say about pg-mcp; empty when it says everything."""
+def extension_missing(extensions: str, manifest: dict[str, str]) -> list[str]:
+    """What `qwen extensions list` does not say about the extension of the manifest; empty when it says all."""
     text = plain(extensions)
-    return [item for item in (f"pg-mcp ({version})", "pg-mcp-context.md", "/pg:setup") if item not in text]
+    wanted = (f"{manifest['name']} ({manifest['version']})", manifest["contextFileName"], "/pg:setup")
+    return [item for item in wanted if item not in text]
 
 
 def client_env(home: str, environ: dict[str, str]) -> dict[str, str]:
@@ -82,13 +83,13 @@ def run(command: Sequence[str], env: dict[str, str], stdin: str = "") -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check pg-mcp in a real MCP client, Qwen Code.")
+    parser = argparse.ArgumentParser(description="Check pg-explorer-mcp in a real MCP client, Qwen Code.")
     parser.add_argument("--qwen", required=True, help="path to the qwen executable")
     args = parser.parse_args(argv)
-    version = json.loads((ROOT / "qwen-extension.json").read_text(encoding="utf-8"))["version"]
+    manifest = json.loads((ROOT / "qwen-extension.json").read_text(encoding="utf-8"))
 
     failures = []
-    with tempfile.TemporaryDirectory(prefix="pg-mcp-client-") as home:
+    with tempfile.TemporaryDirectory(prefix="pg-explorer-mcp-client-") as home:
         env = client_env(home, dict(os.environ))
         install = [sys.executable, str(ROOT / "install.py"), "--client", "qwen", "--profile", "explore", "--lang", "en"]
         if not run(install, env):
@@ -97,14 +98,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             failures.append("qwen mcp list does not show the pg server as connected")
         if "linked successfully" not in run([args.qwen, "extensions", "link", str(ROOT)], env, stdin="y\n"):
             failures.append("qwen extensions link did not link the repository")
-        missing = extension_missing(run([args.qwen, "extensions", "list"], env), version)
+        missing = extension_missing(run([args.qwen, "extensions", "list"], env), manifest)
         if missing:
             failures.append(f"qwen extensions list does not show: {', '.join(missing)}")
 
     for failure in failures:
         print(f"FAIL: {failure}")
     if not failures:
-        print(f"OK: Qwen Code reaches pg-mcp {version} and sees its extension")
+        print(f"OK: Qwen Code reaches {manifest['name']} {manifest['version']} and sees its extension")
     return 1 if failures else 0
 
 

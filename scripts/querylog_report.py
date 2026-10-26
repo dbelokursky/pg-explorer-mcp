@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sum up the query log for the administrator of a group: who asked what, and what was refused.
 
-    python3 scripts/querylog_report.py ~/pg-mcp-queries.jsonl
+    python3 scripts/querylog_report.py ~/pg-explorer-mcp-queries.jsonl
     python3 scripts/querylog_report.py queries.jsonl queries.jsonl.1 queries.jsonl.2.gz --since 2026-10-20
     python3 scripts/querylog_report.py queries.jsonl --format csv --by user > users.csv
 

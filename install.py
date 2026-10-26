@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register pg-mcp in GigaCode CLI (or Qwen Code) and check that it starts.
+"""Register pg-explorer-mcp in GigaCode CLI (or Qwen Code) and check that it starts.
 
     python3 install.py            register in ~/.gigacode/settings.json, then check
     python3 install.py --check    only start the server and call status
@@ -47,7 +47,7 @@ SERVER_NAME = "pg"  # further databases register as pg-<name>
 STANDS_NAME = "stands"  # the entry an import registers: pg-stands, with PG_EXPLORER_MCP_STANDS=*
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,29}")
 SETTINGS_FILES = {"gigacode": "~/.gigacode/settings.json", "qwen": "~/.qwen/settings.json"}
-EXTENSION_CLIENTS = ("gigacode", "qwen")  # the clients that link pg-mcp as an extension too
+EXTENSION_CLIENTS = ("gigacode", "qwen")  # the clients that link pg-explorer-mcp as an extension too
 COPIED_ENV = (
     "PGHOST",
     "PGPORT",
@@ -127,7 +127,7 @@ def check(entry: dict[str, Any]) -> bool:
             "params": {
                 "protocolVersion": "2025-06-18",
                 "capabilities": {},
-                "clientInfo": {"name": "pg-mcp install.py"},
+                "clientInfo": {"name": "pg-explorer-mcp install.py"},
             },
         },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -233,13 +233,31 @@ def main(argv: list[str]) -> int:
     if not args.check:
         print()
         if args.client in EXTENSION_CLIENTS:
-            print(t("install.next", client=args.client, path=ROOT))
+            link_hints(args.client)
         print(t("install.restart"))
         offer_clients(name, entry, besides=args.client)
         if args.name is None:
             offer_import(language)
         offer_export()  # pg-stands is registered with --name stands
     return 0 if ok else 1
+
+
+def link_hints(client: str) -> None:
+    """How to link the extension, and which folder an extension linked as pg-mcp left in the client."""
+    print(t("install.next", client=client, path=ROOT))
+    old = old_extension(client)
+    if old is not None:
+        print(t("install.old_extension", path=old))
+
+
+def old_extension(client: str) -> Path | None:
+    """The client's folder of the extension linked as pg-mcp before 0.8.0, when there is one (ADR 0007).
+
+    The client loads it under the new name from the manifest, but cannot remove it by either name, and
+    refuses a new link while it is there. Its format is the client's, so install.py only names it.
+    """
+    folder = Path(SETTINGS_FILES[client]).expanduser().parent / "extensions" / "pg-mcp"
+    return folder if folder.is_dir() else None
 
 
 def install_into(key: str, name: str, entry: dict[str, Any]) -> bool:
@@ -300,7 +318,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
 
 def import_command(args: argparse.Namespace, language: str) -> int:
-    """Preview, or with --write bring, the connections of DBeaver or a pg_service.conf file into pg-mcp."""
+    """Preview, or with --write bring, the connections of DBeaver or a pg_service.conf file into pg-explorer-mcp."""
     try:
         connections = _connections(args)
         pattern = imports.compile_pattern(args.stand_pattern)

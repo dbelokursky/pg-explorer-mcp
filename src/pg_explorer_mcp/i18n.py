@@ -152,7 +152,7 @@ EN: dict[str, str] = {
     "argument.query": "One SQL statement.",
     "argument.text": 'Part of a name or comment, e.g. "order".',
     "argument.analyze": "Run the query for real timings.",
-    "status.version": "pg-mcp {version} on Python {python}, installed at {path}",
+    "status.version": "pg-explorer-mcp {version} on Python {python}, installed at {path}",
     "status.name": "server name: {name}",
     "status.read_only": (
         "access: read only. Nothing can be inserted, changed or deleted through this server: decline such "
@@ -448,7 +448,7 @@ EN: dict[str, str] = {
         "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
     ),
     # install.py import
-    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-mcp",
+    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-explorer-mcp",
     "install.help.source": "where the connections come from: dbeaver or pg-service",
     "install.help.file": "the pg_service.conf file to read (for pg-service)",
     "install.help.workspace": "DBeaver's folder with data-sources.json (default: the usual place for this OS)",
@@ -462,7 +462,7 @@ EN: dict[str, str] = {
     "import.duplicate": "the same stand, database and user as {other!r}: [{name}] is already taken",
     "import.no_host": "no host",
     "import.no_database": "no database",
-    "import.no_user": "no user: pg-mcp reads a schema with the login of the same name",
+    "import.no_user": "no user: pg-explorer-mcp reads a schema with the login of the same name",
     "import.no_stand": "no stand in the folder, the name or the host",
     "import.bad_name": "{part!r} cannot be a part of a section name (letters, digits, _ $ - only)",
     "import.reading": "reading {source}",
@@ -482,7 +482,7 @@ EN: dict[str, str] = {
         "data-sources.json"
     ),
     "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-mcp? [y/N] ",
+    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-explorer-mcp? [y/N] ",
     "import.offer_hint": "To import them, run: {command}",
     # install.py export
     "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
@@ -544,7 +544,7 @@ EN: dict[str, str] = {
     "export.offer": "Found {tools}. Add the stand connections there ({count})? [y/N] ",
     "export.offer_hint": "To add them later:",
     # install.py
-    "install.description": "Register the pg-mcp server in the agent's settings and check it.",
+    "install.description": "Register the pg-explorer-mcp server in the agent's settings and check it.",
     "install.help.client": "the agent or editor to register the server with (default: gigacode)",
     "install.help.print": "print the entry and where it goes instead of registering it",
     "clients.where_file": "for {client}, add this to {path}:",
@@ -559,7 +559,7 @@ EN: dict[str, str] = {
     "install.help.lang": "language of the server and of this script: en or ru (default: from the system locale)",
     "install.help.name": "register a further database as pg-NAME next to pg (lowercase letters, digits, hyphens)",
     "install.bad_name": "{name!r} cannot be a server name: use lowercase letters, digits and hyphens, at most 30",
-    "install.old_python": "pg-mcp needs Python {need} or newer, this is {have}",
+    "install.old_python": "pg-explorer-mcp needs Python {need} or newer, this is {have}",
     "install.backup": "backup of the old settings: {path}",
     "install.not_json": "{path} is not plain JSON (comments?). Merge this into it by hand:\n{snippet}",
     "install.registered": "registered MCP server {name!r} in {path}",
@@ -567,6 +567,10 @@ EN: dict[str, str] = {
     "install.no_answer": "the server did not answer as expected:",
     "install.protocol": "protocol {version}",
     "install.next": "next: {client} extensions link {path}",
+    "install.old_extension": (
+        "{path} still holds the extension linked as pg-mcp before 0.8.0: if that command says it is installed"
+        " already, delete the folder and run the command again"
+    ),
     "install.restart": "then restart the agent so it starts the server with the new settings",
 }
 
@@ -627,7 +631,7 @@ RU: dict[str, str] = {
     "argument.query": "Одна SQL-команда.",
     "argument.text": 'Фрагмент имени или комментария, например "заказ".',
     "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время.",
-    "status.version": "pg-mcp {version} на Python {python}, установлен в {path}",
+    "status.version": "pg-explorer-mcp {version} на Python {python}, установлен в {path}",
     "status.name": "имя сервера: {name}",
     "status.read_only": (
         "доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких "
@@ -940,7 +944,7 @@ RU: dict[str, str] = {
         "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
         "раньше"
     ),
-    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-mcp",
+    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-explorer-mcp",
     "install.help.source": "откуда брать подключения: dbeaver или pg-service",
     "install.help.file": "файл pg_service.conf, который читать (для pg-service)",
     "install.help.workspace": "папка DBeaver с data-sources.json (по умолчанию — обычное место для этой ОС)",
@@ -954,7 +958,7 @@ RU: dict[str, str] = {
     "import.duplicate": "тот же стенд, база и пользователь, что у {other!r}: [{name}] уже занята",
     "import.no_host": "нет хоста",
     "import.no_database": "нет базы",
-    "import.no_user": "нет пользователя: pg-mcp читает схему под одноимённой учёткой",
+    "import.no_user": "нет пользователя: pg-explorer-mcp читает схему под одноимённой учёткой",
     "import.no_stand": "стенд не найден ни в папке, ни в имени, ни в хосте",
     "import.bad_name": "{part!r} не годится в имя секции (только буквы, цифры, _ $ -)",
     "import.reading": "читаю {source}",
@@ -973,7 +977,7 @@ RU: dict[str, str] = {
         "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
     ),
     "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-mcp? [y/N] ",
+    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
     "import.offer_hint": "Чтобы перенести их, выполните: {command}",
     "export.help": (
         "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
@@ -1036,7 +1040,7 @@ RU: dict[str, str] = {
     ),
     "export.offer": "Найдены {tools}. Добавить туда подключения к стендам ({count})? [y/N] ",
     "export.offer_hint": "Чтобы добавить их позже, выполните:",
-    "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
+    "install.description": "Регистрирует сервер pg-explorer-mcp в настройках агента и проверяет его.",
     "install.help.client": "агент или редактор, где зарегистрировать сервер (по умолчанию: gigacode)",
     "install.help.print": "напечатать запись и куда её положить, ничего не регистрируя",
     "clients.where_file": "для {client} добавьте это в {path}:",
@@ -1055,7 +1059,7 @@ RU: dict[str, str] = {
     "install.bad_name": (
         "{name!r} не годится в имя сервера: нужны строчные латинские буквы, цифры и дефисы, до 30 знаков"
     ),
-    "install.old_python": "pg-mcp нужен Python {need} или новее, а здесь {have}",
+    "install.old_python": "pg-explorer-mcp нужен Python {need} или новее, а здесь {have}",
     "install.backup": "копия прежних настроек: {path}",
     "install.not_json": "{path} — не чистый JSON (комментарии?). Добавьте это в него вручную:\n{snippet}",
     "install.registered": "MCP-сервер {name!r} зарегистрирован в {path}",
@@ -1063,6 +1067,10 @@ RU: dict[str, str] = {
     "install.no_answer": "сервер ответил не так, как ожидалось:",
     "install.protocol": "протокол {version}",
     "install.next": "дальше: {client} extensions link {path}",
+    "install.old_extension": (
+        "в {path} осталась запись расширения, подключённого как pg-mcp до 0.8.0: если команда ответит, что"
+        " расширение уже установлено, удалите эту папку и выполните команду снова"
+    ),
     "install.restart": "затем перезапустите агента, чтобы он запустил сервер с новыми настройками",
 }
 

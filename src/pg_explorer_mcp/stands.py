@@ -36,8 +36,10 @@ _STAND_NUMBER = re.compile(r"(\D*)(\d*)(.*)")
 _RANGE = "\u2013"  # an en dash between the first and the last stand of a run
 _PASSWORD_LINE = re.compile(r"^\s*password\s*=", re.MULTILINE)
 # install.py export writes this line above every section it puts into a service file: such a section
-# is a copy of a stand for psql, not a stand of its own, and the next export may rewrite it.
-EXPORTED = "# pg-mcp export"
+# is a copy of a stand for psql, not a stand of its own, and the next export may rewrite it. Sections
+# that pg-mcp 0.7.0 exported carry the old line; they are ours too, and an export rewrites them (ADR 0007).
+EXPORTED = "# pg-explorer-mcp export"
+EXPORT_MARKS = (EXPORTED, "# pg-mcp export")
 
 
 class StandError(Exception):
@@ -207,8 +209,7 @@ def stands_enabled(env: Mapping[str, str]) -> list[str] | None:
 def registry_files(env: Mapping[str, str]) -> list[Path]:
     """The stands file the import writes, then the user's own pg_service.conf."""
     home = Path(env["APPDATA"]) if sys.platform == "win32" and env.get("APPDATA") else Path.home()
-    folder = "pg-mcp" if sys.platform == "win32" else ".pg-mcp"
-    own = env.get("PG_EXPLORER_MCP_STANDS_FILE") or str(home / folder / "stands.conf")
+    own = env.get("PG_EXPLORER_MCP_STANDS_FILE") or str(_own_registry(home))
     if env.get("PGSERVICEFILE"):
         service = env["PGSERVICEFILE"]
     elif sys.platform == "win32":
@@ -216,6 +217,13 @@ def registry_files(env: Mapping[str, str]) -> list[Path]:
     else:
         service = str(home / ".pg_service.conf")
     return [Path(own).expanduser(), Path(service).expanduser()]
+
+
+def _own_registry(home: Path) -> Path:
+    """stands.conf in the folder of pg-explorer-mcp, or in that of pg-mcp 0.7.0 while only it has one."""
+    hidden = "" if sys.platform == "win32" else "."
+    new, old = (home / f"{hidden}{name}" / "stands.conf" for name in ("pg-explorer-mcp", "pg-mcp"))
+    return old if old.exists() and not new.exists() else new
 
 
 def load_registry(
@@ -303,7 +311,7 @@ def exported_sections(text: str) -> set[str]:
     previous = ""
     for raw in text.splitlines():
         line = raw.strip()
-        if line.startswith("[") and line.endswith("]") and previous.startswith(EXPORTED):
+        if line.startswith("[") and line.endswith("]") and previous.startswith(EXPORT_MARKS):
             found.add(line[1:-1].strip())
         previous = line
     return found

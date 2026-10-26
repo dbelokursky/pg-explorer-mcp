@@ -46,7 +46,7 @@ def line(tool: str, arguments: dict[str, Any], outcome: str = "ok", **more: Any)
 JOURNAL = "\n".join(
     [
         line("status", {}),
-        "pg-mcp INFO not a journal line",
+        "pg-explorer-mcp INFO not a journal line",
         line("describe_table", {"table": "shop.orders"}, rows=1),
         line(
             "run_select",

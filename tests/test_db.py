@@ -440,7 +440,7 @@ class TestDefences:
 
     def test_lost_connection_is_reopened(self, db: Database, admin: pg8000.native.Connection) -> None:
         db.server_info()
-        admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-mcp'")
+        admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-explorer-mcp'")
         assert db.server_info()["read_only"] == "on"
 
 

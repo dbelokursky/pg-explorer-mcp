@@ -63,10 +63,10 @@ DEFAULT_BASE_URL = "http://localhost:11434/v1"
 LANGUAGES = ("ru", "en")
 QUESTION_TIMEOUT_S = 600  # a local model may take minutes over one question
 MAX_TURNS = 12  # model and tool rounds per question; more means the model goes in circles
-SMALL_CONTEXT = 16384  # tokens; Qwen Code's own prompt with the tools of pg-mcp needs about 10 thousand
+SMALL_CONTEXT = 16384  # tokens; Qwen Code's own prompt with the tools of pg-explorer-mcp needs about 10 thousand
 ORDERS_BY_STATUS = {"shipped": 174, "paid": 162, "cancelled": 90, "new": 74}  # as docs/demo.sql makes them
 # Built-in tools of Qwen Code that act on this machine: off, so that a model which wants to delete
-# something cannot reach for psql in the shell; the database tools are those of pg-mcp alone.
+# something cannot reach for psql in the shell; the database tools are those of pg-explorer-mcp alone.
 EXCLUDED_TOOLS = ("run_shell_command", "write_file", "edit", "replace", "task", "web_fetch", "web_search")
 _COLOURS = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -481,7 +481,7 @@ def register(env: dict[str, str], home: Path, language: str, name: str | None = 
     for entry in settings["mcpServers"].values():
         entry["trust"] = True  # the tools run without a confirmation, which no one is there to give
     # Qwen Code 0.17+ hides MCP tools behind its tool_search/tool_call bridge; off, so that the model sees
-    # the tools of pg-mcp as GigaCode CLI shows them. No memory extraction after the answer: it costs a
+    # the tools of pg-explorer-mcp as GigaCode CLI shows them. No memory extraction after the answer: it costs a
     # model call per question and says nothing about the tools. No usage statistics from a check.
     settings["tools"] = {"toolSearch": {"enabled": False}}
     settings["memory"] = {"enableManagedAutoMemory": False}
@@ -490,11 +490,12 @@ def register(env: dict[str, str], home: Path, language: str, name: str | None = 
 
 
 def link_extension(qwen: str, env: dict[str, str], home: Path) -> None:
-    """The repository as the extension, so that the model has pg-mcp-context.md as a user's agent does."""
+    """The repository as the extension, so that the model has pg-explorer-mcp-context.md as a user's agent does."""
     run([qwen, "extensions", "link", str(ROOT)], env, home, stdin="y\n")
     proc = run([qwen, "extensions", "list"], env, home)
     listed = plain(proc.stdout + proc.stderr)
-    if "pg-mcp" not in listed:
+    name = json.loads((ROOT / "qwen-extension.json").read_text(encoding="utf-8"))["name"]
+    if f"{name} (" not in listed:  # the name and version line, not the folder path, which may hold the name too
         raise CheckError(f"qwen extensions link did not link the repository:\n{listed.strip()}")
 
 
@@ -730,7 +731,7 @@ def ask_all(
     """
     languages = LANGUAGES if args.lang == "all" else (args.lang,)
     results: list[Result] = []
-    with tempfile.TemporaryDirectory(prefix="pg-mcp-agent-eval-") as folder:
+    with tempfile.TemporaryDirectory(prefix="pg-explorer-mcp-agent-eval-") as folder:
         home = Path(folder)
         env = home_env(home, dict(os.environ), args, model)
         if settings is not None:

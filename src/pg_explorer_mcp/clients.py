@@ -1,4 +1,4 @@
-"""Where MCP clients keep their servers, and the entry of pg-mcp in each client's format.
+"""Where MCP clients keep their servers, and the entry of pg-explorer-mcp in each client's format.
 
 install.py registers the server in a client's file, or prints the entry for the user to paste.
 The entry itself is the same everywhere (the interpreter, run.py, the PG* settings); clients only

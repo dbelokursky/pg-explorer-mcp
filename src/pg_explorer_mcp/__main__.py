@@ -39,7 +39,7 @@ def main(
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(errors="backslashreplace")
     level = getattr(logging, env.get("PG_EXPLORER_MCP_LOG_LEVEL", "INFO").upper(), logging.INFO)
-    logging.basicConfig(stream=sys.stderr, level=level, format="pg-mcp %(levelname)s %(message)s")
+    logging.basicConfig(stream=sys.stderr, level=level, format="pg-explorer-mcp %(levelname)s %(message)s")
     old = environment.legacy_names(given)
     if old:
         logging.getLogger(__name__).info("old setting names %s; install.py writes the new ones", ", ".join(old))
