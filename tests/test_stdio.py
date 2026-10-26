@@ -67,7 +67,7 @@ def test_russian_session_stays_ascii_on_the_wire(unreachable_env: dict[str, str]
             rpc(2, "tools/list"),
             rpc(3, "tools/call", {"name": "status", "arguments": {}}),
         ],
-        env=dict(unreachable_env, PG_MCP_LANG="ru"),
+        env=dict(unreachable_env, PG_EXPLORER_MCP_LANG="ru"),
     )
     assert len(lines) == 3, proc.stderr.decode("utf-8", "replace")
     assert all(line.isascii() for line in lines)

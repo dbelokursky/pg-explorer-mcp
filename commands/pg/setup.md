@@ -16,7 +16,7 @@ Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-mcp extens
    prints its status. For a further database add `--name <name>`: it registers `pg-<name>` next to `pg`.
    For another agent or editor add `--client <name>` (vscode, cursor, windsurf, cline, roo, continue,
    lmstudio, claude-desktop, junie, jetbrains); `--print` only shows the entry and where it goes.
-   For many stands in one entry set `PG_MCP_STANDS='*'` in the environment and add `--name stands`;
+   For many stands in one entry set `PG_EXPLORER_MCP_STANDS='*'` in the environment and add `--name stands`;
    the stands come from `~/.pg-mcp/stands.conf` and `~/.pg_service.conf` (see the README).
 4. If the status says the database is unavailable, follow its hint. Connection settings go into the
    `env` block of `mcpServers.pg` (or `pg-<name>`): PGHOST, PGPORT, PGDATABASE, PGUSER, PGSSLMODE.

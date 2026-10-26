@@ -69,8 +69,8 @@ def test_shorten_cuts_long_values_with_an_ellipsis() -> None:
     ("env", "expected"),
     [
         ({}, DEFAULT_BUDGET),
-        ({"PG_MCP_MAX_RESPONSE_CHARS": "12000"}, 12000),
-        ({"PG_MCP_MAX_RESPONSE_CHARS": "10"}, MIN_BUDGET),
+        ({"PG_EXPLORER_MCP_MAX_RESPONSE_CHARS": "12000"}, 12000),
+        ({"PG_EXPLORER_MCP_MAX_RESPONSE_CHARS": "10"}, MIN_BUDGET),
     ],
 )
 def test_budget_comes_from_the_environment_with_a_floor(env: dict[str, str], expected: int) -> None:
@@ -79,5 +79,5 @@ def test_budget_comes_from_the_environment_with_a_floor(env: dict[str, str], exp
 
 def test_garbage_budget_falls_back_to_the_default(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="pg_explorer_mcp.budget"):
-        assert budget_from_env({"PG_MCP_MAX_RESPONSE_CHARS": "lots"}) == DEFAULT_BUDGET
+        assert budget_from_env({"PG_EXPLORER_MCP_MAX_RESPONSE_CHARS": "lots"}) == DEFAULT_BUDGET
     assert "is not a number" in caplog.text

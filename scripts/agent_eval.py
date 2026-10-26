@@ -55,6 +55,7 @@ import client_smoke  # the throwaway home with the password in a pass file, as t
 import demo  # the demo database: its names, and a connection to count the orders again
 import pg8000.exceptions
 
+from pg_explorer_mcp import environment
 from pg_explorer_mcp.db import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -431,13 +432,15 @@ def home_env(home: Path, environ: dict[str, str], args: argparse.Namespace, mode
         "OPENAI_BASE_URL",
         "OPENAI_MODEL",
     }
-    shell = {key: value for key, value in environ.items() if key not in dropped and not key.startswith("PG_MCP_")}
+    shell = {
+        key: value for key, value in environ.items() if key not in dropped and not key.startswith("PG_EXPLORER_MCP_")
+    }
     env = client_smoke.client_env(str(home), dict(shell, PGPASSWORD=str(args.password)))
     (home / "work").mkdir()  # Qwen Code's project folder: empty, so nothing but the database is in view
     env.update(
         PGDATABASE=args.database,
         PGUSER=args.role,
-        PG_MCP_QUERY_LOG=str(home / "queries.jsonl"),
+        PG_EXPLORER_MCP_QUERY_LOG=str(home / "queries.jsonl"),
         OPENAI_BASE_URL=args.base_url,
         OPENAI_MODEL=model,
         OPENAI_API_KEY=environ.get("OPENAI_API_KEY") or "ollama",
@@ -705,7 +708,7 @@ def evaluate(args: argparse.Namespace, scenarios: Sequence[Scenario], model: str
     if single:
         results += ask_all(args, single, model, results)
     if stands:
-        settings = Settings.from_env(os.environ)
+        settings = Settings.from_env(environment.with_legacy_names(os.environ))
         make_copy(settings, args)
         try:
             results += ask_all(args, stands, model, results, settings=settings)
@@ -732,7 +735,7 @@ def ask_all(
         env = home_env(home, dict(os.environ), args, model)
         if settings is not None:
             (home / "stands.conf").write_text(stands_registry(settings, args), encoding="utf-8")
-            env.update(PG_MCP_STANDS="*", PG_MCP_STANDS_FILE=str(home / "stands.conf"))
+            env.update(PG_EXPLORER_MCP_STANDS="*", PG_EXPLORER_MCP_STANDS_FILE=str(home / "stands.conf"))
         version = plain(run([args.qwen, "--version"], env, home).stdout).strip()
         where = f"stands dev7 ({args.database}) and dev12 ({copy_database(args)})" if settings else args.database
         print(f"model {model} at {args.base_url}; Qwen Code {version} ({args.qwen}); {where} as {args.role}")

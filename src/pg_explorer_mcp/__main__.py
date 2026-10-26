@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO
 
-from . import i18n
+from . import environment, i18n
 from .budget import budget_from_env
 from .db import Database
 from .protocol import Server
@@ -34,11 +34,15 @@ def main(
     env: Mapping[str, str] | None = None,
 ) -> int:
     """Serve MCP over the given byte streams (stdin and stdout by default) until input ends."""
-    env = os.environ if env is None else env
+    given = os.environ if env is None else env
+    env = environment.with_legacy_names(given)
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(errors="backslashreplace")
-    level = getattr(logging, env.get("PG_MCP_LOG_LEVEL", "INFO").upper(), logging.INFO)
+    level = getattr(logging, env.get("PG_EXPLORER_MCP_LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(stream=sys.stderr, level=level, format="pg-mcp %(levelname)s %(message)s")
+    old = environment.legacy_names(given)
+    if old:
+        logging.getLogger(__name__).info("old setting names %s; install.py writes the new ones", ", ".join(old))
 
     source = stdin if stdin is not None else sys.stdin.buffer
     sink = stdout if stdout is not None else sys.stdout.buffer
@@ -52,14 +56,14 @@ def main(
     profile, profile_warning = profile_from_env(env)
     if profile_warning is not None:
         warnings.append(profile_warning)
-    name = env.get("PG_MCP_NAME", "").strip() or DEFAULT_NAME
-    # Many stands only when PG_MCP_STANDS asks and the registry has some; otherwise the PG* settings.
+    name = env.get("PG_EXPLORER_MCP_NAME", "").strip() or DEFAULT_NAME
+    # Many stands only when PG_EXPLORER_MCP_STANDS asks and the registry has some; otherwise the PG* settings.
     registry = load_registry(env)
     if registry is not None and not registry.targets:
         warnings.extend(registry_warnings(registry))  # the single-database tools show why the stands are off
     connections: Database | Pool
     if registry is not None and registry.targets:
-        connections = Pool(registry, env, _whole(env, "PG_MCP_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS))
+        connections = Pool(registry, env, _whole(env, "PG_EXPLORER_MCP_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS))
         query_log = QueryLog.from_env(env, connections)
         tools = build_stand_tools(
             connections,

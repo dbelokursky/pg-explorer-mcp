@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "src" / "pg_explorer_mcp" / "_vendor"))  # the dri
 import pg8000.exceptions  # noqa: E402
 import pg8000.native  # noqa: E402
 
+from pg_explorer_mcp import environment  # noqa: E402
 from pg_explorer_mcp.db import Settings  # noqa: E402
 
 DEMO_SQL = ROOT / "docs" / "demo.sql"
@@ -106,7 +107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--password", default=PASSWORD, help=f"the role's password (default: {PASSWORD})")
     parser.add_argument("--drop", action="store_true", help="remove the database and the role")
     args = parser.parse_args(argv)
-    settings = Settings.from_env(os.environ)
+    settings = Settings.from_env(environment.with_legacy_names(os.environ))
     try:
         if args.drop:
             drop(settings, args.database, args.role)

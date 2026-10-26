@@ -1,6 +1,6 @@
 """Many stands against a real PostgreSQL: stands emulated on one server, a login per schema (ADR 0006).
 
-Run them with PG_MCP_IT=1 and the usual PG* variables pointing at a database where the tests may
+Run them with PG_EXPLORER_MCP_IT=1 and the usual PG* variables pointing at a database where the tests may
 create and drop the schemas mcp_it_billing and mcp_it_orders and the roles of the same names, with a
 superuser login that may also create and drop the database mcp_it_stand next to it. Most stands of
 the test registry point at the first database; dev4 and ift1 point at the second, where billing
@@ -115,7 +115,7 @@ def pool(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Pool]:
     stands_file = folder / "stands.conf"
     dead_port = unreachable_database_env()["PGPORT"]
     stands_file.write_text(registry_text(Settings.from_env(os.environ), dead_port), encoding="utf-8")
-    registry = load_registry({"PG_MCP_STANDS": "*"}, [stands_file])
+    registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [stands_file])
     assert registry is not None
     assert registry.warnings == []
     stands = Pool(registry, dict(os.environ, PGPASSFILE=str(passfile)), limit=2)
@@ -414,7 +414,7 @@ class TestManyStands:
         live = f"host={settings.host}\nport={settings.port}\ndbname={settings.database}\n"
         stands_file = tmp_path / "many.conf"
         stands_file.write_text("".join(f"[dev{n}.shop.{BILLING}]\n{live}\n" for n in range(1, 21)), encoding="utf-8")
-        registry = load_registry({"PG_MCP_STANDS": "*"}, [stands_file])
+        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [stands_file])
         assert registry is not None
         passfile = tmp_path / "pgpass"
         passfile.write_text(f"*:*:*:{BILLING}:{PASSWORDS[BILLING]}\n", encoding="utf-8")

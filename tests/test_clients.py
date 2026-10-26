@@ -15,7 +15,12 @@ ENTRY = {
     "command": "/usr/bin/python3",
     "args": ["-I", "/opt/pg-mcp/run.py"],
     "timeout": 30000,
-    "env": {"PGHOST": "db.example", "PG_MCP_NAME": "pg", "PG_MCP_LANG": "ru", "PGAPPNAME": 'quote " and кириллица'},
+    "env": {
+        "PGHOST": "db.example",
+        "PG_EXPLORER_MCP_NAME": "pg",
+        "PG_EXPLORER_MCP_LANG": "ru",
+        "PGAPPNAME": 'quote " and кириллица',
+    },
 }
 
 
@@ -121,8 +126,8 @@ class TestEntry:
             '      - "/opt/pg-mcp/run.py"\n'
             "    env:\n"
             '      "PGHOST": "db.example"\n'
-            '      "PG_MCP_NAME": "pg"\n'
-            '      "PG_MCP_LANG": "ru"\n'
+            '      "PG_EXPLORER_MCP_NAME": "pg"\n'
+            '      "PG_EXPLORER_MCP_LANG": "ru"\n'
             '      "PGAPPNAME": "quote \\" and кириллица"\n'
         )
 

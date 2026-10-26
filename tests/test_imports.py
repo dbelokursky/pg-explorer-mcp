@@ -249,7 +249,7 @@ class TestWrite:
         if sys.platform != "win32":
             assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
             assert stat.S_IMODE(registry_file.stat().st_mode) == 0o600
-        registry = load_registry({"PG_MCP_STANDS": "*"}, [registry_file])
+        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [registry_file])
         assert registry is not None
         assert [target.name for target in registry.targets] == ["dev7.orders.billing", "ift1.orders.billing"]
 
@@ -301,7 +301,7 @@ class TestWrite:
             write(plan([], PATTERN), tmp_path / "stands.conf", tmp_path / "pgpass")
 
     def test_the_default_files_follow_the_environment(self, tmp_path: Path) -> None:
-        env = {"PG_MCP_STANDS_FILE": str(tmp_path / "s.conf"), "PGPASSFILE": str(tmp_path / "p")}
+        env = {"PG_EXPLORER_MCP_STANDS_FILE": str(tmp_path / "s.conf"), "PGPASSFILE": str(tmp_path / "p")}
         assert imports.default_files(env) == (tmp_path / "s.conf", tmp_path / "p")
 
 

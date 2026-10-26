@@ -16,7 +16,7 @@ Bring the user's stand connections into pg-mcp: from DBeaver, or from a `pg_serv
    `--stand-pattern '<regular expression>'`; the default is `(dev|ift)\d+`.
 4. Only after the user says yes, run the same command with `--write`. It writes the registry
    (`~/.pg-mcp/stands.conf`) and adds the passwords to the password file (`~/.pgpass`), keeping backups
-   of both, and registers the `pg-stands` entry next to `pg` with `PG_MCP_STANDS=*`. With `--prune` the
+   of both, and registers the `pg-stands` entry next to `pg` with `PG_EXPLORER_MCP_STANDS=*`. With `--prune` the
    registry is replaced instead of added to; the password file is only ever added to.
 5. Tell the user to restart the agent, then check with the `status` tool of `pg-stands`: it lists the
    stands and warns about anything the registry could not read. A stand the user sees in DBeaver but not

@@ -24,12 +24,12 @@ _language: ContextVar[str] = ContextVar("pg_mcp_language", default=DEFAULT_LANGU
 
 
 def language_from_env(env: Mapping[str, str], system_locale: str | None = None) -> tuple[str, str | None]:
-    """The language to speak, and the PG_MCP_LANG value it had to ignore, if any.
+    """The language to speak, and the PG_EXPLORER_MCP_LANG value it had to ignore, if any.
 
-    PG_MCP_LANG decides when it is set. Otherwise the locale variables do and,
+    PG_EXPLORER_MCP_LANG decides when it is set. Otherwise the locale variables do and,
     when none is set (as on Windows), the locale the system reports.
     """
-    explicit = env.get("PG_MCP_LANG", "").strip()
+    explicit = env.get("PG_EXPLORER_MCP_LANG", "").strip()
     if explicit:
         code = re.split(r"[-_.@]", explicit.lower(), maxsplit=1)[0]
         return (code, None) if code in LANGUAGES else (DEFAULT_LANGUAGE, explicit)
@@ -172,8 +172,8 @@ EN: dict[str, str] = {
         "limits: read only = {read_only}, statement timeout = {timeout}, list_tables returns at most "
         "{tables} entries, answers are cut at {budget} characters"
     ),
-    "warning.profile": "PG_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
-    "warning.language": "PG_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
+    "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
+    "warning.language": "PG_EXPLORER_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
     # Arguments and answers of the tools.
     "error.arguments": "arguments must be a JSON object",
     "error.unknown_arguments": "Unknown argument(s): {unknown}. Allowed: {allowed}.",
@@ -404,7 +404,9 @@ EN: dict[str, str] = {
     "stands.line": "line {number} is neither [section] nor key=value",
     "stands.no_host": "stand connection {name} in {path} has no host, skipped",
     "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
-    "stands.none_found": "PG_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings",
+    "stands.none_found": (
+        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings"
+    ),
     "stands.more_warnings": "... and {count} more problems in the stands registry",
     # compare_schema: one schema on two stands.
     "tool.compare_schema.title": "Compare a schema",
@@ -495,7 +497,9 @@ EN: dict[str, str] = {
         "(default: {path})"
     ),
     "export.help.editor": "for vscode-pgsql and sqltools: the editor whose user settings get the connections",
-    "export.no_stands": "no stands to export: import them first (install.py import) or check PG_MCP_STANDS_FILE",
+    "export.no_stands": (
+        "no stands to export: import them first (install.py import) or check PG_EXPLORER_MCP_STANDS_FILE"
+    ),
     "export.no_match": "no stands match {patterns}; the registry has {stands}",
     "export.no_dbeaver": (
         "DBeaver's connections were not found on this machine; pass --workspace with the folder that holds "
@@ -643,8 +647,8 @@ RU: dict[str, str] = {
         "лимиты: только чтение = {read_only}, таймаут запроса = {timeout}, list_tables возвращает не больше "
         "{tables} записей, ответы обрезаются до {budget} символов"
     ),
-    "warning.profile": "PG_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
-    "warning.language": "PG_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
+    "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
+    "warning.language": "PG_EXPLORER_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
     "error.arguments": "Аргументы должны быть JSON-объектом",
     "error.unknown_arguments": "Неизвестные аргументы: {unknown}. Допустимые: {allowed}.",
     "error.missing_arguments": "Не хватает аргументов: {missing}.",
@@ -892,7 +896,9 @@ RU: dict[str, str] = {
     "stands.line": "строка {number} — не [секция] и не ключ=значение",
     "stands.no_host": "у подключения {name} в {path} нет host, пропущено",
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
-    "stands.none_found": "PG_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*",
+    "stands.none_found": (
+        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*"
+    ),
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
     "tool.compare_schema.description": (
@@ -984,7 +990,8 @@ RU: dict[str, str] = {
     ),
     "export.help.editor": "для vscode-pgsql и sqltools: редактор, в чьи настройки пользователя добавить подключения",
     "export.no_stands": (
-        "стендов для выгрузки нет: сначала импортируйте их (install.py import) или проверьте PG_MCP_STANDS_FILE"
+        "стендов для выгрузки нет: сначала импортируйте их (install.py import) "
+        "или проверьте PG_EXPLORER_MCP_STANDS_FILE"
     ),
     "export.no_match": "под {patterns} не подходит ни один стенд; в реестре есть {stands}",
     "export.no_dbeaver": (

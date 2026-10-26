@@ -251,7 +251,7 @@ def test_the_throwaway_home_gets_the_demo_database_and_nothing_of_the_shells_own
         "PGHOST": "db",
         "PGPASSWORD": "mine",
         "PGUSER": "me",
-        "PG_MCP_STANDS": "*",
+        "PG_EXPLORER_MCP_STANDS": "*",
         "OPENAI_MODEL": "gpt",
         "PATH": "/bin",
     }
@@ -268,8 +268,8 @@ def test_the_throwaway_home_gets_the_demo_database_and_nothing_of_the_shells_own
         "qwen3:8b",
         "ollama",
     )
-    assert not {"PGPASSWORD", "PG_MCP_STANDS"} & set(env)
-    assert env["PG_MCP_QUERY_LOG"] == str(tmp_path / "queries.jsonl")
+    assert not {"PGPASSWORD", "PG_EXPLORER_MCP_STANDS"} & set(env)
+    assert env["PG_EXPLORER_MCP_QUERY_LOG"] == str(tmp_path / "queries.jsonl")
     passfile = Path(env["PGPASSFILE"])
     assert passfile.read_text(encoding="utf-8") == "*:*:*:*:de\\:m\\\\o\n"  # as client_smoke writes it
     if sys.platform != "win32":

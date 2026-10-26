@@ -21,5 +21,5 @@ reaches dozens of stands through the same tools.
   first and writes only after the user confirms.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.
 - Never ask the user to paste a database password into the chat; it belongs in ~/.pgpass.
-- The server speaks English or Russian (`PG_MCP_LANG`). Whichever it speaks, reply to the user
+- The server speaks English or Russian (`PG_EXPLORER_MCP_LANG`). Whichever it speaks, reply to the user
   in the language they write in.

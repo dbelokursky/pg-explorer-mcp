@@ -61,12 +61,12 @@ def shorten(value: str, limit: int = VALUE_LIMIT) -> str:
 
 
 def budget_from_env(env: Mapping[str, str]) -> int:
-    raw = env.get("PG_MCP_MAX_RESPONSE_CHARS")
+    raw = env.get("PG_EXPLORER_MCP_MAX_RESPONSE_CHARS")
     if not raw:
         return DEFAULT_BUDGET
     try:
         value = int(raw)
     except ValueError:
-        log.warning("PG_MCP_MAX_RESPONSE_CHARS=%r is not a number, using %d", raw, DEFAULT_BUDGET)
+        log.warning("PG_EXPLORER_MCP_MAX_RESPONSE_CHARS=%r is not a number, using %d", raw, DEFAULT_BUDGET)
         return DEFAULT_BUDGET
     return max(value, MIN_BUDGET)

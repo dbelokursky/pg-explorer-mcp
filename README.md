@@ -189,8 +189,8 @@ This is the entry in `~/.gigacode/settings.json` after `install.py --profile ana
         "PGHOST": "db.example.com",
         "PGDATABASE": "app",
         "PGUSER": "mcp_agent",
-        "PG_MCP_PROFILE": "analyst",
-        "PG_MCP_LANG": "en"
+        "PG_EXPLORER_MCP_PROFILE": "analyst",
+        "PG_EXPLORER_MCP_LANG": "en"
       }
     }
   }
@@ -355,9 +355,9 @@ The last line is about the `hr` schema, which the role has no rights to: the too
 | Rows from `run_select` | at most 200 |
 | Plan lines | at most 500 |
 | One value in an answer | at most 200 characters |
-| A whole tool answer | 8000 characters (`PG_MCP_MAX_RESPONSE_CHARS`) |
-| One query | 5 seconds (`PG_MCP_STATEMENT_TIMEOUT_MS`) |
-| Open connections of an entry for stands | at most 8 (`PG_MCP_MAX_CONNECTIONS`) |
+| A whole tool answer | 8000 characters (`PG_EXPLORER_MCP_MAX_RESPONSE_CHARS`) |
+| One query | 5 seconds (`PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS`) |
+| Open connections of an entry for stands | at most 8 (`PG_EXPLORER_MCP_MAX_CONNECTIONS`) |
 | Stands in one call (`stands`) | at most 100, asked at the same time; the rows of `run_select` and the matches of `search_schema` are shared among them, at least 10 per stand |
 
 A longer answer is cut at whole lines, and its last line says how much is shown. Local models run with
@@ -390,17 +390,17 @@ user=shop_reader
   name), `sslmode`, `sslrootcert` and `connect_timeout` (10 seconds) are optional;
 - passwords go into the password file, a line per login, just as for one database;
 - the server reads `~/.pg-mcp/stands.conf` (on Windows `%APPDATA%\pg-mcp\stands.conf`, or the file
-  `PG_MCP_STANDS_FILE` names) and your own `~/.pg_service.conf`; with equal names the first file wins.
+  `PG_EXPLORER_MCP_STANDS_FILE` names) and your own `~/.pg_service.conf`; with equal names the first file wins.
   Sections named otherwise are ordinary psql services and stay out of it;
 - psql reads the same sections: `psql service=dev7.demo.shop`.
 
 **2. The entry.**
 
 ```bash
-PG_MCP_STANDS='*' python3 install.py --name stands
+PG_EXPLORER_MCP_STANDS='*' python3 install.py --name stands
 ```
 
-This registers `pg-stands` next to `pg`. `PG_MCP_STANDS` switches stands on: `*` takes every stand,
+This registers `pg-stands` next to `pg`. `PG_EXPLORER_MCP_STANDS` switches stands on: `*` takes every stand,
 patterns such as `dev*,ift2` take some. The check succeeds once the stands are found: a stand behind a
 VPN is reached only when a tool needs it.
 
@@ -564,8 +564,8 @@ dev3 / demo / shop
 
 A failure stays small. An unreachable stand or a broken login affects only the answers that need it,
 and `status` with `stand` tries a second login when the server turned the first one down. Without
-`PG_MCP_STANDS`, or when no stand is found, the entry works with the `PG*` variables as before, and
-`status` says why. At most 8 connections stay open (`PG_MCP_MAX_CONNECTIONS`). A host that does not
+`PG_EXPLORER_MCP_STANDS`, or when no stand is found, the entry works with the `PG*` variables as before, and
+`status` says why. At most 8 connections stay open (`PG_EXPLORER_MCP_MAX_CONNECTIONS`). A host that does not
 answer is given up after 10 seconds and not tried again for the rest of that call, whatever else the
 stand has on it; a second login of a database is tried only when the server answered and turned the
 first one down. The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
@@ -580,7 +580,7 @@ The profile decides which tools the agent sees:
 | `explore` | plus `sample_rows`, `explain_query` | developers; the default |
 | `analyst` | plus `run_select` and `explain_query` with `ANALYZE` | analysts who need their own SQL |
 
-Set it at registration (`python3 install.py --profile schema`) or with `PG_MCP_PROFILE` in the server's
+Set it at registration (`python3 install.py --profile schema`) or with `PG_EXPLORER_MCP_PROFILE` in the server's
 `env` block. An unknown value turns on the strictest profile, `schema`, and `status` warns about it.
 A profile is a convenience, not an access boundary: what can be read is decided by the role's
 privileges in the database.
@@ -590,19 +590,19 @@ privileges in the database.
 The server speaks English (`en`) or Russian (`ru`): tool descriptions, answers, hints, refusals and
 the output of `install.py`. The language is chosen like this:
 
-1. the `PG_MCP_LANG` variable (`install.py --lang` writes it);
+1. the `PG_EXPLORER_MCP_LANG` variable (`install.py --lang` writes it);
 2. otherwise the system locale: the `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` and `LANG` variables, and the
    regional settings on Windows;
 3. otherwise English.
 
 `status` shows the current language. To change it, run `python3 install.py --lang ru` or edit
-`PG_MCP_LANG` in the settings, then restart the agent.
+`PG_EXPLORER_MCP_LANG` in the settings, then restart the agent.
 
 Tool and argument names, JSON-RPC protocol errors, the server log and PostgreSQL's own messages are not
 translated; the language of the latter is set by the database's `lc_messages`.
 
 Either way, the model is asked to answer in the user's language. If your group's model picks tools less
-reliably from Russian descriptions, set `PG_MCP_LANG=en`: it will still answer in Russian. The reasons
+reliably from Russian descriptions, set `PG_EXPLORER_MCP_LANG=en`: it will still answer in Russian. The reasons
 behind this design are in [ADR 0004](docs/adr/0004-languages.md) (in Russian).
 
 ## Security
@@ -628,11 +628,11 @@ The server takes passwords from the [password file](#4-the-password-goes-into-th
 
 ## Query log
 
-To keep a journal of what the agent asked the database, set `PG_MCP_QUERY_LOG` to an absolute file path
+To keep a journal of what the agent asked the database, set `PG_EXPLORER_MCP_QUERY_LOG` to an absolute file path
 (`~` is fine) before running `install.py`, or add it to the server's `env` block later:
 
 ```bash
-export PG_MCP_QUERY_LOG=~/pg-mcp-queries.jsonl
+export PG_EXPLORER_MCP_QUERY_LOG=~/pg-mcp-queries.jsonl
 python3 install.py
 ```
 
@@ -729,18 +729,18 @@ All settings are environment variables in the `env` block of the `pg` server in 
 | `PGSSLROOTCERT` | — | CA certificate for `verify-ca` and `verify-full` |
 | `PGPASSFILE` | `~/.pgpass`, on Windows `%APPDATA%\postgresql\pgpass.conf` | password file |
 | `PGPASSWORD` | — | works, but `install.py` never copies it: the password belongs in the password file |
-| `PG_MCP_PROFILE` | `explore` | `schema`, `explore` or `analyst` |
-| `PG_MCP_LANG` | from the locale | `en` or `ru` |
-| `PG_MCP_MAX_RESPONSE_CHARS` | `8000` | budget of one answer in characters, at least 500 |
-| `PG_MCP_STATEMENT_TIMEOUT_MS` | `5000` | timeout of one query in milliseconds |
-| `PG_MCP_LOG_LEVEL` | `INFO` | detail of the stderr log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `PG_MCP_QUERY_LOG` | — (off) | absolute path of the [query log](#query-log) file |
-| `PG_MCP_NAME` | `pg` | the entry's name that `status` shows; `install.py --name` writes it |
-| `PG_MCP_SOCKET_TIMEOUT_S` | `30`, for stands `10` | seconds to wait for a new connection; once connected, the socket waits at least the query timeout plus 5 seconds |
-| `PG_MCP_STANDS` | — (off) | `*` or stand name patterns such as `dev*,ift2`: one entry for [many stands](#many-stands) |
-| `PG_MCP_STANDS_FILE` | `~/.pg-mcp/stands.conf`, on Windows `%APPDATA%\pg-mcp\stands.conf` | the stands registry |
+| `PG_EXPLORER_MCP_PROFILE` | `explore` | `schema`, `explore` or `analyst` |
+| `PG_EXPLORER_MCP_LANG` | from the locale | `en` or `ru` |
+| `PG_EXPLORER_MCP_MAX_RESPONSE_CHARS` | `8000` | budget of one answer in characters, at least 500 |
+| `PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS` | `5000` | timeout of one query in milliseconds |
+| `PG_EXPLORER_MCP_LOG_LEVEL` | `INFO` | detail of the stderr log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `PG_EXPLORER_MCP_QUERY_LOG` | — (off) | absolute path of the [query log](#query-log) file |
+| `PG_EXPLORER_MCP_NAME` | `pg` | the entry's name that `status` shows; `install.py --name` writes it |
+| `PG_EXPLORER_MCP_SOCKET_TIMEOUT_S` | `30`, for stands `10` | seconds to wait for a new connection; once connected, the socket waits at least the query timeout plus 5 seconds |
+| `PG_EXPLORER_MCP_STANDS` | — (off) | `*` or stand name patterns such as `dev*,ift2`: one entry for [many stands](#many-stands) |
+| `PG_EXPLORER_MCP_STANDS_FILE` | `~/.pg-mcp/stands.conf`, on Windows `%APPDATA%\pg-mcp\stands.conf` | the stands registry |
 | `PGSERVICEFILE` | `~/.pg_service.conf`, on Windows `%APPDATA%\postgresql\.pg_service.conf` | your psql services; stands are read from it too |
-| `PG_MCP_MAX_CONNECTIONS` | `8` | connections an entry for stands keeps open |
+| `PG_EXPLORER_MCP_MAX_CONNECTIONS` | `8` | connections an entry for stands keeps open |
 
 The budget counts characters. Russian text takes more tokens per character than English, so if the
 model's context is small, lower the budget rather than raise it.
@@ -791,13 +791,13 @@ says what is wrong.
 | "TLS with … failed" | the TLS mode does not match the server | check `PGSSLMODE` and `PGSSLROOTCERT` |
 | "The current role cannot read any table" | the role has no `SELECT` | ask the DBA: [a role for the agent](#for-dbas-a-role-for-the-agent) |
 | `settings.json` "is not plain JSON" | the settings file has comments | add the printed snippet by hand |
-| An answer ends with "… answer cut to" | the answer budget kicked in | narrow the question, or raise `PG_MCP_MAX_RESPONSE_CHARS` with the model's context in mind |
+| An answer ends with "… answer cut to" | the answer budget kicked in | narrow the question, or raise `PG_EXPLORER_MCP_MAX_RESPONSE_CHARS` with the model's context in mind |
 | `python3` not found | Python is missing or has another name | `python --version`, on Windows `py -3 --version`; install Python 3.9+ |
-| "query log: …, not written: …" | the folder does not exist, no permission, a relative path, or a symlink in place of the file | fix `PG_MCP_QUERY_LOG` |
-| "No stand … in the registry" | a typo, or the stand is missing from the registry or from `PG_MCP_STANDS` | `status` lists the stands; check the registry |
-| "PG_MCP_STANDS is set, but no stands were found" | no registry file, or its sections are not named `stand.database.schema` | check the files the warning names |
+| "query log: …, not written: …" | the folder does not exist, no permission, a relative path, or a symlink in place of the file | fix `PG_EXPLORER_MCP_QUERY_LOG` |
+| "No stand … in the registry" | a typo, or the stand is missing from the registry or from `PG_EXPLORER_MCP_STANDS` | `status` lists the stands; check the registry |
+| "PG_EXPLORER_MCP_STANDS is set, but no stands were found" | no registry file, or its sections are not named `stand.database.schema` | check the files the warning names |
 
-The server logs to stderr; `PG_MCP_LOG_LEVEL=DEBUG` adds detail. If the server does not answer the
+The server logs to stderr; `PG_EXPLORER_MCP_LOG_LEVEL=DEBUG` adds detail. If the server does not answer the
 check, `install.py --check` prints that log.
 
 ## Updating and removing
@@ -840,7 +840,7 @@ JetBrains ([other agents and editors](#other-agents-and-editors)); for any other
 `install.py --client cursor --print` shows the command, the arguments and the `PG*` variables to give it.
 
 **Why does the agent answer in the wrong language?** The model chooses the language of its answers;
-the server asks it to use the user's language. `PG_MCP_LANG` sets the language of the tools themselves.
+the server asks it to use the user's language. `PG_EXPLORER_MCP_LANG` sets the language of the tools themselves.
 
 ## Development
 

@@ -11,14 +11,14 @@ import pg_explorer_mcp  # noqa: F401  (puts the vendored packages, pg8000 among 
 from pg_explorer_mcp import i18n
 from tests.helpers import unreachable_database_env
 
-INTEGRATION = os.environ.get("PG_MCP_IT") == "1"
+INTEGRATION = "1" in (os.environ.get("PG_EXPLORER_MCP_IT"), os.environ.get("PG_MCP_IT"))  # the name before 0.8.0
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:  # noqa: ARG001
-    """Skip tests marked `integration` unless PG_MCP_IT=1 says a PostgreSQL is there."""
+    """Skip tests marked `integration` unless PG_EXPLORER_MCP_IT=1 says a PostgreSQL is there."""
     if INTEGRATION:
         return
-    skip = pytest.mark.skip(reason="needs PG_MCP_IT=1 and PG* variables pointing at PostgreSQL")
+    skip = pytest.mark.skip(reason="needs PG_EXPLORER_MCP_IT=1 and PG* variables pointing at PostgreSQL")
     for item in items:
         if "integration" in item.keywords:
             item.add_marker(skip)

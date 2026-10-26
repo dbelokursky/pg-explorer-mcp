@@ -27,13 +27,13 @@ VERIFIED = Connection(
 
 
 def registry(tmp_path: Path, text: str, service: str | None = None) -> dict[str, str]:
-    """PG_MCP_STANDS_FILE with this text and PGSERVICEFILE with the other, if any."""
+    """PG_EXPLORER_MCP_STANDS_FILE with this text and PGSERVICEFILE with the other, if any."""
     path = tmp_path / "stands.conf"
     path.write_text(text, encoding="utf-8")
     service_path = tmp_path / "service.conf"
     if service is not None:
         service_path.write_text(service, encoding="utf-8")
-    return {"PG_MCP_STANDS_FILE": str(path), "PGSERVICEFILE": str(service_path)}
+    return {"PG_EXPLORER_MCP_STANDS_FILE": str(path), "PGSERVICEFILE": str(service_path)}
 
 
 def parse(text: str) -> ET.Element:

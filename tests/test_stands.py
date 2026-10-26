@@ -45,7 +45,7 @@ from pg_explorer_mcp.stands import (
 from pg_explorer_mcp.tools import PROFILES, Tool, ToolError, build_tools
 from tests.helpers import ROOT, rpc
 
-STANDS_ON = {"PG_MCP_STANDS": "*"}
+STANDS_ON = {"PG_EXPLORER_MCP_STANDS": "*"}
 NAMES = (
     "dev1.orders.billing",
     "dev1.orders.shipping",
@@ -105,12 +105,12 @@ class TestServiceFile:
     [("", None), ("  ", None), ("off", None), ("No", None), ("false", None), ("0", None), ("*", ["*"])],
 )
 def test_pg_mcp_stands_switches_stands_on(raw: str, patterns: list[str] | None) -> None:
-    assert stands_enabled({"PG_MCP_STANDS": raw}) == patterns
+    assert stands_enabled({"PG_EXPLORER_MCP_STANDS": raw}) == patterns
 
 
 def test_pg_mcp_stands_takes_patterns_in_any_case() -> None:
     assert stands_enabled({}) is None
-    assert stands_enabled({"PG_MCP_STANDS": "Dev*, ift2,"}) == ["dev*", "ift2"]
+    assert stands_enabled({"PG_EXPLORER_MCP_STANDS": "Dev*, ift2,"}) == ["dev*", "ift2"]
 
 
 class TestRegistryFiles:
@@ -126,7 +126,7 @@ class TestRegistryFiles:
         ]
 
     def test_variables_name_the_files(self, tmp_path: Path) -> None:
-        env = {"PG_MCP_STANDS_FILE": "~/stands.conf", "PGSERVICEFILE": str(tmp_path / "service.conf")}
+        env = {"PG_EXPLORER_MCP_STANDS_FILE": "~/stands.conf", "PGSERVICEFILE": str(tmp_path / "service.conf")}
         assert registry_files(env) == [Path.home() / "stands.conf", tmp_path / "service.conf"]
 
 
@@ -149,7 +149,7 @@ class TestLoadRegistry:
 
     def test_patterns_choose_the_stands_and_names_fold_to_lower_case(self, tmp_path: Path) -> None:
         own = write(tmp_path / "stands.conf", "[DEV7.orders.billing]\nhost=db\n" + sections())
-        assert loaded({"PG_MCP_STANDS": "dev*"}, [own]).stands() == ["dev1", "dev2", "dev7"]
+        assert loaded({"PG_EXPLORER_MCP_STANDS": "dev*"}, [own]).stands() == ["dev1", "dev2", "dev7"]
 
     def test_copies_an_export_wrote_are_not_stands(self, tmp_path: Path) -> None:
         service = write(tmp_path / "service.conf", "# pg-mcp export\n[dev3.orders.billing]\nhost=db\n" + sections())
@@ -201,18 +201,20 @@ class TestLoadRegistry:
         assert len(registry.warnings) == 2
 
     def test_no_stands_at_all_says_where_it_looked(self, tmp_path: Path) -> None:
-        env = dict(STANDS_ON, PG_MCP_STANDS_FILE=str(tmp_path / "a.conf"), PGSERVICEFILE=str(tmp_path / "b.conf"))
+        env = dict(
+            STANDS_ON, PG_EXPLORER_MCP_STANDS_FILE=str(tmp_path / "a.conf"), PGSERVICEFILE=str(tmp_path / "b.conf")
+        )
         registry = load_registry(env)
         assert registry is not None
         assert registry.targets == []
         assert registry.warnings == [
-            f"PG_MCP_STANDS is set, but no stands were found in {tmp_path / 'a.conf'}, {tmp_path / 'b.conf'}; "
+            f"PG_EXPLORER_MCP_STANDS is set, but no stands were found in {tmp_path / 'a.conf'}, {tmp_path / 'b.conf'}; "
             "working with the PG* settings"
         ]
 
     def test_files_come_from_the_environment(self, tmp_path: Path) -> None:
         own = write(tmp_path / "stands.conf", sections())
-        env = dict(STANDS_ON, PG_MCP_STANDS_FILE=str(own), PGSERVICEFILE=str(tmp_path / "absent.conf"))
+        env = dict(STANDS_ON, PG_EXPLORER_MCP_STANDS_FILE=str(own), PGSERVICEFILE=str(tmp_path / "absent.conf"))
         registry = load_registry(env)
         assert registry is not None
         assert len(registry.targets) == len(NAMES)
@@ -229,19 +231,19 @@ class TestTarget:
             "PGDATABASE": "entry-db",
             "PGPASSFILE": "/home/me/.pgpass",
             "PGSSLMODE": "verify-full",
-            "PG_MCP_STATEMENT_TIMEOUT_MS": "7000",
+            "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS": "7000",
             "HOME": "/home/me",
         }
         assert target.env(base) == {
             "PGPASSFILE": "/home/me/.pgpass",
             "PGSSLMODE": "verify-full",
-            "PG_MCP_STATEMENT_TIMEOUT_MS": "7000",
-            "PG_MCP_SOCKET_TIMEOUT_S": "10",
+            "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS": "7000",
+            "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "10",
             "PGHOST": "db",
             "PGPORT": "5432",
             "PGDATABASE": "orders",
             "PGUSER": "billing",
-            "PG_MCP_SEARCH_PATH": "billing",
+            "PG_EXPLORER_MCP_SEARCH_PATH": "billing",
         }
 
     def test_the_section_overrides_the_entry(self) -> None:
@@ -256,7 +258,7 @@ class TestTarget:
             "password": "in-the-section",
         }
         env = Target("dev1", "orders", "billing", options, "stands.conf").env(
-            {"PGSSLMODE": "disable", "PG_MCP_SOCKET_TIMEOUT_S": "20"}
+            {"PGSSLMODE": "disable", "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"}
         )
         settings = Settings.from_env(env)
         assert (settings.host, settings.port, settings.database, settings.user) == (
@@ -273,8 +275,8 @@ class TestTarget:
         assert (settings.socket_timeout_s, settings.search_path) == (3, "billing")
 
     def test_the_entry_timeout_applies_when_the_section_has_none(self) -> None:
-        env = Target("dev1", "orders", "billing", {"host": "db"}, "x").env({"PG_MCP_SOCKET_TIMEOUT_S": "20"})
-        assert env["PG_MCP_SOCKET_TIMEOUT_S"] == "20"
+        env = Target("dev1", "orders", "billing", {"host": "db"}, "x").env({"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"})
+        assert env["PG_EXPLORER_MCP_SOCKET_TIMEOUT_S"] == "20"
 
 
 class TestRegistry:
@@ -367,10 +369,10 @@ class TestPool:
     def test_the_connect_timeout_is_the_sections_else_the_entrys(self, registry: Registry) -> None:
         target = registry.targets[0]
         assert Pool(registry, {}).connect_timeout(target) == 10
-        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(target) == 20
-        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "ten"}).connect_timeout(target) == 10
+        assert Pool(registry, {"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(target) == 20
+        assert Pool(registry, {"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "ten"}).connect_timeout(target) == 10
         slow = replace(target, options={**target.options, "connect_timeout": "3"})
-        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(slow) == 3
+        assert Pool(registry, {"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(slow) == 3
 
 
 @pytest.fixture
@@ -1148,7 +1150,7 @@ def serve(env: dict[str, str], *requests: dict[str, Any]) -> list[dict[str, Any]
 
 
 class TestEntry:
-    """main(): stands only when PG_MCP_STANDS asks and the registry has some, the PG* settings otherwise."""
+    """main(): stands only when PG_EXPLORER_MCP_STANDS asks and the registry has some, the PG* settings otherwise."""
 
     INITIALIZE = rpc(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
     TOOLS = rpc(2, "tools/list")
@@ -1158,7 +1160,10 @@ class TestEntry:
     def env(self, tmp_path: Path, unreachable_env: dict[str, str]) -> dict[str, str]:
         own = write(tmp_path / "stands.conf", sections(host="127.0.0.1", port=unreachable_env["PGPORT"]))
         return dict(
-            unreachable_env, PG_MCP_STANDS="*", PG_MCP_STANDS_FILE=str(own), PGSERVICEFILE=str(tmp_path / "absent")
+            unreachable_env,
+            PG_EXPLORER_MCP_STANDS="*",
+            PG_EXPLORER_MCP_STANDS_FILE=str(own),
+            PGSERVICEFILE=str(tmp_path / "absent"),
         )
 
     def answers(self, env: dict[str, str]) -> tuple[str, list[str], str]:
@@ -1173,7 +1178,7 @@ class TestEntry:
         assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in status
 
     def test_without_pg_mcp_stands_the_entry_works_as_before(self, env: dict[str, str]) -> None:
-        del env["PG_MCP_STANDS"]
+        del env["PG_EXPLORER_MCP_STANDS"]
         instructions, names, status = self.answers(env)
         assert "many stands" not in instructions
         assert names == list(PROFILES["explore"])
@@ -1183,7 +1188,7 @@ class TestEntry:
         write(tmp_path / "stands.conf", "")
         _, names, status = self.answers(env)
         assert names == list(PROFILES["explore"])
-        assert "warning: PG_MCP_STANDS is set, but no stands were found in" in status
+        assert "warning: PG_EXPLORER_MCP_STANDS is set, but no stands were found in" in status
         assert "database: unavailable" in status
 
     def test_registry_problems_past_ten_are_counted(self, env: dict[str, str], tmp_path: Path) -> None:
@@ -1196,7 +1201,7 @@ class TestEntry:
     def test_pg_mcp_max_connections_limits_open_connections(
         self, env: dict[str, str], raw: str, connections: int
     ) -> None:
-        status = self.answers(dict(env, PG_MCP_MAX_CONNECTIONS=raw))[2]
+        status = self.answers(dict(env, PG_EXPLORER_MCP_MAX_CONNECTIONS=raw))[2]
         assert f"at most {connections} connections stay open" in status
 
 

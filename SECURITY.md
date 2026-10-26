@@ -33,7 +33,7 @@ A report that gets past layer 3 alone is worth sending; one that gets past layer
 
 ## What the server does not promise
 
-- The query log (`PG_MCP_QUERY_LOG`, [ADR 0005](docs/adr/0005-query-log.md)) is a journal on the
+- The query log (`PG_EXPLORER_MCP_QUERY_LOG`, [ADR 0005](docs/adr/0005-query-log.md)) is a journal on the
   user's machine, not a tamper-proof audit trail. Audit data access on the PostgreSQL side.
 - Everything a tool returns goes into the model's context. Choose the profile and the role for the
   data the group may see; the `schema` profile shows no data at all.

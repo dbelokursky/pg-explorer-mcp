@@ -64,12 +64,21 @@ def test_entry_runs_this_interpreter_isolated_and_never_copies_the_password(monk
 
 
 def test_query_log_setting_is_copied_into_the_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("PG_MCP_QUERY_LOG", str(tmp_path / "queries.jsonl"))
-    assert install.server_entry()["env"]["PG_MCP_QUERY_LOG"] == str(tmp_path / "queries.jsonl")
+    monkeypatch.setenv("PG_EXPLORER_MCP_QUERY_LOG", str(tmp_path / "queries.jsonl"))
+    assert install.server_entry()["env"]["PG_EXPLORER_MCP_QUERY_LOG"] == str(tmp_path / "queries.jsonl")
 
 
 def test_profile_option_goes_into_the_server_env() -> None:
-    assert install.server_entry("analyst")["env"]["PG_MCP_PROFILE"] == "analyst"
+    assert install.server_entry("analyst")["env"]["PG_EXPLORER_MCP_PROFILE"] == "analyst"
+
+
+def test_old_setting_names_of_the_shell_go_into_the_entry_under_the_new_ones(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PG_MCP_STATEMENT_TIMEOUT_MS", "5000")
+    monkeypatch.delenv("PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS", raising=False)
+    env = install.server_entry("analyst", "ru")["env"]
+    assert env["PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS"] == "5000"
+    assert env["PG_EXPLORER_MCP_PROFILE"] == "analyst"
+    assert [name for name in env if name.startswith("PG_MCP_")] == []
 
 
 def use_env(monkeypatch: pytest.MonkeyPatch, env: dict[str, str], home: Path) -> None:
@@ -97,7 +106,7 @@ def test_register_writes_the_entry_then_checks_it(
     assert install.main(["--client", "qwen", "--profile", "schema"]) == 1
     entry = read(tmp_path / ".qwen" / "settings.json")
     assert isinstance(entry, dict)
-    assert entry["mcpServers"]["pg"]["env"]["PG_MCP_PROFILE"] == "schema"
+    assert entry["mcpServers"]["pg"]["env"]["PG_EXPLORER_MCP_PROFILE"] == "schema"
     assert "qwen extensions link" in capsys.readouterr().out
 
 
@@ -109,7 +118,7 @@ def test_check_reports_a_server_that_does_not_start(capsys: pytest.CaptureFixtur
 
 
 def test_language_goes_into_the_server_env() -> None:
-    assert install.server_entry(language="ru")["env"]["PG_MCP_LANG"] == "ru"
+    assert install.server_entry(language="ru")["env"]["PG_EXPLORER_MCP_LANG"] == "ru"
 
 
 def test_check_speaks_russian_when_asked(
@@ -126,13 +135,13 @@ def test_language_comes_from_the_locale_and_is_written_into_the_entry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     use_env(monkeypatch, unreachable_env, tmp_path)
-    for name in ("PG_MCP_LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"):
+    for name in ("PG_EXPLORER_MCP_LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("LANG", "ru_RU.UTF-8")
     assert install.main(["--client", "qwen"]) == 1
     settings = read(tmp_path / ".qwen" / "settings.json")
     assert isinstance(settings, dict)
-    assert settings["mcpServers"]["pg"]["env"]["PG_MCP_LANG"] == "ru"
+    assert settings["mcpServers"]["pg"]["env"]["PG_EXPLORER_MCP_LANG"] == "ru"
     output = capsys.readouterr().out
     assert "MCP-сервер 'pg' зарегистрирован" in output
     assert "дальше: qwen extensions link" in output
@@ -170,7 +179,7 @@ def test_a_code_page_without_cyrillic_or_dashes_does_not_crash_the_output(
 ) -> None:
     # An agent reads install.py through a pipe, where Python uses the system code page: cp1252 on
     # English Windows has no Cyrillic, and cp866 has no dash, which the profile warning contains.
-    env = dict(unreachable_env, PYTHONIOENCODING=codepage, PG_MCP_PROFILE="admin")
+    env = dict(unreachable_env, PYTHONIOENCODING=codepage, PG_EXPLORER_MCP_PROFILE="admin")
     proc = subprocess.run(
         [sys.executable, str(ROOT / "install.py"), "--check", "--lang", "ru"],
         capture_output=True,
@@ -181,7 +190,7 @@ def test_a_code_page_without_cyrillic_or_dashes_does_not_crash_the_output(
     output = proc.stdout.decode(codepage) + proc.stderr.decode(codepage, "replace")
     assert "Traceback" not in output
     assert proc.returncode == 1  # the database is unreachable, and the script says so
-    assert "PG_MCP_PROFILE='admin'" in output
+    assert "PG_EXPLORER_MCP_PROFILE='admin'" in output
 
 
 def test_old_python_is_refused_in_the_chosen_language(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -191,8 +200,8 @@ def test_old_python_is_refused_in_the_chosen_language(monkeypatch: pytest.Monkey
 
 
 def test_the_entry_names_the_server() -> None:
-    assert install.server_entry()["env"]["PG_MCP_NAME"] == "pg"
-    assert install.server_entry(name="sales")["env"]["PG_MCP_NAME"] == "pg-sales"
+    assert install.server_entry()["env"]["PG_EXPLORER_MCP_NAME"] == "pg"
+    assert install.server_entry(name="sales")["env"]["PG_EXPLORER_MCP_NAME"] == "pg-sales"
 
 
 def test_a_further_database_registers_next_to_pg(
@@ -206,8 +215,8 @@ def test_a_further_database_registers_next_to_pg(
     assert isinstance(settings, dict)
     servers = settings["mcpServers"]
     assert set(servers) == {"pg", "pg-sales"}
-    assert (servers["pg"]["env"]["PGDATABASE"], servers["pg"]["env"]["PG_MCP_NAME"]) == ("pg_mcp_test", "pg")
-    assert (servers["pg-sales"]["env"]["PGDATABASE"], servers["pg-sales"]["env"]["PG_MCP_NAME"]) == (
+    assert (servers["pg"]["env"]["PGDATABASE"], servers["pg"]["env"]["PG_EXPLORER_MCP_NAME"]) == ("pg_mcp_test", "pg")
+    assert (servers["pg-sales"]["env"]["PGDATABASE"], servers["pg-sales"]["env"]["PG_EXPLORER_MCP_NAME"]) == (
         "sales",
         "pg-sales",
     )
@@ -220,14 +229,18 @@ def test_an_entry_for_many_stands_is_ready_without_reaching_them(
     use_env(monkeypatch, unreachable_env, tmp_path)
     stands = tmp_path / "stands.conf"
     stands.write_text(f"[dev1.orders.billing]\nhost=127.0.0.1\nport={unreachable_env['PGPORT']}\n", encoding="utf-8")
-    monkeypatch.setenv("PG_MCP_STANDS", "*")
-    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(stands))
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS", "*")
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(stands))
     monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "absent.conf"))
     assert install.main(["--client", "qwen", "--name", "stands"]) == 0
     settings = read(tmp_path / ".qwen" / "settings.json")
     assert isinstance(settings, dict)
     env = settings["mcpServers"]["pg-stands"]["env"]
-    assert (env["PG_MCP_STANDS"], env["PG_MCP_STANDS_FILE"], env["PG_MCP_NAME"]) == ("*", str(stands), "pg-stands")
+    assert (env["PG_EXPLORER_MCP_STANDS"], env["PG_EXPLORER_MCP_STANDS_FILE"], env["PG_EXPLORER_MCP_NAME"]) == (
+        "*",
+        str(stands),
+        "pg-stands",
+    )
     assert "stands: 1 (dev1), connections in the registry: 1" in capsys.readouterr().out
 
 
@@ -254,7 +267,7 @@ def test_import_previews_and_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     use_env(monkeypatch, unreachable_env, tmp_path)
-    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
     monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
     assert install.main(["import", "dbeaver", "--workspace", str(dbeaver_folder(tmp_path)), "--lang", "en"]) == 0
     out = capsys.readouterr().out
@@ -271,7 +284,7 @@ def test_import_write_registers_pg_stands_next_to_pg(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     use_env(monkeypatch, unreachable_env, tmp_path)
-    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
     monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
     offers: list[dict[str, object]] = []
     monkeypatch.setattr(install, "offer_export", lambda **kwargs: offers.append(kwargs))
@@ -299,8 +312,8 @@ def test_import_write_registers_pg_stands_next_to_pg(
     assert isinstance(settings, dict)
     servers = settings["mcpServers"]
     assert set(servers) == {"pg", "pg-stands"}
-    assert servers["pg-stands"]["env"]["PG_MCP_STANDS"] == "*"
-    assert "PG_MCP_STANDS" not in servers["pg"]["env"]
+    assert servers["pg-stands"]["env"]["PG_EXPLORER_MCP_STANDS"] == "*"
+    assert "PG_EXPLORER_MCP_STANDS" not in servers["pg"]["env"]
     assert offers == [{}, {"besides": "dbeaver"}]  # the stands are in DBeaver already
 
 
@@ -327,7 +340,7 @@ def test_a_terminal_user_is_offered_the_dbeaver_preview(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     use_env(monkeypatch, unreachable_env, tmp_path)
-    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
     monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
     folder = dbeaver_folder(tmp_path)
     monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: folder)  # noqa: ARG005
@@ -442,7 +455,7 @@ def stands_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env
         "[dev7.orders.billing]\nhost=dev7-db.example\n\n[ift2.orders.billing]\nhost=ift2-db.example\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(stands))
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(stands))
     monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "pg_service.conf"))
     monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
     return tmp_path / "pg_service.conf"
@@ -483,7 +496,7 @@ def test_export_says_why_it_cannot(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     isolated(monkeypatch, tmp_path, unreachable_env)
-    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
     monkeypatch.setenv("PGSERVICEFILE", str(tmp_path / "pg_service.conf"))
     assert install.main(["export", "pgadmin", "--lang", "en"]) == 1
     assert "no stands to export" in capsys.readouterr().out
@@ -563,7 +576,7 @@ def test_the_database_tools_found_here_are_offered_the_stands(
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     install.offer_export()
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    monkeypatch.setenv("PG_MCP_STANDS_FILE", str(tmp_path / "none.conf"))
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "none.conf"))
     install.offer_export()  # no stands: nothing to offer
     assert capsys.readouterr().out == ""
 
