@@ -622,6 +622,9 @@ The full policy is in [ADR 0002](docs/adr/0002-read-only-sql-policy.md) (in Russ
 Everything the tools return goes into the model's context. With a local model inside your organisation
 the data stays there, but pick the profile by the task: `schema` shows no data at all.
 
+The server takes passwords from the [password file](#4-the-password-goes-into-the-password-file), as
+`psql` does, and only from the line for its own login.
+
 ## Query log
 
 To keep a journal of what the agent asked the database, set `PG_MCP_QUERY_LOG` to an absolute file path
