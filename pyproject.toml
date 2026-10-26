@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 # pg-mcp on PyPI is another project with the same package and command: pip would take one for the other.
-name = "pg-mcp-explorer"
+name = "pg-explorer-mcp"
 version = "0.7.0"
 description = "Read-only PostgreSQL MCP server for GigaCode CLI and other agents, with no runtime dependencies"
 readme = "README.md"
@@ -30,7 +30,7 @@ dependencies = []
 pg-mcp = "pg_mcp.__main__:main"
 
 [tool.uv.build-backend]
-# The package keeps its name whatever the distribution is called; uv_build would look for pg_mcp_explorer.
+# The package keeps its name whatever the distribution is called; uv_build would look for pg_explorer_mcp.
 module-name = "pg_mcp"
 
 [dependency-groups]
