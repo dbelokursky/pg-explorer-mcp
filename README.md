@@ -815,6 +815,10 @@ the file), run `gigacode extensions uninstall pg-mcp` and delete the folder.
 **Does it need internet access, pip or admin rights?** No. Everything the server needs is in the
 repository; it only needs a network path to the database.
 
+**Is this the `pg-mcp` package on PyPI?** No, that is another project with the same name. This server
+is not on PyPI and installs only from GitHub, as a clone or a release archive ([step 1](#1-the-code)):
+`pip install pg-mcp` and `uvx pg-mcp` install the other project.
+
 **Can the agent change anything in the database?** No. Even if text inside the data tricks the model,
 the role's privileges, the read-only transaction and the text check stop the query.
 
