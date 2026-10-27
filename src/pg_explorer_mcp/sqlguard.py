@@ -159,11 +159,14 @@ def tokenize(sql: str) -> list[Token]:
             quote = sql.index("'", i)
             i = _skip_quoted(sql, quote, "'", backslashes=char in "eE")
             tokens.append(Token("literal", ""))
-        elif char == '"' or (char in "uU" and sql.startswith('&"', i + 1)):
-            quote = sql.index('"', i)
-            end = _skip_quoted(sql, quote, '"', backslashes=False)
-            tokens.append(Token("quoted", sql[quote + 1 : end - 1].replace('""', '"')))
+        elif char == '"':
+            end = _skip_quoted(sql, i, '"', backslashes=False)
+            tokens.append(Token("quoted", sql[i + 1 : end - 1].replace('""', '"')))
             i = end
+        elif char in "uU" and sql.startswith('&"', i + 1):
+            # PostgreSQL reads U&"pg\005fsleep" as pg_sleep; this check reads names as written and
+            # never decodes the escapes, so a forbidden function could hide behind one.
+            raise SqlRejectedError(t("sql.unicode_identifier"))
         elif char == "$" and _DOLLAR_TAG.match(sql, i):
             tag = _DOLLAR_TAG.match(sql, i).group(0)  # type: ignore[union-attr]
             end = sql.find(tag, i + len(tag))

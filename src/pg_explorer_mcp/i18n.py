@@ -288,6 +288,9 @@ EN: dict[str, str] = {
     "sql.unterminated_dollar": "Unterminated dollar-quoted string.",
     "sql.unterminated_comment": "Unterminated /* comment.",
     "sql.unterminated_quote": "Unterminated {quote} quote.",
+    "sql.unicode_identifier": (
+        'Identifiers written as U&"..." are not allowed: write the name as it is, in double quotes if it needs them.'
+    ),
     "sql.word.insert": "INSERT changes data",
     "sql.word.update": "UPDATE changes data, and FOR UPDATE locks rows",
     "sql.word.delete": "DELETE changes data",
@@ -778,6 +781,9 @@ RU: dict[str, str] = {
     "sql.unterminated_dollar": "Строка в долларовых кавычках не закрыта.",
     "sql.unterminated_comment": "Комментарий /* не закрыт.",
     "sql.unterminated_quote": "Кавычка {quote} не закрыта.",
+    "sql.unicode_identifier": (
+        'Идентификаторы в записи U&"..." запрещены: напишите имя как есть, при необходимости в двойных кавычках.'
+    ),
     "sql.word.insert": "INSERT меняет данные",
     "sql.word.update": "UPDATE меняет данные, а FOR UPDATE блокирует строки",
     "sql.word.delete": "DELETE меняет данные",

@@ -407,6 +407,15 @@ class TestManyStands:
             "(0 rows)"  # one stand keeps its header: there is nothing to fold it into
         )
 
+    @pytest.mark.usefixtures("russian")
+    def test_stands_without_rows_are_folded_in_russian_too(self, tools: dict[str, Tool]) -> None:
+        """The stands answer from threads: they must speak the call's language for their lines to fold."""
+        arguments = {"stands": "dev1,dev4", "schema": BILLING}
+        assert lines_of(tools["run_select"], query="SELECT id FROM invoices WHERE id = 99", **arguments) == [
+            "нет строк на dev1, dev4"
+        ]
+        assert lines_of(tools["search_schema"], text="zzz", **arguments) == ["ничего не нашлось на dev1, dev4"]
+
     def test_twenty_stands_are_asked_at_once(self, pool: Pool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Twenty stands that each take a second answer in about a second, not twenty."""
         monkeypatch.delitem(sqlguard.FORBIDDEN_FUNCTIONS, "pg_sleep")  # here it stands in for a slow stand
