@@ -163,7 +163,9 @@ jobs:
 
   pgadmin:
     # What install.py export pgadmin writes, loaded by pgAdmin itself on its first start and read
-    # back: every field of the export has to come back as written, under its own server.
+    # back: every field of the export has to come back as written, under its own server. The Python
+    # is scripts/pgadmin_check.py, not this file: the night run takes the workflow from main and the
+    # code from develop, so a line here naming the package would break when develop renames it.
     name: export to pgAdmin
     runs-on: ubuntu-latest
     env:
@@ -178,15 +180,7 @@ jobs:
       - run: uv sync --locked
       - name: servers.json as the export writes it
         run: |
-          uv run python - <<'EOF'
-          from pg_explorer_mcp.exports import Connection, pgadmin
-          items = [
-              Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orders", "billing", None),
-              Connection("dev7", "orders", "shipping", "dev7-db.example", 5432, "orders", "shipping_ro", "verify-full", "/certs/ca.pem"),
-              Connection("ift2", "orders", "billing", "ift2-db.example", 6432, "orders_ift", "billing", "require"),
-          ]
-          open("servers.json", "w", encoding="utf-8").write(pgadmin(items, "/var/lib/pgadmin/pgpass"))
-          EOF
+          uv run python scripts/pgadmin_check.py write servers.json /var/lib/pgadmin/pgpass
           chmod 644 servers.json
       - name: pgAdmin loads it, then dumps what it holds
         run: |
@@ -197,15 +191,4 @@ jobs:
           docker exec pgadmin /venv/bin/python3 /pgadmin4/setup.py dump-servers /tmp/dumped.json --user ci@example.com
           docker exec pgadmin cat /tmp/dumped.json > dumped.json
       - name: every field comes back as the export wrote it
-        run: |
-          python3 - <<'EOF'
-          import json
-          written = json.load(open("servers.json", encoding="utf-8"))["Servers"].values()
-          dumped = {server["Name"]: server for server in json.load(open("dumped.json", encoding="utf-8"))["Servers"].values()}
-          for server in written:
-              back = dumped[server["Name"]]
-              for key, value in server.items():
-                  got = {k: back[key].get(k) for k in value} if isinstance(value, dict) else back.get(key)
-                  assert got == value, f"{server['Name']}: {key} is {got!r}, the export wrote {value!r}"
-          print(f"pgAdmin holds the {len(written)} servers as written")
-          EOF
+        run: python3 scripts/pgadmin_check.py compare servers.json dumped.json
