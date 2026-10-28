@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pg_mcp.sqlguard import SqlRejectedError, check_read_only, forbidden_function
+from pg_explorer_mcp.sqlguard import SqlRejectedError, check_read_only, forbidden_function
 
 
 @pytest.mark.parametrize(
@@ -141,6 +141,20 @@ def test_functions_with_side_effects_are_refused_however_they_are_spelled(sql: s
 )
 def test_broken_or_multiple_statements_are_refused(sql: str, fragment: str) -> None:
     with pytest.raises(SqlRejectedError, match=fragment):
+        check_read_only(sql)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'SELECT U&"pg\\005fsleep"(0)',
+        "SELECT U&\"pg!005fterminate!005fbackend\" UESCAPE '!' (pg_backend_pid())",
+        'SELECT u&"d\\0061ta" FROM orders',
+    ],
+)
+def test_unicode_escaped_identifiers_are_refused_since_the_check_reads_names_as_written(sql: str) -> None:
+    # PostgreSQL reads U&"pg\005fsleep" as pg_sleep: without this refusal the first two run.
+    with pytest.raises(SqlRejectedError, match=r'U&"\.\.\." are not allowed'):
         check_read_only(sql)
 
 

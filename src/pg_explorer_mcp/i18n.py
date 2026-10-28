@@ -24,12 +24,12 @@ _language: ContextVar[str] = ContextVar("pg_mcp_language", default=DEFAULT_LANGU
 
 
 def language_from_env(env: Mapping[str, str], system_locale: str | None = None) -> tuple[str, str | None]:
-    """The language to speak, and the PG_MCP_LANG value it had to ignore, if any.
+    """The language to speak, and the PG_EXPLORER_MCP_LANG value it had to ignore, if any.
 
-    PG_MCP_LANG decides when it is set. Otherwise the locale variables do and,
+    PG_EXPLORER_MCP_LANG decides when it is set. Otherwise the locale variables do and,
     when none is set (as on Windows), the locale the system reports.
     """
-    explicit = env.get("PG_MCP_LANG", "").strip()
+    explicit = env.get("PG_EXPLORER_MCP_LANG", "").strip()
     if explicit:
         code = re.split(r"[-_.@]", explicit.lower(), maxsplit=1)[0]
         return (code, None) if code in LANGUAGES else (DEFAULT_LANGUAGE, explicit)
@@ -152,7 +152,41 @@ EN: dict[str, str] = {
     "argument.query": "One SQL statement.",
     "argument.text": 'Part of a name or comment, e.g. "order".',
     "argument.analyze": "Run the query for real timings.",
-    "status.version": "pg-mcp {version} on Python {python}, installed at {path}",
+    # schema_diagram: the tables of a schema and their foreign keys as a Mermaid erDiagram (diagram.py).
+    "tool.schema_diagram.title": "Draw a schema",
+    "tool.schema_diagram.description": (
+        "Mermaid erDiagram of a schema's tables with their keys and foreign keys, or of one table with its "
+        "neighbours. Show it to the user in a ```mermaid block."
+    ),
+    "argument.schema_diagram": "Schema to draw; with table, its schema.",
+    "argument.schema_diagram_stand": "Schema to draw, with its login.",
+    "argument.table_diagram": '"orders" or "sales.orders": it with the tables it refers to and that refer to it.',
+    "argument.depth": "With table: foreign keys away, 0 to {limit}. Default {default}.",
+    "argument.columns_diagram": "keys (default), all (with comments) or none.",
+    "diagram.need_schema": (
+        "Pass schema to draw a schema, or table to draw a table with its neighbours. "
+        "Schemas with readable tables: {visible}."
+    ),
+    "diagram.columns_mode": 'columns must be "keys", "all" or "none"',
+    "diagram.summary": "{what}: {tables}, {relationships}",
+    "diagram.of_schema": "schema {schema}",
+    "diagram.of_table": "{table} and its neighbours within {hops}",
+    "diagram.of_table_alone": "{table} alone",
+    "diagram.hops.one": "{count} foreign key",
+    "diagram.hops.other": "{count} foreign keys",
+    "diagram.tables.one": "{count} table",
+    "diagram.tables.other": "{count} tables",
+    "diagram.relationships.one": "{count} relationship",
+    "diagram.relationships.other": "{count} relationships",
+    "diagram.columns_cut": (
+        "columns left out: with them the diagram would not fit the answer; pass table and depth for a part"
+    ),
+    "diagram.keys_cut": "tables and relationships only: even the keys would not fit the answer",
+    "diagram.too_big": (
+        "The diagram does not fit {budget} characters even without columns: {tables}, {relationships}. "
+        "Pass table with depth to draw a part of it."
+    ),
+    "status.version": "pg-explorer-mcp {version} on Python {python}, installed at {path}",
     "status.name": "server name: {name}",
     "status.read_only": (
         "access: read only. Nothing can be inserted, changed or deleted through this server: decline such "
@@ -172,8 +206,8 @@ EN: dict[str, str] = {
         "limits: read only = {read_only}, statement timeout = {timeout}, list_tables returns at most "
         "{tables} entries, answers are cut at {budget} characters"
     ),
-    "warning.profile": "PG_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
-    "warning.language": "PG_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
+    "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
+    "warning.language": "PG_EXPLORER_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
     # Arguments and answers of the tools.
     "error.arguments": "arguments must be a JSON object",
     "error.unknown_arguments": "Unknown argument(s): {unknown}. Allowed: {allowed}.",
@@ -243,6 +277,10 @@ EN: dict[str, str] = {
     ),
     "db.bad_sslmode": "PGSSLMODE={value!r} is not one of {choices}",
     "db.not_a_number": "{name}={value!r} is not a number",
+    "db.ports_mismatch": (
+        "PGPORT={value!r} lists {ports} ports for {hosts} hosts: give one port for all of them, or one for each"
+    ),
+    "db.every_host_failed": "None of the hosts let the login in. {failures}",
     "db.lost": "Lost the connection to {target}: {error}",
     "db.session_setup": "Connected, but could not set up a read-only session: {error}",
     "db.password_unset": "the server asks for a password and none is set",
@@ -288,6 +326,9 @@ EN: dict[str, str] = {
     "sql.unterminated_dollar": "Unterminated dollar-quoted string.",
     "sql.unterminated_comment": "Unterminated /* comment.",
     "sql.unterminated_quote": "Unterminated {quote} quote.",
+    "sql.unicode_identifier": (
+        'Identifiers written as U&"..." are not allowed: write the name as it is, in double quotes if it needs them.'
+    ),
     "sql.word.insert": "INSERT changes data",
     "sql.word.update": "UPDATE changes data, and FOR UPDATE locks rows",
     "sql.word.delete": "DELETE changes data",
@@ -324,9 +365,7 @@ EN: dict[str, str] = {
     ),
     "stands.status_note": "With stand it also checks that stand.",
     "tool.list_schemas.title": "List schemas",
-    "tool.list_schemas.description": (
-        "Databases of a stand and the schemas with logins; call it first on a new stand."
-    ),
+    "tool.list_schemas.description": "Databases of a stand and their schemas; call it first on a new stand.",
     "argument.stand": "One of the stands: {stands}.",
     "argument.stands": 'Instead of stand: "dev*" or "dev1,dev2", at most {limit}.',
     "argument.stand_status": "Stand to check; omit for the list.",
@@ -361,15 +400,24 @@ EN: dict[str, str] = {
         "Narrow the pattern or name up to {limit} stands separated by commas."
     ),
     "stands.out_of_time": (
-        "{stands}: not tried, the call would exceed its {budget} seconds; ask for them in another call."
+        "{stands}: no answer within the {budget} seconds of the call; ask about them in another call."
     ),
+    "stands.no_rows": "no rows on {stands}",
+    "stands.no_matches": "nothing matches on {stands}",
     "stands.no_schema_argument": (
-        "Pass schema: on stand {stand} the server reads data with the login of the schema you name. "
-        "Its schemas: {schemas}."
+        "Pass schema: on stand {stand} data is read in the schema you name, with its login. Its schemas: {schemas}."
     ),
     "stands.unknown_schema": (
         "Stand {stand} has no schema {schema!r} that the server has a login for. Its schemas: {schemas}."
     ),
+    "stands.any_schema": "any schema of {databases}: list_schemas shows them",
+    "stands.whole_databases": "any schema of {databases}, passed with database",
+    "stands.schema_in_whole_databases": (
+        "Schema {schema!r} is not in the registry of {stand}, and its databases {databases} are each read as a "
+        "whole with one login. Pass database to say which one holds it."
+    ),
+    "stands.more_schemas": "{names} and more, {count} in all",
+    "stands.no_readable_schemas": "no schema with tables that {login} can read",
     "stands.more_names": "{names} and more, {count} in all: list_schemas shows them",
     "stands.more_stands": "{names} and more, {count} in all: status lists them",
     "stands.ask_every": 'To look on every stand, call again with stands: "*" in place of stand.',
@@ -391,8 +439,7 @@ EN: dict[str, str] = {
     "stands.table_in_several": "{name!r} exists in several schemas of {stand}: {options}. Pass schema to pick one.",
     "stands.no_tables": "No tables or views in {schemas}: these schemas are empty or missing in this database.",
     "stands.table_not_found": (
-        "No table or view {name!r} in the schemas of {stand} that the server has logins for. "
-        "Call search_schema or list_schemas."
+        "No table or view {name!r} in the schemas of {stand} the server can read. Call search_schema or list_schemas."
     ),
     "stands.table_elsewhere": (
         "{error} In this database a table of that name is in schema {schemas}: call again with that schema."
@@ -402,7 +449,10 @@ EN: dict[str, str] = {
     "stands.line": "line {number} is neither [section] nor key=value",
     "stands.no_host": "stand connection {name} in {path} has no host, skipped",
     "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
-    "stands.none_found": "PG_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings",
+    "stands.bad_hosts": "stand connection {name} in {path}: {problem}, skipped",
+    "stands.none_found": (
+        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings"
+    ),
     "stands.more_warnings": "... and {count} more problems in the stands registry",
     # compare_schema: one schema on two stands.
     "tool.compare_schema.title": "Compare a schema",
@@ -444,25 +494,27 @@ EN: dict[str, str] = {
         "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
     ),
     # install.py import
-    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-mcp",
+    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-explorer-mcp",
     "install.help.source": "where the connections come from: dbeaver or pg-service",
     "install.help.file": "the pg_service.conf file to read (for pg-service)",
     "install.help.workspace": "DBeaver's folder with data-sources.json (default: the usual place for this OS)",
     "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
     "install.help.prune": "with --write: replace the registry instead of adding to it",
     "install.help.stand_pattern": (
-        "regular expression that finds the stand in a folder, connection name or host (default: {pattern})"
+        "regular expression that finds the stand in a folder, connection name or host (default: {pattern}); "
+        "a connection it matches nowhere takes its own name as the stand"
     ),
     "import.unreadable": "cannot read {path}: {error}",
     "import.bad_pattern": "the stand pattern {pattern!r} is not a regular expression: {error}",
     "import.duplicate": "the same stand, database and user as {other!r}: [{name}] is already taken",
     "import.no_host": "no host",
     "import.no_database": "no database",
-    "import.no_user": "no user: pg-mcp reads a schema with the login of the same name",
-    "import.no_stand": "no stand in the folder, the name or the host",
+    "import.no_user": "no user: pg-explorer-mcp reads a schema with the login of the same name",
+    "import.no_stand": "no stand: the pattern matched nothing, and the name has no Latin letters to be one",
     "import.bad_name": "{part!r} cannot be a part of a section name (letters, digits, _ $ - only)",
     "import.reading": "reading {source}",
     "import.preview_header": "{count} connections go into {registry}:",
+    "import.preview_named": "stand from the connection name",
     "import.preview_no_password": "no saved password: add a line to the password file",
     "import.preview_passwords": "{count} passwords go into {passfile}",
     "import.preview_skipped": "left out: {count}",
@@ -478,7 +530,7 @@ EN: dict[str, str] = {
         "data-sources.json"
     ),
     "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-mcp? [y/N] ",
+    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-explorer-mcp? [y/N] ",
     "import.offer_hint": "To import them, run: {command}",
     # install.py export
     "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
@@ -493,7 +545,9 @@ EN: dict[str, str] = {
         "(default: {path})"
     ),
     "export.help.editor": "for vscode-pgsql and sqltools: the editor whose user settings get the connections",
-    "export.no_stands": "no stands to export: import them first (install.py import) or check PG_MCP_STANDS_FILE",
+    "export.no_stands": (
+        "no stands to export: import them first (install.py import) or check PG_EXPLORER_MCP_STANDS_FILE"
+    ),
     "export.no_match": "no stands match {patterns}; the registry has {stands}",
     "export.no_dbeaver": (
         "DBeaver's connections were not found on this machine; pass --workspace with the folder that holds "
@@ -538,7 +592,7 @@ EN: dict[str, str] = {
     "export.offer": "Found {tools}. Add the stand connections there ({count})? [y/N] ",
     "export.offer_hint": "To add them later:",
     # install.py
-    "install.description": "Register the pg-mcp server in the agent's settings and check it.",
+    "install.description": "Register the pg-explorer-mcp server in the agent's settings and check it.",
     "install.help.client": "the agent or editor to register the server with (default: gigacode)",
     "install.help.print": "print the entry and where it goes instead of registering it",
     "clients.where_file": "for {client}, add this to {path}:",
@@ -553,7 +607,7 @@ EN: dict[str, str] = {
     "install.help.lang": "language of the server and of this script: en or ru (default: from the system locale)",
     "install.help.name": "register a further database as pg-NAME next to pg (lowercase letters, digits, hyphens)",
     "install.bad_name": "{name!r} cannot be a server name: use lowercase letters, digits and hyphens, at most 30",
-    "install.old_python": "pg-mcp needs Python {need} or newer, this is {have}",
+    "install.old_python": "pg-explorer-mcp needs Python {need} or newer, this is {have}",
     "install.backup": "backup of the old settings: {path}",
     "install.not_json": "{path} is not plain JSON (comments?). Merge this into it by hand:\n{snippet}",
     "install.registered": "registered MCP server {name!r} in {path}",
@@ -561,6 +615,10 @@ EN: dict[str, str] = {
     "install.no_answer": "the server did not answer as expected:",
     "install.protocol": "protocol {version}",
     "install.next": "next: {client} extensions link {path}",
+    "install.old_extension": (
+        "{path} still holds the extension linked as pg-mcp before 0.8.0: if that command says it is installed"
+        " already, delete the folder and run the command again"
+    ),
     "install.restart": "then restart the agent so it starts the server with the new settings",
 }
 
@@ -621,7 +679,45 @@ RU: dict[str, str] = {
     "argument.query": "Одна SQL-команда.",
     "argument.text": 'Фрагмент имени или комментария, например "заказ".',
     "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время.",
-    "status.version": "pg-mcp {version} на Python {python}, установлен в {path}",
+    "tool.schema_diagram.title": "Нарисовать схему",
+    "tool.schema_diagram.description": (
+        "Диаграмма erDiagram в Mermaid: таблицы схемы с ключами и внешними ключами или одна таблица с "
+        "соседями. Покажите её пользователю в блоке ```mermaid."
+    ),
+    "argument.schema_diagram": "Схема для рисунка; вместе с table — её схема.",
+    "argument.schema_diagram_stand": "Схема для рисунка, под её учёткой.",
+    "argument.table_diagram": (
+        '"orders" или "sales.orders": она с таблицами, на которые ссылается и которые ссылаются на неё.'
+    ),
+    "argument.depth": "Вместе с table: сколько внешних ключей вокруг, от 0 до {limit}. По умолчанию {default}.",
+    "argument.columns_diagram": "keys (по умолчанию), all (с комментариями) или none.",
+    "diagram.need_schema": (
+        "Передайте schema, чтобы нарисовать схему, или table — таблицу с соседями. "
+        "Схемы с доступными таблицами: {visible}."
+    ),
+    "diagram.columns_mode": 'columns должно быть "keys", "all" или "none"',
+    "diagram.summary": "{what}: {tables}, {relationships}",
+    "diagram.of_schema": "схема {schema}",
+    "diagram.of_table": "{table} и соседи не дальше {hops}",
+    "diagram.of_table_alone": "{table} без соседей",
+    "diagram.hops.one": "{count} внешнего ключа",
+    "diagram.hops.few": "{count} внешних ключей",
+    "diagram.hops.many": "{count} внешних ключей",
+    "diagram.tables.one": "{count} таблица",
+    "diagram.tables.few": "{count} таблицы",
+    "diagram.tables.many": "{count} таблиц",
+    "diagram.relationships.one": "{count} связь",
+    "diagram.relationships.few": "{count} связи",
+    "diagram.relationships.many": "{count} связей",
+    "diagram.columns_cut": (
+        "колонки опущены: с ними диаграмма не уместилась бы в ответ; передайте table и depth, чтобы нарисовать часть"
+    ),
+    "diagram.keys_cut": "только таблицы и связи: даже ключи не уместились бы в ответ",
+    "diagram.too_big": (
+        "Диаграмма не умещается в {budget} символов даже без колонок: {tables}, {relationships}. "
+        "Передайте table с depth, чтобы нарисовать часть."
+    ),
+    "status.version": "pg-explorer-mcp {version} на Python {python}, установлен в {path}",
     "status.name": "имя сервера: {name}",
     "status.read_only": (
         "доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких "
@@ -641,8 +737,8 @@ RU: dict[str, str] = {
         "лимиты: только чтение = {read_only}, таймаут запроса = {timeout}, list_tables возвращает не больше "
         "{tables} записей, ответы обрезаются до {budget} символов"
     ),
-    "warning.profile": "PG_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
-    "warning.language": "PG_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
+    "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
+    "warning.language": "PG_EXPLORER_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
     "error.arguments": "Аргументы должны быть JSON-объектом",
     "error.unknown_arguments": "Неизвестные аргументы: {unknown}. Допустимые: {allowed}.",
     "error.missing_arguments": "Не хватает аргументов: {missing}.",
@@ -723,6 +819,10 @@ RU: dict[str, str] = {
     ),
     "db.bad_sslmode": "PGSSLMODE={value!r} — не один из вариантов: {choices}",
     "db.not_a_number": "{name}={value!r} — не число",
+    "db.ports_mismatch": (
+        "PGPORT={value!r}: портов {ports}, а хостов {hosts}; укажите один порт для всех или по одному на хост"
+    ),
+    "db.every_host_failed": "Ни один из хостов не пустил. {failures}",
     "db.lost": "Соединение с {target} потеряно: {error}",
     "db.session_setup": "Подключение есть, но включить сессию только на чтение не удалось: {error}",
     "db.password_unset": "сервер просит пароль, а он не задан",
@@ -768,6 +868,9 @@ RU: dict[str, str] = {
     "sql.unterminated_dollar": "Строка в долларовых кавычках не закрыта.",
     "sql.unterminated_comment": "Комментарий /* не закрыт.",
     "sql.unterminated_quote": "Кавычка {quote} не закрыта.",
+    "sql.unicode_identifier": (
+        'Идентификаторы в записи U&"..." запрещены: напишите имя как есть, при необходимости в двойных кавычках.'
+    ),
     "sql.word.insert": "INSERT меняет данные",
     "sql.word.update": "UPDATE меняет данные, а FOR UPDATE блокирует строки",
     "sql.word.delete": "DELETE меняет данные",
@@ -804,7 +907,7 @@ RU: dict[str, str] = {
     ),
     "stands.status_note": "Со stand ещё и проверяет этот стенд.",
     "tool.list_schemas.title": "Список схем",
-    "tool.list_schemas.description": "Базы стенда и схемы с учётками; вызывайте первым на новом стенде.",
+    "tool.list_schemas.description": "Базы стенда и их схемы; вызывайте первым на новом стенде.",
     "argument.stand": "Один из стендов: {stands}.",
     "argument.stands": 'Вместо stand: "dev*" или "dev1,dev2", не больше {limit}.',
     "argument.stand_status": "Стенд для проверки; без него — список.",
@@ -844,16 +947,24 @@ RU: dict[str, str] = {
         "{patterns!r} — это {count} стендов ({stands}), а один вызов охватывает не больше {limit}. "
         "Сузьте шаблон или перечислите через запятую не больше {limit} стендов."
     ),
-    "stands.out_of_time": (
-        "{stands}: не проверялись, вызов не уложился бы в {budget} секунд; спросите о них отдельным вызовом."
-    ),
+    "stands.out_of_time": "{stands}: не ответили за {budget} секунд вызова; спросите о них отдельным вызовом.",
+    "stands.no_rows": "нет строк на {stands}",
+    "stands.no_matches": "ничего не нашлось на {stands}",
     "stands.no_schema_argument": (
-        "Передайте schema: на стенде {stand} сервер читает данные под учёткой схемы, которую вы назовёте. "
+        "Передайте schema: на стенде {stand} данные читаются в схеме, которую вы назовёте, под её учёткой. "
         "Его схемы: {schemas}."
     ),
     "stands.unknown_schema": (
         "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Его схемы: {schemas}."
     ),
+    "stands.any_schema": "любая схема базы {databases}: list_schemas покажет их",
+    "stands.whole_databases": "любая схема базы {databases} вместе с database",
+    "stands.schema_in_whole_databases": (
+        "Схемы {schema!r} нет в реестре стенда {stand}, а его базы {databases} читаются целиком, каждая одной "
+        "учёткой. Передайте database, чтобы сказать, в какой из них она."
+    ),
+    "stands.more_schemas": "{names} и другие, всего {count}",
+    "stands.no_readable_schemas": "ни одной схемы с таблицами, которые читает {login}",
     "stands.more_names": "{names} и другие, всего {count}: list_schemas покажет все",
     "stands.more_stands": "{names} и другие, всего {count}: status покажет все",
     "stands.ask_every": 'Чтобы посмотреть на всех стендах, вызовите ещё раз со stands: "*" вместо stand.',
@@ -879,7 +990,7 @@ RU: dict[str, str] = {
     ),
     "stands.no_tables": "В схемах {schemas} нет таблиц и представлений: схемы пустые или их нет в этой базе.",
     "stands.table_not_found": (
-        "В схемах стенда {stand}, для которых у сервера есть учётки, нет таблицы или представления {name!r}. "
+        "В схемах стенда {stand}, которые читает сервер, нет таблицы или представления {name!r}. "
         "Вызовите search_schema или list_schemas."
     ),
     "stands.table_elsewhere": (
@@ -890,7 +1001,10 @@ RU: dict[str, str] = {
     "stands.line": "строка {number} — не [секция] и не ключ=значение",
     "stands.no_host": "у подключения {name} в {path} нет host, пропущено",
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
-    "stands.none_found": "PG_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*",
+    "stands.bad_hosts": "у подключения {name} в {path}: {problem}, пропущено",
+    "stands.none_found": (
+        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*"
+    ),
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
     "tool.compare_schema.description": (
@@ -932,25 +1046,27 @@ RU: dict[str, str] = {
         "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
         "раньше"
     ),
-    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-mcp",
+    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-explorer-mcp",
     "install.help.source": "откуда брать подключения: dbeaver или pg-service",
     "install.help.file": "файл pg_service.conf, который читать (для pg-service)",
     "install.help.workspace": "папка DBeaver с data-sources.json (по умолчанию — обычное место для этой ОС)",
     "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
     "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
     "install.help.stand_pattern": (
-        "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern})"
+        "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern}); "
+        "подключение, где оно ничего не нашло, получает стендом своё имя"
     ),
     "import.unreadable": "не удалось прочитать {path}: {error}",
     "import.bad_pattern": "шаблон стенда {pattern!r} — не регулярное выражение: {error}",
     "import.duplicate": "тот же стенд, база и пользователь, что у {other!r}: [{name}] уже занята",
     "import.no_host": "нет хоста",
     "import.no_database": "нет базы",
-    "import.no_user": "нет пользователя: pg-mcp читает схему под одноимённой учёткой",
-    "import.no_stand": "стенд не найден ни в папке, ни в имени, ни в хосте",
+    "import.no_user": "нет пользователя: pg-explorer-mcp читает схему под одноимённой учёткой",
+    "import.no_stand": "нет стенда: шаблон ничего не нашёл, а в имени нет латинских букв, чтобы стать им",
     "import.bad_name": "{part!r} не годится в имя секции (только буквы, цифры, _ $ -)",
     "import.reading": "читаю {source}",
     "import.preview_header": "в {registry} попадут подключения: {count}",
+    "import.preview_named": "стенд из имени подключения",
     "import.preview_no_password": "пароль не сохранён: добавьте строку в файл паролей",
     "import.preview_passwords": "в {passfile} попадут пароли: {count}",
     "import.preview_skipped": "пропущено: {count}",
@@ -965,7 +1081,7 @@ RU: dict[str, str] = {
         "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
     ),
     "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-mcp? [y/N] ",
+    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
     "import.offer_hint": "Чтобы перенести их, выполните: {command}",
     "export.help": (
         "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
@@ -982,7 +1098,8 @@ RU: dict[str, str] = {
     ),
     "export.help.editor": "для vscode-pgsql и sqltools: редактор, в чьи настройки пользователя добавить подключения",
     "export.no_stands": (
-        "стендов для выгрузки нет: сначала импортируйте их (install.py import) или проверьте PG_MCP_STANDS_FILE"
+        "стендов для выгрузки нет: сначала импортируйте их (install.py import) "
+        "или проверьте PG_EXPLORER_MCP_STANDS_FILE"
     ),
     "export.no_match": "под {patterns} не подходит ни один стенд; в реестре есть {stands}",
     "export.no_dbeaver": (
@@ -1027,7 +1144,7 @@ RU: dict[str, str] = {
     ),
     "export.offer": "Найдены {tools}. Добавить туда подключения к стендам ({count})? [y/N] ",
     "export.offer_hint": "Чтобы добавить их позже, выполните:",
-    "install.description": "Регистрирует сервер pg-mcp в настройках агента и проверяет его.",
+    "install.description": "Регистрирует сервер pg-explorer-mcp в настройках агента и проверяет его.",
     "install.help.client": "агент или редактор, где зарегистрировать сервер (по умолчанию: gigacode)",
     "install.help.print": "напечатать запись и куда её положить, ничего не регистрируя",
     "clients.where_file": "для {client} добавьте это в {path}:",
@@ -1046,7 +1163,7 @@ RU: dict[str, str] = {
     "install.bad_name": (
         "{name!r} не годится в имя сервера: нужны строчные латинские буквы, цифры и дефисы, до 30 знаков"
     ),
-    "install.old_python": "pg-mcp нужен Python {need} или новее, а здесь {have}",
+    "install.old_python": "pg-explorer-mcp нужен Python {need} или новее, а здесь {have}",
     "install.backup": "копия прежних настроек: {path}",
     "install.not_json": "{path} — не чистый JSON (комментарии?). Добавьте это в него вручную:\n{snippet}",
     "install.registered": "MCP-сервер {name!r} зарегистрирован в {path}",
@@ -1054,6 +1171,10 @@ RU: dict[str, str] = {
     "install.no_answer": "сервер ответил не так, как ожидалось:",
     "install.protocol": "протокол {version}",
     "install.next": "дальше: {client} extensions link {path}",
+    "install.old_extension": (
+        "в {path} осталась запись расширения, подключённого как pg-mcp до 0.8.0: если команда ответит, что"
+        " расширение уже установлено, удалите эту папку и выполните команду снова"
+    ),
     "install.restart": "затем перезапустите агента, чтобы он запустил сервер с новыми настройками",
 }
 

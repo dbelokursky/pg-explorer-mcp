@@ -1,4 +1,4 @@
-# pg-mcp
+# pg-explorer-mcp
 
 Each `pg` MCP server gives read-only access to one PostgreSQL database. There may be several, one per
 database: `pg`, and `pg-<name>` for every further one. An entry for many stands (usually `pg-stands`)
@@ -12,14 +12,17 @@ reaches dozens of stands through the same tools.
   server uses that schema's login. `status` lists the stands and `list_schemas` the schemas of one;
   pass `database` only when an answer asks for it. Every answer starts with stand / database / schema.
 - To ask several stands the same thing, `search_schema` and `run_select` take `stands` instead of `stand`:
-  names separated by commas or a pattern (`dev1,dev2`, `dev*`), at most 10 per call. The answer has a
+  names separated by commas or a pattern (`dev1,dev2`, `dev*`), at most 100 per call, asked at once. The answer has a
   section per stand, and a stand that did not answer says why under its line.
 - To learn how a schema differs between two stands (tables, columns, constraints, indexes), call
   `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand; with
-  `stands` instead of `stand_b` it sets several stands against `stand_a` (at most 10) and says which differ.
-- To bring the user's DBeaver or `pg_service.conf` connections into pg-mcp, run `/pg:import`: it previews
+  `stands` instead of `stand_b` it sets several stands against `stand_a` (at most 100) and says which differ.
+- To show the data model, call `schema_diagram` (a schema, or a table with its neighbours by foreign keys)
+  and put its answer into a ```mermaid block as it is: the user sees a picture. `/pg:diagram` does that and
+  saves the file.
+- To bring the user's DBeaver or `pg_service.conf` connections into pg-explorer-mcp, run `/pg:import`: it previews
   first and writes only after the user confirms.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.
 - Never ask the user to paste a database password into the chat; it belongs in ~/.pgpass.
-- The server speaks English or Russian (`PG_MCP_LANG`). Whichever it speaks, reply to the user
+- The server speaks English or Russian (`PG_EXPLORER_MCP_LANG`). Whichever it speaks, reply to the user
   in the language they write in.

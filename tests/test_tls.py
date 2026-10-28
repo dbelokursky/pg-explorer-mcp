@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from pg_mcp.db import Database, Settings
-from pg_mcp.tools import build_tools
+from pg_explorer_mcp.db import Database, Settings
+from pg_explorer_mcp.tools import build_tools
 from tests.helpers import ROOT
 
 pytestmark = [
@@ -48,7 +48,7 @@ def certificates(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     new_key = ("-newkey", "rsa:2048", "-nodes")
     san = ["-extfile", extensions]
     commands = [
-        ["req", "-x509", *new_key, "-keyout", ca_key, "-out", ca, "-subj", "/CN=pg-mcp test CA"],
+        ["req", "-x509", *new_key, "-keyout", ca_key, "-out", ca, "-subj", "/CN=pg-explorer-mcp test CA"],
         ["req", *new_key, "-keyout", key, "-out", request, "-subj", f"/CN={HOSTNAME}"],
         ["x509", "-req", "-in", request, "-CA", ca, "-CAkey", ca_key, "-CAcreateserial", "-out", cert, *san],
     ]  # fmt: skip

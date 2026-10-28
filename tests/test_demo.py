@@ -12,8 +12,8 @@ from collections.abc import Iterator
 import demo
 import pytest
 
-from pg_mcp.db import Database
-from pg_mcp.tools import Tool, ToolError, build_tools
+from pg_explorer_mcp.db import Database
+from pg_explorer_mcp.tools import Tool, ToolError, build_tools
 from tests.helpers import ROOT
 
 pytestmark = pytest.mark.integration
@@ -61,6 +61,18 @@ def test_orders_are_described_with_keys_and_indexes(tools: dict[str, Tool]) -> N
     assert "  orders_customer_id_fkey: FOREIGN KEY (customer_id) REFERENCES shop.customers(id)" in lines
     assert "  shop.order_items: FOREIGN KEY (order_id) REFERENCES shop.orders(id)" in lines
     assert "  CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)" in lines
+
+
+def test_the_shop_is_drawn_as_the_readme_shows(tools: dict[str, Tool]) -> None:
+    """The ```mermaid block of the README is the tool's answer, so the picture there is a real one."""
+    for readme, summary in (("README.md", "schema shop: 4 tables, 3 relationships"), ("README.ru.md", None)):
+        text = (ROOT / readme).read_text(encoding="utf-8")
+        block = text.split("```mermaid\n", 1)[1].split("```", 1)[0]
+        if summary:
+            assert "\n".join(lines_of(tools["schema_diagram"], schema="shop")) + "\n" == block
+        else:
+            assert block.splitlines()[1] == "  %% схема shop: 4 таблицы, 3 связи"
+            assert block.splitlines()[2:] == lines_of(tools["schema_diagram"], schema="shop")[2:]
 
 
 def test_the_orders_per_status_are_the_readme_numbers(tools: dict[str, Tool]) -> None:

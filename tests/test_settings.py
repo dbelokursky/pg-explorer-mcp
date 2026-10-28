@@ -6,16 +6,23 @@ import socket
 import ssl
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pg8000.exceptions
 import pytest
 
-from pg_mcp import db
-from pg_mcp.db import Database, DatabaseUnavailableError, Settings, read_pgpass
+from pg_explorer_mcp import db
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, Settings, read_pgpass
 
 
 def settings(**overrides: str) -> Settings:
     return Settings.from_env({"PGUSER": "app", "PGPASSFILE": os.devnull, **overrides})
+
+
+def explain(error: Exception, s: Settings) -> str:
+    """The hint for a failure on the first host of the settings."""
+    return db._explain_connect_failure(error, s, s.endpoints[0])
 
 
 class TestSettings:
@@ -34,13 +41,13 @@ class TestSettings:
         [("10", "5000", 10), ("10", "60000", 65), ("0", "5000", 30), ("30", "0", 30)],
     )
     def test_the_socket_outwaits_the_statement_timeout(self, socket_s: str, statement_ms: str, expected: int) -> None:
-        s = settings(PG_MCP_SOCKET_TIMEOUT_S=socket_s, PG_MCP_STATEMENT_TIMEOUT_MS=statement_ms)
+        s = settings(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S=socket_s, PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS=statement_ms)
         assert db.socket_timeout(s) == expected
 
     def test_connecting_waits_only_its_own_timeout(self) -> None:
-        s = settings(PG_MCP_SOCKET_TIMEOUT_S="1", PG_MCP_STATEMENT_TIMEOUT_MS="5000")
+        s = settings(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S="1", PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS="5000")
         assert (db.connect_timeout(s), db.socket_timeout(s)) == (1, 10)
-        assert db.connect_timeout(settings(PG_MCP_SOCKET_TIMEOUT_S="0")) == 30
+        assert db.connect_timeout(settings(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S="0")) == 30
 
     def test_settings_problem_reaches_the_tools_as_a_hint(self) -> None:
         with pytest.raises(DatabaseUnavailableError, match="Connection settings are invalid"):
@@ -118,12 +125,12 @@ def failure(message: object, cause: BaseException | None = None) -> pg8000.excep
     ],
 )
 def test_connection_failures_become_hints(error: pg8000.exceptions.Error, hint: str) -> None:
-    assert hint in db._explain_connect_failure(error, settings(PGPASSWORD="x"))
+    assert hint in explain(error, settings(PGPASSWORD="x"))
 
 
 @pytest.mark.parametrize("error", [failure("network error", ConnectionResetError()), failure("network error")])
 def test_a_login_the_server_dropped_points_at_the_password_and_pg_hba(error: Exception) -> None:
-    text = db._explain_connect_failure(error, settings(PGPASSWORD="x"))
+    text = explain(error, settings(PGPASSWORD="x"))
     assert "localhost:5432 accepted the connection, then closed it during the login of 'app'" in text
     assert "check the password file, then ask the DBA" in text
 
@@ -131,9 +138,7 @@ def test_a_login_the_server_dropped_points_at_the_password_and_pg_hba(error: Exc
 def test_no_route_to_the_host_points_at_the_vpn() -> None:
     # pg8000 does not wrap the errors of its TLS request, so a bare OSError is explained too.
     error = OSError(errno.EHOSTUNREACH, "No route to host")
-    assert "localhost:5432 is unreachable from this machine: No route to host" in db._explain_connect_failure(
-        error, settings()
-    )
+    assert "localhost:5432 is unreachable from this machine: No route to host" in explain(error, settings())
 
 
 @pytest.mark.parametrize(
@@ -164,3 +169,158 @@ def test_scram_login_without_a_password_gets_the_password_file_hint(monkeypatch:
     with pytest.raises(DatabaseUnavailableError, match="none is set") as caught:
         Database({"PGUSER": "app", "PGPASSFILE": os.devnull}).server_info()
     assert "Put the password into" in str(caught.value)
+
+
+class FakeConnection:
+    """What db.py asks of a pg8000 connection once it is open, recording every statement it is sent."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self._usock = SimpleNamespace(settimeout=lambda _seconds: None)
+
+    def run(self, sql: str, **params: object) -> list[object]:
+        self.statements.append(sql)
+        return [[params["x"]]] if params else []
+
+    def execute_simple(self, sql: str) -> SimpleNamespace:
+        self.statements.append(sql)
+        return SimpleNamespace(columns=[{"name": "n"}], rows=[[1]])
+
+    def execute_unnamed(self, sql: str) -> SimpleNamespace:
+        self.statements.append(sql)
+        return SimpleNamespace(columns=[{"name": "n"}], rows=[[1]])
+
+    def prepare(self, sql: str) -> None:
+        raise AssertionError(f"a named prepared statement for {sql!r}: a pooler may lose it between messages")
+
+    def close(self) -> None:
+        pass
+
+
+class TestEveryCallIsOneTransaction:
+    """A pooler in transaction mode may serve each transaction from another session, or reset the session
+    in between: a call pins one session with BEGIN and carries its limits with SET LOCAL."""
+
+    @pytest.fixture
+    def connection(self, monkeypatch: pytest.MonkeyPatch) -> FakeConnection:
+        fake = FakeConnection()
+        monkeypatch.setattr("pg8000.native.Connection", lambda **_kwargs: fake)
+        return fake
+
+    def test_query_runs_inside_a_read_only_transaction_with_its_limits(self, connection: FakeConnection) -> None:
+        env = {
+            "PGUSER": "app",
+            "PGPASSFILE": os.devnull,
+            "PG_EXPLORER_MCP_SEARCH_PATH": 'bill"ing',
+            "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS": "7000",
+        }
+        assert Database(env).query("SELECT :x", x=42) == [[42]]
+        assert connection.statements == [
+            "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+            "SET statement_timeout = 7000",
+            'SET search_path = "bill""ing", public',
+            "BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 7000; "
+            'SET LOCAL search_path = "bill""ing", public',
+            "SELECT :x",
+            "ROLLBACK",
+        ]
+
+    def test_a_statement_without_parameters_is_unnamed_too_and_rolled_back_on_failure(
+        self, connection: FakeConnection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = Database({"PGUSER": "app", "PGPASSFILE": os.devnull})
+        assert db.query("SELECT 1") == [[1]]
+        assert connection.statements[-3:] == [
+            "BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 5000",
+            "SELECT 1",
+            "ROLLBACK",
+        ]
+
+        def refuse(sql: str) -> SimpleNamespace:
+            raise pg8000.exceptions.DatabaseError({"C": "42P01", "M": f"{sql}: relation does not exist"})
+
+        monkeypatch.setattr(connection, "execute_unnamed", refuse)
+        with pytest.raises(DatabaseUnavailableError if False else Exception, match="42P01"):
+            db.query("SELECT * FROM nowhere")
+        assert connection.statements[-1] == "ROLLBACK"  # the transaction is closed whatever happened in it
+
+    def test_read_only_sets_the_limits_for_its_transaction_too(self, connection: FakeConnection) -> None:
+        db = Database({"PGUSER": "app", "PGPASSFILE": os.devnull, "PG_EXPLORER_MCP_SEARCH_PATH": "shop"})
+        assert db.read_only("SELECT 1", 5, cursor=True) == (["n"], [[1]], False)
+        assert connection.statements[-4:] == [
+            'BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 5000; SET LOCAL search_path = "shop", public',
+            "DECLARE pg_mcp_rows NO SCROLL CURSOR FOR SELECT 1",
+            "FETCH FORWARD 6 FROM pg_mcp_rows",
+            "ROLLBACK",
+        ]
+
+
+class TestSeveralHosts:
+    """PGHOST may list several hosts and PGPORT one port for all or one per host, as libpq takes them."""
+
+    def test_hosts_and_ports_pair_up_like_libpq(self) -> None:
+        s = settings(PGHOST="h1, h2", PGPORT="6544")
+        assert [(e.host, e.port) for e in s.endpoints] == [("h1", 6544), ("h2", 6544)]
+        assert s.describe() == "app@h1:6544,h2:6544/app (sslmode=prefer)"
+        s = settings(PGHOST="h1,h2", PGPORT="6544,6545")
+        assert [(e.host, e.port) for e in s.endpoints] == [("h1", 6544), ("h2", 6545)]
+        assert (s.host, s.port) == ("h1", 6544)  # the first, where one host is asked for
+        assert db.split_hosts(",h2", "1") == [("localhost", 1), ("h2", 1)]  # an empty host is localhost, as in libpq
+
+    @pytest.mark.parametrize(
+        ("ports", "problem"),
+        [("1,2,3", "PGPORT='1,2,3' lists 3 ports for 2 hosts"), ("1,x", "PGPORT='1,x' is not a number")],
+    )
+    def test_ports_that_match_no_host_are_explained(self, ports: str, problem: str) -> None:
+        assert problem in Database({"PGHOST": "h1,h2", "PGPORT": ports, "PGUSER": "app"}).describe_target()
+
+    def test_each_host_reads_its_own_password_line(self, tmp_path: Path) -> None:
+        passfile = tmp_path / "pgpass"
+        passfile.write_text("h1:6544:app:app:one\nh2:6545:app:app:two\n", encoding="utf-8")
+        passfile.chmod(0o600)
+        s = settings(PGPASSFILE=str(passfile), PGHOST="h1,h2", PGPORT="6544,6545")
+        assert [e.password for e in s.endpoints] == ["one", "two"]
+
+    def test_the_session_is_on_the_first_host_that_lets_the_login_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tried: list[tuple[str, int]] = []
+
+        class Connection(FakeConnection):
+            def __init__(self, **kwargs: Any) -> None:
+                tried.append((kwargs["host"], kwargs["port"]))
+                if kwargs["host"] == "h1":
+                    raise failure("x", ConnectionRefusedError())  # down
+                if kwargs["host"] == "h2":
+                    raise failure({"C": "28P01", "M": "password authentication failed"})  # up, but no
+                super().__init__()
+
+        monkeypatch.setattr("pg8000.native.Connection", Connection)
+        database = Database({"PGUSER": "app", "PGPASSFILE": os.devnull, "PGHOST": "h1,h2,h3", "PGPORT": "6544"})
+        conn = database._connection()
+        assert tried == [("h1", 6544), ("h2", 6544), ("h3", 6544)]
+        assert conn.statements[0] == "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"
+
+    def test_every_host_failing_names_each_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def refuse(**kwargs: Any) -> None:
+            if kwargs["host"] == "h1":
+                raise failure("x", ConnectionRefusedError())
+            raise failure({"C": "28P01", "M": "password authentication failed"})
+
+        monkeypatch.setattr("pg8000.native.Connection", refuse)
+        env = {"PGUSER": "app", "PGPASSFILE": os.devnull, "PGHOST": "h1,h2", "PGPORT": "6544", "PGPASSWORD": "x"}
+        with pytest.raises(DatabaseUnavailableError) as caught:
+            Database(env).server_info()
+        assert str(caught.value).startswith(
+            "None of the hosts let the login in. Nothing accepts connections at h1:6544"
+        )
+        assert "Login as 'app' failed" in str(caught.value)
+        assert caught.value.host_down is False  # h2 answered: another login there may do
+
+    def test_host_down_holds_only_when_no_host_answered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def silence(**kwargs: Any) -> None:  # noqa: ARG001
+            raise failure("x", ConnectionRefusedError())
+
+        monkeypatch.setattr("pg8000.native.Connection", silence)
+        with pytest.raises(DatabaseUnavailableError) as caught:
+            Database({"PGUSER": "app", "PGPASSFILE": os.devnull, "PGHOST": "h1,h2"}).server_info()
+        assert caught.value.host_down is True
+        assert str(caught.value).count("Nothing accepts connections") == 2

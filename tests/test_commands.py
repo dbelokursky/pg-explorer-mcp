@@ -13,6 +13,6 @@ def description(command: str) -> str:
 def test_setup_leaves_checking_the_connection_to_status() -> None:
     """Told that /pg:setup checks the connection, a model asked to check it ran no tool at all."""
     assert description("setup") == (
-        "Install or repair pg-mcp when its tools are missing or status reports the database unavailable; "
+        "Install or repair pg-explorer-mcp when its tools are missing or status reports the database unavailable; "
         "to check the connection, call the status tool instead"
     )

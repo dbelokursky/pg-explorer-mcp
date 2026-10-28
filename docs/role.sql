@@ -1,4 +1,4 @@
--- pg-mcp: a read-only role for the agent (ADR 0002).
+-- pg-explorer-mcp: a read-only role for the agent (ADR 0002).
 --
 -- Run it as a superuser or as the owner of the schemas, in the database the agent will read:
 --
@@ -9,7 +9,7 @@
 --   schemas   comma-separated schemas the agent may read
 --   owner     role that creates tables in those schemas, so future tables become readable too
 --
--- The role is the real boundary: pg-mcp's read-only session and SQL check only back it up.
+-- The role is the real boundary: pg-explorer-mcp's read-only session and SQL check only back it up.
 -- Never grant it pg_read_all_stats or pg_monitor (they show other sessions' query texts),
 -- pg_read_server_files, pg_write_server_files, pg_execute_server_program, pg_signal_backend,
 -- or membership in a role that owns tables.

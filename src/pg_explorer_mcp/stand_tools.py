@@ -1,22 +1,25 @@
 """The tools of a server with many stands: the same tools, told which stand and schema to use.
 
 Every tool takes stand. Reading data needs schema too, and the server connects
-with that schema's own login (ADR 0006). Structure across a whole stand comes
-from the catalog, one query per database, kept to the schemas the registry has
-logins for. Every answer starts with where it came from: stand / database / schema.
-search_schema and run_select also take stands, several stands for the same request:
-they are asked one after another, and the answer has a section per stand.
-compare_schema reads one schema on two stands with its login on each.
+with that schema's own login (ADR 0006); a database the registry holds one login
+for is read through it as a whole, whatever schema is named. Structure across a
+whole stand comes from the catalog, one query per database, kept to the schemas
+the registry has logins for, or to what the one login reads. Every answer starts
+with where it came from: stand / database / schema. search_schema and run_select
+also take stands, several stands for the same request: they are asked at the
+same time, and the answer has a section per stand. compare_schema reads one
+schema on two stands with its login on each.
 """
 
 from __future__ import annotations
 
+import contextvars
 import platform
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from itertools import groupby
-from typing import Any
+from typing import Any, Optional
 
 from . import __version__
 from .budget import DEFAULT_BUDGET
@@ -25,11 +28,22 @@ from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, plural, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
-from .stands import MAX_STANDS_PER_CALL, Pool, Registry, StandError, Target, names_several, stand_ranges, summarize
+from .stands import (
+    MAX_STANDS_PER_CALL,
+    Pool,
+    Registry,
+    StandError,
+    Target,
+    by_database,
+    names_several,
+    stand_ranges,
+    summarize,
+    whole_database,
+)
 from .tools import (
+    ALL_SCHEMAS_SQL,
     DEFAULT_NAME,
     DEFAULT_PROFILE,
-    FIND_RELATION_IN_SCHEMAS_SQL,
     LIST_TABLES_LIMIT,
     PROFILES,
     RUN_SELECT_LIMIT,
@@ -40,10 +54,13 @@ from .tools import (
     Tool,
     ToolError,
     describe_table,
+    diagram_properties,
     explain_query,
     list_tables,
+    relations_named,
     run_select,
     sample_rows,
+    schema_diagram,
     search_schema,
     split_name,
 )
@@ -57,6 +74,7 @@ CALL_TIME_BUDGET_S = 25
 DETAILED_COMPARE_STANDS = 3  # against more stands than this, compare_schema gives counts, not lines
 ROWS_PER_STAND_MIN = 10
 CATALOG_ATTEMPTS = 2  # logins tried per database for the catalog before giving up on it
+SCHEMAS_PER_DATABASE = 100  # schemas list_schemas names for a database read as a whole; the rest are counted
 MAX_REGISTRY_WARNINGS = 10  # more would crowd status; the rest are counted
 STANDS_DESCRIBED = 12  # entries of the stand list in a tool's description; status names every stand
 
@@ -74,6 +92,8 @@ STAND_PROFILES: dict[str, tuple[str, ...]] = {profile: _stand_names(names) for p
 
 Arguments = Mapping[str, Any]
 Down = dict[str, str]  # host:port -> why it did not answer, remembered for the rest of one call
+# A catalog query on one database: the schemas to keep to, or None when one login reads the database as a whole.
+Catalog = Callable[[Database, Optional[list[str]]], list[str]]
 
 
 def build_stand_tools(
@@ -169,6 +189,19 @@ def build_stand_tools(
             },
             required=("stand_a", "schema"),
             handler=lambda args: stand_compare(pool, args),
+        ),
+        Tool(
+            name="schema_diagram",
+            title=t("tool.schema_diagram.title"),
+            description=t("tool.schema_diagram.description"),
+            properties={
+                "stand": stand,
+                "schema": {"type": "string", "description": t("argument.schema_diagram_stand")},
+                "database": database,
+                **diagram_properties(),
+            },
+            required=("stand", "schema"),
+            handler=lambda args: stand_diagram(pool, args, budget),
         ),
         Tool(
             name="sample_rows",
@@ -337,12 +370,40 @@ def registry_warnings(registry: Registry) -> list[str]:
 
 
 def list_schemas(pool: Pool, stand: Any) -> list[str]:
-    """The databases of a stand and their schemas that the registry has logins for."""
+    """The databases of a stand and their schemas: the registry's, or what the one login of a database reads.
+
+    A database with a login per schema is listed from the registry, without connecting. One read as a
+    whole is listed from its catalog, and when it cannot be read its error stands in for the names:
+    status calls this first and has to answer for an unreachable stand too.
+    """
     chosen = pool.registry.stand(stand)
-    return [
-        f"{chosen} / {database}: {', '.join(target.schema for target in targets)}"
-        for database, targets in by_database(pool.registry.of_stand(chosen))
-    ]
+    lines = []
+    down: Down = {}
+    for database, sections in by_database(pool.registry.of_stand(chosen)):
+        if whole_database(sections) is None:
+            names = ", ".join(target.schema for target in sections)
+        else:
+            names = _readable_schemas(pool, sections, down)
+        lines.append(f"{chosen} / {database}: {names}")
+    return lines
+
+
+def _readable_schemas(pool: Pool, sections: Sequence[Target], down: Down) -> str:
+    """The schemas with tables the one login of a database reads, from its catalog; its error when it cannot."""
+    login = sections[0].login
+
+    def run(db: Database, _schemas: list[str] | None) -> list[str]:
+        names = [str(row[0]) for row in db.query(ALL_SCHEMAS_SQL)]
+        if not names:
+            return [t("stands.no_readable_schemas", login=login)]
+        if len(names) > SCHEMAS_PER_DATABASE:
+            return [t("stands.more_schemas", names=", ".join(names[:SCHEMAS_PER_DATABASE]), count=len(names))]
+        return [", ".join(names)]
+
+    try:
+        return _catalog(pool, sections, run, down)[0]
+    except (DatabaseUnavailableError, QueryFailedError, ToolError) as exc:
+        return str(exc)
 
 
 def stand_list_tables(pool: Pool, args: Arguments) -> list[str]:
@@ -372,7 +433,7 @@ def _search_stands(pool: Pool, stands: Sequence[str], args: Arguments, text: str
     limit = _share(SEARCH_LIMIT, len(stands))
     if args.get("schema") in (None, ""):
 
-        def catalog(db: Database, schemas: list[str]) -> list[str]:
+        def catalog(db: Database, schemas: list[str] | None) -> list[str]:
             return search_schema(db, text, None, schemas, limit)
 
         return _each_stand(pool, stands, lambda stand: _whole_stand(pool, stand, args.get("database"), catalog))
@@ -381,7 +442,9 @@ def _search_stands(pool: Pool, stands: Sequence[str], args: Arguments, text: str
     def with_login(target: Target) -> list[str]:
         return search_schema(pool.database(target), text, target.schema, limit=limit)
 
-    return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    nothing = t("search.nothing", text=text.strip())
+    answers, late = _ask_stands(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    return _folded(pool, stands, answers, late, empty=lambda lines: lines[1:] == [nothing], key="stands.no_matches")
 
 
 def stand_describe(pool: Pool, args: Arguments) -> list[str]:
@@ -415,25 +478,30 @@ def _compare_many(pool: Pool, reference: Target, stands: Sequence[str], args: Ar
     base = read_structure(pool, reference)  # the reference failing fails the call: nothing to compare with
     detailed = len(stands) <= DETAILED_COMPARE_STANDS
     totals = {"same": 0, "differ": 0, "skipped": 0}
+    counting = threading.Lock()  # the stands are read in threads, and each adds itself to one total
 
     def run(stand: str) -> list[str]:
         try:
             target = pool.registry.target(stand, args.get("schema"), args.get("database"))
             structure = read_structure(pool, target)
         except StandError as exc:
-            totals["skipped"] += 1
             pool.outcomes[stand] = ERROR
+            with counting:
+                totals["skipped"] += 1
             return [stand, f"  {exc}"]
         except DatabaseUnavailableError as exc:
-            totals["skipped"] += 1
             pool.outcomes[stand] = UNAVAILABLE
+            with counting:
+                totals["skipped"] += 1
             return [target.label, f"  {exc}"]
         except (QueryFailedError, ToolError) as exc:
-            totals["skipped"] += 1
             pool.outcomes[stand] = ERROR
+            with counting:
+                totals["skipped"] += 1
             return [target.label, f"  {exc}"]
         pool.outcomes[stand] = OK
-        return _compared(base, structure, totals, detailed=detailed)
+        with counting:
+            return _compared(base, structure, totals, detailed=detailed)
 
     lines = [t("compare.many_header", a=reference.label, count=len(stands))]
     lines.extend(_each_stand(pool, stands, run))
@@ -451,6 +519,19 @@ def _compared(base: Structure, structure: Structure, totals: dict[str, int], *, 
     if detailed:
         return [structure.target.label, *found.sections()]
     return [f"{structure.target.label}: {found.summary()}"]
+
+
+def stand_diagram(pool: Pool, args: Arguments, budget: int) -> list[str]:
+    """The diagram of a schema of a stand, read with the schema's login, under its label as a Mermaid comment.
+
+    The label is a comment so that the whole answer renders when the agent pastes it as it is.
+    """
+    target = _required_target(pool, args)
+    label = f"%% {target.label}"
+    db = pool.database(target)
+    room = budget - len(label) - 1
+    lines = schema_diagram(db, target.schema, args.get("table"), args.get("depth"), args.get("columns"), budget=room)
+    return [label, *lines]
 
 
 def stand_sample(pool: Pool, args: Arguments) -> list[str]:
@@ -480,7 +561,9 @@ def stand_run(pool: Pool, args: Arguments) -> list[str]:
     def with_login(target: Target) -> list[str]:
         return run_select(pool.database(target), query, limit, _database_schemas(pool, target))
 
-    return _each_stand(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    no_rows = plural("rows.count", 0)
+    answers, late = _ask_stands(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
+    return _folded(pool, stands, answers, late, empty=lambda lines: lines[-1] == no_rows, key="stands.no_rows")
 
 
 def _elsewhere(pool: Pool, target: Target, lines: Sequence[str]) -> list[str]:
@@ -556,25 +639,77 @@ def _complaint(pool: Pool, stand: str, args: Arguments) -> StandError | None:
 
 
 def _each_stand(pool: Pool, stands: Sequence[str], run: Callable[[str], list[str]]) -> list[str]:
-    """The lines of run on the stands in turn while the call has time for another; the rest are named as not tried."""
-    lines: list[str] = []
-    started = time.monotonic()
-    for index, stand in enumerate(stands):
-        if index and time.monotonic() - started + _reserve(pool, stand) > CALL_TIME_BUDGET_S:
-            rest = stands[index:]
-            lines.append(t("stands.out_of_time", stands=summarize(rest), budget=CALL_TIME_BUDGET_S))
-            pool.outcomes.update(dict.fromkeys(rest, SKIPPED))
-            break
-        lines.extend(run(stand))
+    """The lines of run on every stand, in the order of stands; the stands that have not answered in time last."""
+    answers, late = _ask_stands(pool, stands, run)
+    lines = [line for stand in stands if stand in answers for line in answers[stand]]
+    return [*lines, *_not_in_time(late)]
+
+
+def _ask_stands(
+    pool: Pool, stands: Sequence[str], run: Callable[[str], list[str]]
+) -> tuple[dict[str, list[str]], list[str]]:
+    """run on every stand at the same time, one thread each, for as long as the call may take.
+
+    The answers of the stands that made it, and the stands that did not: the client waits only so long
+    for the call, so the call does not wait for them. Their threads finish on their own, and the pool
+    keeps their connections until then. The time a call takes is that of its slowest stand, not the sum.
+
+    Each thread runs in a copy of the call's context, so that t() speaks the server's language there:
+    a thread of its own starts with the default language, English, whatever the server was told.
+    """
+    answers: dict[str, list[str]] = {}
+
+    def ask(stand: str) -> None:
+        try:
+            answers[stand] = run(stand)
+        except Exception as exc:  # whatever stops a thread is the stand's line, not a lost stand
+            pool.outcomes[stand] = ERROR
+            answers[stand] = [stand, f"  {exc}"]
+
+    threads = [
+        threading.Thread(
+            target=contextvars.copy_context().run, args=(ask, stand), name=f"pg-explorer-mcp {stand}", daemon=True
+        )
+        for stand in stands
+    ]
+    deadline = time.monotonic() + CALL_TIME_BUDGET_S
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    late = [stand for stand in stands if stand not in answers]
+    pool.outcomes.update(dict.fromkeys(late, SKIPPED))
     pool.current = None  # the query log names the call's stands and their outcomes, not the last login
-    return lines
+    pool.trim()  # the connections the call opened beyond the limit, except those a late stand still uses
+    return answers, late
 
 
-def _reserve(pool: Pool, stand: str) -> int:
-    """Seconds the stand may take: a silent host costs the connect timeout, then a slow statement its own."""
-    return max(
-        pool.connect_timeout(target) + pool.statement_timeout(target) for target in pool.registry.of_stand(stand)
-    )
+def _not_in_time(late: Sequence[str]) -> list[str]:
+    return [t("stands.out_of_time", stands=summarize(late), budget=CALL_TIME_BUDGET_S)] if late else []
+
+
+def _folded(
+    pool: Pool,
+    stands: Sequence[str],
+    answers: dict[str, list[str]],
+    late: Sequence[str],
+    *,
+    empty: Callable[[list[str]], bool],
+    key: str,
+) -> list[str]:
+    """The answers in order, with the stands that answered but found nothing folded into one line.
+
+    Asked which of fifty stands has a row, a model reads one stand with rows and one line naming the rest.
+    """
+    folded = [
+        stand
+        for stand in stands
+        if len(stands) > 1 and pool.outcomes.get(stand) == OK and stand in answers and empty(answers[stand])
+    ]
+    lines = [line for stand in stands if stand in answers and stand not in folded for line in answers[stand]]
+    if folded:
+        lines.append(t(key, stands=summarize(folded)))
+    return [*lines, *_not_in_time(late)]
 
 
 def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target], list[str]]) -> list[str]:
@@ -596,11 +731,11 @@ def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target],
     return [target.label, *answer]
 
 
-def _whole_stand(pool: Pool, stand: str, database: Any, run: Callable[[Database, list[str]], list[str]]) -> list[str]:
+def _whole_stand(pool: Pool, stand: str, database: Any, run: Catalog) -> list[str]:
     """The catalog of the stand's databases, as for one stand; the outcome is the best any of its databases had."""
     seen: list[str] = []
 
-    def noted(db: Database, schemas: list[str]) -> list[str]:
+    def noted(db: Database, schemas: list[str] | None) -> list[str]:
         try:
             answer = run(db, schemas)
         except DatabaseUnavailableError:
@@ -621,11 +756,6 @@ def _whole_stand(pool: Pool, stand: str, database: Any, run: Callable[[Database,
     return lines
 
 
-def by_database(targets: Sequence[Target]) -> list[tuple[str, list[Target]]]:
-    ordered = sorted(targets, key=lambda target: (target.database, target.schema))
-    return [(database, list(group)) for database, group in groupby(ordered, key=lambda target: target.database)]
-
-
 def _optional_target(pool: Pool, args: Arguments) -> Target | None:
     """The login of the schema the arguments name, or None for the whole stand."""
     stand = pool.registry.stand(args.get("stand"))
@@ -634,9 +764,13 @@ def _optional_target(pool: Pool, args: Arguments) -> Target | None:
     return pool.registry.target(stand, args.get("schema"), args.get("database"))
 
 
-def _database_schemas(pool: Pool, target: Target) -> list[str]:
-    """The registry's schemas of the target's database on its stand: where a missing table may be."""
-    return [other.schema for other in pool.registry.of_stand(target.stand) if other.database == target.database]
+def _database_schemas(pool: Pool, target: Target) -> list[str] | None:
+    """The registry's schemas of the target's database on its stand, where a missing table may be.
+
+    None for a database read as a whole: there the hint names whatever schema the login reads it in.
+    """
+    sections = [other for other in pool.registry.of_stand(target.stand) if other.database == target.database]
+    return _scope(sections)[1]
 
 
 def _required_target(pool: Pool, args: Arguments) -> Target:
@@ -655,19 +789,32 @@ def _databases(pool: Pool, stand: str, database: Any) -> list[tuple[str, list[Ta
     return groups
 
 
-def _catalog(
-    pool: Pool, targets: Sequence[Target], run: Callable[[Database, list[str]], list[str]], down: Down
-) -> list[str]:
+def _scope(sections: Sequence[Target]) -> tuple[list[Target], list[str] | None]:
+    """The logins the catalog of a database may be read through, and the schemas to keep to: None for one login.
+
+    A database read as a whole has one login, and what it reads is the answer. One with a login per
+    schema keeps to the registry's schemas, through any of its logins: the catalog is the same under each.
+    """
+    section = whole_database(sections)
+    if section is not None:
+        return [section], None
+    logins: dict[str, Target] = {}
+    for target in sections:
+        logins.setdefault(target.login, target)
+    return list(logins.values()), [target.schema for target in sections]
+
+
+def _catalog(pool: Pool, sections: Sequence[Target], run: Catalog, down: Down) -> list[str]:
     """Run a catalog query through the first login of the database that connects.
 
     A login the server turned down is followed by the next one. A host that did not
     answer goes into down for the rest of the call, and nothing else on it is tried: a
     stand behind a dropped VPN costs one timeout, not one per login and database.
     """
-    schemas = [target.schema for target in targets]
-    attempts = [target for target in targets if target.address not in down][:CATALOG_ATTEMPTS]
+    logins, schemas = _scope(sections)
+    attempts = [target for target in logins if target.address not in down][:CATALOG_ATTEMPTS]
     if not attempts:
-        raise DatabaseUnavailableError(down[targets[0].address], host_down=True)
+        raise DatabaseUnavailableError(down[logins[0].address], host_down=True)
     for target in attempts[:-1]:
         answer = _attempt(pool, target, schemas, run, down, last=False)
         if answer is not None:
@@ -678,8 +825,8 @@ def _catalog(
 def _attempt(
     pool: Pool,
     target: Target,
-    schemas: list[str],
-    run: Callable[[Database, list[str]], list[str]],
+    schemas: list[str] | None,
+    run: Catalog,
     down: Down,
     *,
     last: bool,
@@ -694,13 +841,13 @@ def _attempt(
         return None  # the server turned this login down: the next one may do
 
 
-def _each_database(pool: Pool, stand: str, database: Any, run: Callable[[Database, list[str]], list[str]]) -> list[str]:
+def _each_database(pool: Pool, stand: str, database: Any, run: Catalog) -> list[str]:
     lines: list[str] = []
     down: Down = {}
-    for name, targets in _databases(pool, stand, database):
+    for name, sections in _databases(pool, stand, database):
         lines.append(f"{stand} / {name}")
         try:
-            lines.extend(_catalog(pool, targets, run, down))
+            lines.extend(_catalog(pool, sections, run, down))
         except (DatabaseUnavailableError, QueryFailedError, ToolError) as exc:
             lines.append(f"  {exc}")  # one database failing does not hide the others
     return lines
@@ -733,9 +880,9 @@ def _table_target(pool: Pool, args: Arguments) -> tuple[Target, str]:
     raise StandError(t("stands.table_not_found", name=table, stand=stand))
 
 
-def _find(db: Database, table: str, schemas: list[str]) -> list[str]:
-    """Schemas among these that hold the table; unquoted names fold to lower case."""
-    rows = db.query(FIND_RELATION_IN_SCHEMAS_SQL, name=table, schema=None, schemas=schemas)
+def _find(db: Database, table: str, schemas: list[str] | None) -> list[str]:
+    """Schemas among these, or any the login reads, that hold the table; unquoted names fold to lower case."""
+    rows = relations_named(db, table, schemas)
     if not rows and table != table.lower():
-        rows = db.query(FIND_RELATION_IN_SCHEMAS_SQL, name=table.lower(), schema=None, schemas=schemas)
+        rows = relations_named(db, table.lower(), schemas)
     return [str(row[1]) for row in rows]

@@ -55,17 +55,18 @@ import client_smoke  # the throwaway home with the password in a pass file, as t
 import demo  # the demo database: its names, and a connection to count the orders again
 import pg8000.exceptions
 
-from pg_mcp.db import Settings
+from pg_explorer_mcp import environment
+from pg_explorer_mcp.db import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 LANGUAGES = ("ru", "en")
 QUESTION_TIMEOUT_S = 600  # a local model may take minutes over one question
 MAX_TURNS = 12  # model and tool rounds per question; more means the model goes in circles
-SMALL_CONTEXT = 16384  # tokens; Qwen Code's own prompt with the tools of pg-mcp needs about 10 thousand
+SMALL_CONTEXT = 16384  # tokens; Qwen Code's own prompt with the tools of pg-explorer-mcp needs about 10 thousand
 ORDERS_BY_STATUS = {"shipped": 174, "paid": 162, "cancelled": 90, "new": 74}  # as docs/demo.sql makes them
 # Built-in tools of Qwen Code that act on this machine: off, so that a model which wants to delete
-# something cannot reach for psql in the shell; the database tools are those of pg-mcp alone.
+# something cannot reach for psql in the shell; the database tools are those of pg-explorer-mcp alone.
 EXCLUDED_TOOLS = ("run_shell_command", "write_file", "edit", "replace", "task", "web_fetch", "web_search")
 _COLOURS = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -431,13 +432,15 @@ def home_env(home: Path, environ: dict[str, str], args: argparse.Namespace, mode
         "OPENAI_BASE_URL",
         "OPENAI_MODEL",
     }
-    shell = {key: value for key, value in environ.items() if key not in dropped and not key.startswith("PG_MCP_")}
+    shell = {
+        key: value for key, value in environ.items() if key not in dropped and not key.startswith("PG_EXPLORER_MCP_")
+    }
     env = client_smoke.client_env(str(home), dict(shell, PGPASSWORD=str(args.password)))
     (home / "work").mkdir()  # Qwen Code's project folder: empty, so nothing but the database is in view
     env.update(
         PGDATABASE=args.database,
         PGUSER=args.role,
-        PG_MCP_QUERY_LOG=str(home / "queries.jsonl"),
+        PG_EXPLORER_MCP_QUERY_LOG=str(home / "queries.jsonl"),
         OPENAI_BASE_URL=args.base_url,
         OPENAI_MODEL=model,
         OPENAI_API_KEY=environ.get("OPENAI_API_KEY") or "ollama",
@@ -478,7 +481,7 @@ def register(env: dict[str, str], home: Path, language: str, name: str | None = 
     for entry in settings["mcpServers"].values():
         entry["trust"] = True  # the tools run without a confirmation, which no one is there to give
     # Qwen Code 0.17+ hides MCP tools behind its tool_search/tool_call bridge; off, so that the model sees
-    # the tools of pg-mcp as GigaCode CLI shows them. No memory extraction after the answer: it costs a
+    # the tools of pg-explorer-mcp as GigaCode CLI shows them. No memory extraction after the answer: it costs a
     # model call per question and says nothing about the tools. No usage statistics from a check.
     settings["tools"] = {"toolSearch": {"enabled": False}}
     settings["memory"] = {"enableManagedAutoMemory": False}
@@ -487,11 +490,12 @@ def register(env: dict[str, str], home: Path, language: str, name: str | None = 
 
 
 def link_extension(qwen: str, env: dict[str, str], home: Path) -> None:
-    """The repository as the extension, so that the model has pg-mcp-context.md as a user's agent does."""
+    """The repository as the extension, so that the model has pg-explorer-mcp-context.md as a user's agent does."""
     run([qwen, "extensions", "link", str(ROOT)], env, home, stdin="y\n")
     proc = run([qwen, "extensions", "list"], env, home)
     listed = plain(proc.stdout + proc.stderr)
-    if "pg-mcp" not in listed:
+    name = json.loads((ROOT / "qwen-extension.json").read_text(encoding="utf-8"))["name"]
+    if f"{name} (" not in listed:  # the name and version line, not the folder path, which may hold the name too
         raise CheckError(f"qwen extensions link did not link the repository:\n{listed.strip()}")
 
 
@@ -705,7 +709,7 @@ def evaluate(args: argparse.Namespace, scenarios: Sequence[Scenario], model: str
     if single:
         results += ask_all(args, single, model, results)
     if stands:
-        settings = Settings.from_env(os.environ)
+        settings = Settings.from_env(environment.with_legacy_names(os.environ))
         make_copy(settings, args)
         try:
             results += ask_all(args, stands, model, results, settings=settings)
@@ -727,12 +731,12 @@ def ask_all(
     """
     languages = LANGUAGES if args.lang == "all" else (args.lang,)
     results: list[Result] = []
-    with tempfile.TemporaryDirectory(prefix="pg-mcp-agent-eval-") as folder:
+    with tempfile.TemporaryDirectory(prefix="pg-explorer-mcp-agent-eval-") as folder:
         home = Path(folder)
         env = home_env(home, dict(os.environ), args, model)
         if settings is not None:
             (home / "stands.conf").write_text(stands_registry(settings, args), encoding="utf-8")
-            env.update(PG_MCP_STANDS="*", PG_MCP_STANDS_FILE=str(home / "stands.conf"))
+            env.update(PG_EXPLORER_MCP_STANDS="*", PG_EXPLORER_MCP_STANDS_FILE=str(home / "stands.conf"))
         version = plain(run([args.qwen, "--version"], env, home).stdout).strip()
         where = f"stands dev7 ({args.database}) and dev12 ({copy_database(args)})" if settings else args.database
         print(f"model {model} at {args.base_url}; Qwen Code {version} ({args.qwen}); {where} as {args.role}")

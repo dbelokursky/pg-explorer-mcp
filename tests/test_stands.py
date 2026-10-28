@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -15,9 +16,9 @@ from typing import Any
 
 import pytest
 
-from pg_mcp import __main__ as entry
-from pg_mcp import i18n, stand_tools
-from pg_mcp.compare import (
+from pg_explorer_mcp import __main__ as entry
+from pg_explorer_mcp import i18n, stand_tools
+from pg_explorer_mcp.compare import (
     RELATIONS_SQL,
     SCHEMA_CONSTRAINTS_SQL,
     SCHEMA_INDEXES_SQL,
@@ -26,14 +27,15 @@ from pg_mcp.compare import (
     differences,
     read_structure,
 )
-from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
-from pg_mcp.querylog import QueryLog
-from pg_mcp.stand_tools import STAND_ONLY_TOOLS, STAND_PROFILES, build_stand_tools
-from pg_mcp.stands import (
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_explorer_mcp.querylog import QueryLog
+from pg_explorer_mcp.stand_tools import STAND_ONLY_TOOLS, STAND_PROFILES, build_stand_tools
+from pg_explorer_mcp.stands import (
     Pool,
     Registry,
     StandError,
     Target,
+    by_database,
     exported_sections,
     listed,
     load_registry,
@@ -41,16 +43,20 @@ from pg_mcp.stands import (
     registry_files,
     stands_enabled,
     summarize,
+    whole_database,
 )
-from pg_mcp.tools import PROFILES, Tool, ToolError, build_tools
+from pg_explorer_mcp.tools import ALL_SCHEMAS_SQL, PROFILES, Tool, ToolError, build_tools
 from tests.helpers import ROOT, rpc
 
-STANDS_ON = {"PG_MCP_STANDS": "*"}
+STANDS_ON = {"PG_EXPLORER_MCP_STANDS": "*"}
+# dev1 mixes a database with a login per schema (orders) and one with a single section (archive); dev2 has a
+# login per schema; ift1 is one section, as a connection imported from DBeaver is, read as a whole through it.
 NAMES = (
     "dev1.orders.billing",
     "dev1.orders.shipping",
     "dev1.archive.billing",
     "dev2.orders.billing",
+    "dev2.orders.returns",
     "ift1.orders.billing",
 )
 
@@ -89,9 +95,13 @@ class TestServiceFile:
 
     def test_the_sections_an_export_wrote_are_known_by_the_line_above_them(self) -> None:
         text = (
-            "# pg-mcp export\n[dev1.orders.billing]\nhost=db\n\n# mine\n[dev2.orders.billing]\nhost=db\n"
-            "# pg-mcp export\n\n[dev3.orders.billing]\nhost=db\n"
+            "# pg-explorer-mcp export\n[dev1.orders.billing]\nhost=db\n\n# mine\n[dev2.orders.billing]\nhost=db\n"
+            "# pg-explorer-mcp export\n\n[dev3.orders.billing]\nhost=db\n"
         )
+        assert exported_sections(text) == {"dev1.orders.billing"}
+
+    def test_the_sections_pg_mcp_0_7_exported_are_known_too(self) -> None:
+        text = "# pg-mcp export\n[dev1.orders.billing]\nhost=db\n\n# mine\n[dev2.orders.billing]\nhost=db\n"
         assert exported_sections(text) == {"dev1.orders.billing"}
 
     def test_lines_it_cannot_read_are_reported_by_number(self) -> None:
@@ -105,28 +115,51 @@ class TestServiceFile:
     [("", None), ("  ", None), ("off", None), ("No", None), ("false", None), ("0", None), ("*", ["*"])],
 )
 def test_pg_mcp_stands_switches_stands_on(raw: str, patterns: list[str] | None) -> None:
-    assert stands_enabled({"PG_MCP_STANDS": raw}) == patterns
+    assert stands_enabled({"PG_EXPLORER_MCP_STANDS": raw}) == patterns
 
 
 def test_pg_mcp_stands_takes_patterns_in_any_case() -> None:
     assert stands_enabled({}) is None
-    assert stands_enabled({"PG_MCP_STANDS": "Dev*, ift2,"}) == ["dev*", "ift2"]
+    assert stands_enabled({"PG_EXPLORER_MCP_STANDS": "Dev*, ift2,"}) == ["dev*", "ift2"]
 
 
 class TestRegistryFiles:
-    def test_defaults_are_in_the_home_folder(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.fixture
+    def home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+        """A home folder of the test's own: a real one may hold the registry of pg-mcp 0.7.0."""
         monkeypatch.setattr(sys, "platform", "linux")
-        assert registry_files({}) == [Path.home() / ".pg-mcp" / "stands.conf", Path.home() / ".pg_service.conf"]
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        return tmp_path
+
+    def test_defaults_are_in_the_home_folder(self, home: Path) -> None:
+        assert registry_files({}) == [home / ".pg-explorer-mcp" / "stands.conf", home / ".pg_service.conf"]
+
+    def test_the_registry_of_pg_mcp_0_7_is_read_while_there_is_no_new_one(self, home: Path) -> None:
+        (home / ".pg-mcp").mkdir()
+        old = write(home / ".pg-mcp" / "stands.conf", sections())
+        assert registry_files({})[0] == old
+        (home / ".pg-explorer-mcp").mkdir()
+        new = write(home / ".pg-explorer-mcp" / "stands.conf", sections())
+        assert registry_files({})[0] == new
+
+    def test_windows_reads_the_old_registry_in_appdata_too(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        (tmp_path / "pg-mcp").mkdir()
+        old = write(tmp_path / "pg-mcp" / "stands.conf", sections())
+        assert registry_files({"APPDATA": str(tmp_path)})[0] == old
 
     def test_windows_keeps_them_in_appdata(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(sys, "platform", "win32")
         assert registry_files({"APPDATA": str(tmp_path)}) == [
-            tmp_path / "pg-mcp" / "stands.conf",
+            tmp_path / "pg-explorer-mcp" / "stands.conf",
             tmp_path / "postgresql" / ".pg_service.conf",
         ]
 
     def test_variables_name_the_files(self, tmp_path: Path) -> None:
-        env = {"PG_MCP_STANDS_FILE": "~/stands.conf", "PGSERVICEFILE": str(tmp_path / "service.conf")}
+        env = {"PG_EXPLORER_MCP_STANDS_FILE": "~/stands.conf", "PGSERVICEFILE": str(tmp_path / "service.conf")}
         assert registry_files(env) == [Path.home() / "stands.conf", tmp_path / "service.conf"]
 
 
@@ -149,10 +182,12 @@ class TestLoadRegistry:
 
     def test_patterns_choose_the_stands_and_names_fold_to_lower_case(self, tmp_path: Path) -> None:
         own = write(tmp_path / "stands.conf", "[DEV7.orders.billing]\nhost=db\n" + sections())
-        assert loaded({"PG_MCP_STANDS": "dev*"}, [own]).stands() == ["dev1", "dev2", "dev7"]
+        assert loaded({"PG_EXPLORER_MCP_STANDS": "dev*"}, [own]).stands() == ["dev1", "dev2", "dev7"]
 
     def test_copies_an_export_wrote_are_not_stands(self, tmp_path: Path) -> None:
-        service = write(tmp_path / "service.conf", "# pg-mcp export\n[dev3.orders.billing]\nhost=db\n" + sections())
+        service = write(
+            tmp_path / "service.conf", "# pg-explorer-mcp export\n[dev3.orders.billing]\nhost=db\n" + sections()
+        )
         assert [target.name for target in loaded(STANDS_ON, [service]).targets] == list(NAMES)
 
     def test_the_import_file_wins_over_pg_service_conf(self, tmp_path: Path) -> None:
@@ -184,6 +219,22 @@ class TestLoadRegistry:
             f"stand connection dev1.orders.slow in {own} has connect_timeout='ten', not a number, skipped",
         ]
 
+    def test_a_stand_may_list_several_hosts_with_one_port_each(self, tmp_path: Path) -> None:
+        own = write(
+            tmp_path / "stands.conf",
+            "[dev1.orders.billing]\nhost=h1,h2\nport=6544,6545\n"
+            "[dev1.orders.shared]\nhost=h1, h2\nport=6544\n"
+            "[dev1.orders.odd]\nhost=h1,h2\nport=1,2,3\n"
+            "[dev1.orders.text]\nhost=h1,h2\nport=1,x\n",
+        )
+        registry = loaded(STANDS_ON, [own])
+        assert [target.address for target in registry.targets] == ["h1:6544,h2:6545", "h1:6544,h2:6544"]
+        assert registry.warnings == [
+            f"stand connection dev1.orders.odd in {own}: PGPORT='1,2,3' lists 3 ports for 2 hosts: "
+            "give one port for all of them, or one for each, skipped",
+            f"stand connection dev1.orders.text in {own} has port='1,x', not a number, skipped",
+        ]
+
     def test_missing_files_are_skipped_quietly(self, tmp_path: Path) -> None:
         registry = loaded(STANDS_ON, [tmp_path / "absent.conf", write(tmp_path / "stands.conf", sections())])
         assert (len(registry.targets), registry.warnings) == (len(NAMES), [])
@@ -201,18 +252,20 @@ class TestLoadRegistry:
         assert len(registry.warnings) == 2
 
     def test_no_stands_at_all_says_where_it_looked(self, tmp_path: Path) -> None:
-        env = dict(STANDS_ON, PG_MCP_STANDS_FILE=str(tmp_path / "a.conf"), PGSERVICEFILE=str(tmp_path / "b.conf"))
+        env = dict(
+            STANDS_ON, PG_EXPLORER_MCP_STANDS_FILE=str(tmp_path / "a.conf"), PGSERVICEFILE=str(tmp_path / "b.conf")
+        )
         registry = load_registry(env)
         assert registry is not None
         assert registry.targets == []
         assert registry.warnings == [
-            f"PG_MCP_STANDS is set, but no stands were found in {tmp_path / 'a.conf'}, {tmp_path / 'b.conf'}; "
+            f"PG_EXPLORER_MCP_STANDS is set, but no stands were found in {tmp_path / 'a.conf'}, {tmp_path / 'b.conf'}; "
             "working with the PG* settings"
         ]
 
     def test_files_come_from_the_environment(self, tmp_path: Path) -> None:
         own = write(tmp_path / "stands.conf", sections())
-        env = dict(STANDS_ON, PG_MCP_STANDS_FILE=str(own), PGSERVICEFILE=str(tmp_path / "absent.conf"))
+        env = dict(STANDS_ON, PG_EXPLORER_MCP_STANDS_FILE=str(own), PGSERVICEFILE=str(tmp_path / "absent.conf"))
         registry = load_registry(env)
         assert registry is not None
         assert len(registry.targets) == len(NAMES)
@@ -229,19 +282,19 @@ class TestTarget:
             "PGDATABASE": "entry-db",
             "PGPASSFILE": "/home/me/.pgpass",
             "PGSSLMODE": "verify-full",
-            "PG_MCP_STATEMENT_TIMEOUT_MS": "7000",
+            "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS": "7000",
             "HOME": "/home/me",
         }
         assert target.env(base) == {
             "PGPASSFILE": "/home/me/.pgpass",
             "PGSSLMODE": "verify-full",
-            "PG_MCP_STATEMENT_TIMEOUT_MS": "7000",
-            "PG_MCP_SOCKET_TIMEOUT_S": "10",
+            "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS": "7000",
+            "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "10",
             "PGHOST": "db",
             "PGPORT": "5432",
             "PGDATABASE": "orders",
             "PGUSER": "billing",
-            "PG_MCP_SEARCH_PATH": "billing",
+            "PG_EXPLORER_MCP_SEARCH_PATH": "billing",
         }
 
     def test_the_section_overrides_the_entry(self) -> None:
@@ -256,7 +309,7 @@ class TestTarget:
             "password": "in-the-section",
         }
         env = Target("dev1", "orders", "billing", options, "stands.conf").env(
-            {"PGSSLMODE": "disable", "PG_MCP_SOCKET_TIMEOUT_S": "20"}
+            {"PGSSLMODE": "disable", "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"}
         )
         settings = Settings.from_env(env)
         assert (settings.host, settings.port, settings.database, settings.user) == (
@@ -272,9 +325,45 @@ class TestTarget:
         )
         assert (settings.socket_timeout_s, settings.search_path) == (3, "billing")
 
+    def test_several_hosts_go_to_the_server_as_libpq_takes_them(self) -> None:
+        target = Target("dev1", "orders", "billing", {"host": "h1,h2", "port": "6544,6545"}, "x")
+        env = target.env({})
+        assert (env["PGHOST"], env["PGPORT"]) == ("h1,h2", "6544,6545")
+        assert (target.endpoints(), target.address) == ([("h1", 6544), ("h2", 6545)], "h1:6544,h2:6545")
+        assert [endpoint.address for endpoint in Settings.from_env(env).endpoints] == ["h1:6544", "h2:6545"]
+        assert Target("dev1", "orders", "billing", {"host": "h1, h2"}, "x").address == "h1:5432,h2:5432"
+
     def test_the_entry_timeout_applies_when_the_section_has_none(self) -> None:
-        env = Target("dev1", "orders", "billing", {"host": "db"}, "x").env({"PG_MCP_SOCKET_TIMEOUT_S": "20"})
-        assert env["PG_MCP_SOCKET_TIMEOUT_S"] == "20"
+        env = Target("dev1", "orders", "billing", {"host": "db"}, "x").env({"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"})
+        assert env["PG_EXPLORER_MCP_SOCKET_TIMEOUT_S"] == "20"
+
+    def test_the_login_is_the_user_of_the_section_else_the_schema(self) -> None:
+        assert Target("dev1", "orders", "billing", {"host": "db"}, "x").login == "billing"
+        assert Target("dev1", "orders", "billing", {"host": "db", "user": "reader"}, "x").login == "reader"
+
+    def test_for_schema_keeps_the_login_and_the_server_and_changes_the_rest(self) -> None:
+        section = Target("ift1", "orders", "reader", {"host": "db", "port": "6432", "sslmode": "require"}, "x")
+        target = section.for_schema("hr")
+        assert (target.name, target.label, target.login) == ("ift1.orders.hr", "ift1 / orders / hr", "reader")
+        env = target.env({})
+        assert (env["PGHOST"], env["PGPORT"], env["PGDATABASE"], env["PGSSLMODE"]) == (
+            "db",
+            "6432",
+            "orders",
+            "require",
+        )
+        assert (env["PGUSER"], env["PG_EXPLORER_MCP_SEARCH_PATH"]) == ("reader", "hr")
+        assert (section.schema, section.options.get("user")) == ("reader", None)  # the section is as it was
+
+
+def test_a_database_is_read_as_a_whole_when_its_sections_share_one_login() -> None:
+    reader = Target("ift2", "orders", "reader", {"host": "db"}, "x")
+    billing = Target("ift2", "orders", "billing", {"host": "db", "user": "reader"}, "x")
+    shipping = Target("ift2", "orders", "shipping", {"host": "db"}, "x")
+    assert whole_database([reader]) is reader
+    assert whole_database([reader, billing]) is reader  # two sections, one login
+    assert whole_database([billing, shipping]) is None  # a login per schema
+    assert by_database([shipping, reader]) == [("orders", [reader, shipping])]
 
 
 class TestRegistry:
@@ -307,22 +396,68 @@ class TestRegistry:
     @pytest.mark.parametrize(
         ("schema", "database", "message"),
         [
-            (None, None, "Pass schema: on stand dev1 the server reads data with the login of the schema you name."),
-            ("", None, "Pass schema: on stand dev1 the server reads data with the login of the schema you name."),
+            (None, None, "Pass schema: on stand dev1 data is read in the schema you name, with its login."),
+            ("", None, "Pass schema: on stand dev1 data is read in the schema you name, with its login."),
             ("billing", None, "Schema 'billing' exists in several databases of dev1: archive, orders. Pass database"),
             ("shipping", "archive", "Schema 'shipping' of dev1 is in orders, not in 'archive'. Pass one of those"),
             ("shiping", None, "Stand dev1 has no schema 'shiping' that the server has a login for. Similar: shipping."),
             (
                 "hr",
                 None,
-                "Stand dev1 has no schema 'hr' that the server has a login for. Its schemas: billing, shipping.",
+                "Stand dev1 has no schema 'hr' that the server has a login for. Its schemas: billing, shipping; "
+                "any schema of archive, passed with database.",
             ),
+            ("hr", "nowhere", "Stand dev1 has no database 'nowhere' in the registry. Databases: archive, orders."),
         ],
     )
     def test_a_wrong_schema_is_explained(self, registry: Registry, schema: Any, database: Any, message: str) -> None:
         with pytest.raises(StandError) as caught:
             registry.target("dev1", schema, database)
         assert str(caught.value).startswith(message)
+
+    def test_a_database_with_one_login_reads_any_schema_through_it(self, registry: Registry) -> None:
+        """ift1 is one section: a stand where one login reads dozens of schemas is imported as such a section."""
+        target = registry.target("ift1", ' "Public" ')
+        assert (target.name, target.label, target.login) == ("ift1.orders.public", "ift1 / orders / public", "billing")
+        env = target.env({})
+        assert (env["PGUSER"], env["PG_EXPLORER_MCP_SEARCH_PATH"], env["PGHOST"]) == (
+            "billing",
+            "public",
+            "db.example.com",
+        )
+        assert registry.target("ift1", "billing").name == "ift1.orders.billing"  # a schema of the registry, as it is
+        # On dev1, archive is read as a whole and orders has a login per schema: a schema the registry lacks
+        # is refused unless database names archive.
+        assert registry.target("dev1", "hr", "archive").name == "dev1.archive.hr"
+        assert registry.target("dev1", "hr", "archive").login == "billing"
+        with pytest.raises(
+            StandError, match=r"^Stand dev1 has no schema 'hr' .* any schema of archive, passed with database\.$"
+        ):
+            registry.target("dev1", "hr", "orders")
+
+    def test_two_databases_read_as_a_whole_need_the_database_named(self, tmp_path: Path) -> None:
+        text = (
+            "[ift2.orders.reader]\nhost=db\n\n"
+            "[ift2.orders.billing]\nhost=db\nuser=reader\n\n"  # two sections, one login: still read as a whole
+            "[ift2.archive.reader]\nhost=db\n\n"
+        )
+        registry = loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)])
+        assert registry.target("ift2", "hr", "orders").login == "reader"
+        assert registry.target("ift2", "billing").name == "ift2.orders.billing"
+        with pytest.raises(StandError) as caught:
+            registry.target("ift2", "hr")
+        assert str(caught.value) == (
+            "Schema 'hr' is not in the registry of ift2, and its databases archive, orders are each read as a whole "
+            "with one login. Pass database to say which one holds it."
+        )
+        assert registry.schemas_hint("ift2") == "any schema of archive, orders: list_schemas shows them"
+        with pytest.raises(StandError, match=r"Its schemas: any schema of archive, orders: list_schemas shows them\.$"):
+            registry.target("ift2", "")
+
+    @pytest.mark.usefixtures("russian")
+    def test_the_schemas_hint_in_russian(self, registry: Registry) -> None:
+        assert registry.schemas_hint("dev1") == "billing, shipping; любая схема базы archive вместе с database"
+        assert registry.schemas_hint("ift1") == "любая схема базы orders: list_schemas покажет их"
 
 
 @pytest.mark.parametrize(
@@ -367,10 +502,10 @@ class TestPool:
     def test_the_connect_timeout_is_the_sections_else_the_entrys(self, registry: Registry) -> None:
         target = registry.targets[0]
         assert Pool(registry, {}).connect_timeout(target) == 10
-        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(target) == 20
-        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "ten"}).connect_timeout(target) == 10
+        assert Pool(registry, {"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(target) == 20
+        assert Pool(registry, {"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "ten"}).connect_timeout(target) == 10
         slow = replace(target, options={**target.options, "connect_timeout": "3"})
-        assert Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(slow) == 3
+        assert Pool(registry, {"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(slow) == 3
 
 
 @pytest.fixture
@@ -405,6 +540,7 @@ class TestOfflineTools:
             "search_schema",
             "describe_table",
             "compare_schema",
+            "schema_diagram",
         )
 
     def test_every_tool_but_status_needs_a_stand_and_data_needs_a_schema(self, pool: Pool) -> None:
@@ -420,6 +556,7 @@ class TestOfflineTools:
             "search_schema": ["text"],
             "describe_table": ["stand", "table"],
             "compare_schema": ["stand_a", "schema"],
+            "schema_diagram": ["stand", "schema"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
             "run_select": ["schema", "query"],
@@ -435,19 +572,17 @@ class TestOfflineTools:
         self, pool: Pool, tools: dict[str, Tool]
     ) -> None:
         lines = tools["status"].call({}).splitlines()
-        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in lines
+        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 6" in lines
         assert any(line.startswith("access: read only. Nothing can be inserted") for line in lines)
-        assert any(line.endswith("stands covers at most 10 stands per call") for line in lines)
+        assert any(line.endswith("stands covers at most 100 stands per call") for line in lines)
         assert "pass stand to status to check that stand's connection" in lines
         assert pool.open_count() == 0
 
     def test_status_with_a_stand_lists_its_schemas_and_checks_one_login(self, tools: dict[str, Tool]) -> None:
         lines = tools["status"].call({"stand": "dev1"}).splitlines()
-        assert lines[-4:-1] == [
-            "dev1 / archive: billing",
-            "dev1 / orders: billing, shipping",
-            "checked with dev1 / archive / billing",
-        ]
+        # archive is read as a whole: its schemas come from the catalog, which is out of reach here
+        assert lines[-4].startswith("dev1 / archive: Nothing accepts connections at 127.0.0.1:")
+        assert lines[-3:-1] == ["dev1 / orders: billing, shipping", "checked with dev1 / archive / billing"]
         assert lines[-1].startswith("database: unavailable. Nothing accepts connections at 127.0.0.1:")
 
     def test_a_login_the_server_turned_down_is_followed_by_the_next_one(
@@ -488,10 +623,47 @@ class TestOfflineTools:
         ]
 
     def test_list_schemas_shows_the_databases_of_a_stand(self, tools: dict[str, Tool]) -> None:
-        assert tools["list_schemas"].call({"stand": "Dev1"}).splitlines() == [
-            "dev1 / archive: billing",
-            "dev1 / orders: billing, shipping",
+        lines = tools["list_schemas"].call({"stand": "Dev1"}).splitlines()
+        # a database with one login is listed from its catalog, and here its error stands in for the names
+        assert lines[0].startswith("dev1 / archive: Nothing accepts connections at 127.0.0.1:")
+        assert lines[1:] == ["dev1 / orders: billing, shipping"]  # a login per schema: the registry, no connection
+
+    def test_list_schemas_reads_the_catalog_for_a_database_with_one_login(
+        self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        names: list[tuple[str]] = [("hr",), ("shop",)]
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            assert (self.settings is not None and self.settings.user, sql) == ("billing", ALL_SCHEMAS_SQL)
+            return names
+
+        monkeypatch.setattr(Database, "query", query)
+        assert tools["list_schemas"].call({"stand": "ift1"}) == "ift1 / orders: hr, shop"
+        names = [(f"s{number:03}",) for number in range(101)]
+        assert tools["list_schemas"].call({"stand": "ift1"}).endswith("s098, s099 and more, 101 in all")
+        names = []
+        assert (
+            tools["list_schemas"].call({"stand": "ift1"})
+            == "ift1 / orders: no schema with tables that billing can read"
+        )
+
+    def test_a_database_with_one_login_is_listed_by_what_the_login_reads(
+        self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        queries: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            queries.append((sql, params))
+            return [("hr", "people", "r", 3, None)]
+
+        monkeypatch.setattr(Database, "query", query)
+        assert tools["list_tables"].call({"stand": "ift1"}).splitlines() == [
+            "ift1 / orders",
+            "hr.people | table | ~3 rows",
         ]
+        ((sql, params),) = queries
+        assert "has_table_privilege" in sql
+        assert "schemas" not in params  # no registry schemas to keep to: the login's privileges decide
 
     def test_one_database_failing_does_not_hide_the_others(self, pool: Pool, tools: dict[str, Tool]) -> None:
         lines = tools["list_tables"].call({"stand": "dev1"}).splitlines()
@@ -576,7 +748,7 @@ def test_an_answer_without_rows_names_the_other_stands_that_have_the_schema(regi
     empty, found = ["id", "(0 rows)"], ["id", "1", "(1 row)"]
     billing = registry.target("dev2", "billing")
     assert stand_tools._elsewhere(pool, billing, empty) == [
-        "Schema billing is on dev1, ift1 as well; pass stands to ask up to 10 stands in one call."
+        "Schema billing is on dev1, ift1 as well; pass stands to ask up to 100 stands in one call."
     ]
     assert stand_tools._elsewhere(pool, billing, found) == []
     assert stand_tools._elsewhere(pool, registry.target("dev1", "shipping"), empty) == []  # on dev1 only
@@ -589,8 +761,8 @@ def test_a_left_out_schema_is_answered_with_the_schemas_of_the_stand(pool: Pool,
     with pytest.raises(ToolError) as caught:
         tools[tool].call({"stand": "dev1", "schema": "", "query": "SELECT 1"})
     assert str(caught.value) == (
-        "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
-        "Its schemas: billing, shipping."
+        "Pass schema: on stand dev1 data is read in the schema you name, with its login. "
+        "Its schemas: billing, shipping; any schema of archive, passed with database."
     )
     with pytest.raises(ToolError, match=r"^No stand 'dev11' in the registry\. Similar: dev1, dev2\.$"):
         tools[tool].call({"stand": "dev11", "query": "SELECT 1"})
@@ -606,8 +778,8 @@ class TestCompareSchema:
         [
             (
                 {"stand_a": "dev1", "stand_b": "dev2"},
-                "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
-                "Its schemas: billing, shipping.",
+                "Pass schema: on stand dev1 data is read in the schema you name, with its login. "
+                "Its schemas: billing, shipping; any schema of archive, passed with database.",
             ),
             ({"stand_a": " ", "stand_b": "dev2", "schema": "billing"}, "Pass stand_a, one of: dev1–dev2, ift1."),
             (
@@ -628,7 +800,7 @@ class TestCompareSchema:
             ),
             (
                 {"stand_a": "dev2", "stand_b": "dev1", "schema": "shipping"},
-                "Stand dev2 has no schema 'shipping' that the server has a login for. Its schemas: billing.",
+                "Stand dev2 has no schema 'shipping' that the server has a login for. Its schemas: billing, returns.",
             ),
         ],
     )
@@ -861,8 +1033,85 @@ def silent_port() -> Iterator[str]:
     """A port that accepts TCP connections and never answers: a host behind a dropped VPN."""
     with socket.socket() as server:
         server.bind(("127.0.0.1", 0))
-        server.listen(1)
+        server.listen(8)  # room for the stands of one call to wait on it together
         yield str(server.getsockname()[1])
+
+
+class TestParallelStands:
+    """A call over several stands asks them all at once: it takes as long as the slowest stand, not the sum."""
+
+    @pytest.fixture
+    def pool(self, tmp_path: Path, unreachable_env: dict[str, str], silent_port: str) -> Pool:
+        text = "".join(
+            f"[{name}]\nhost=127.0.0.1\nport={silent_port}\nconnect_timeout=1\n\n"
+            for name in ("dev1.orders.billing", "dev2.orders.billing", "ift1.orders.billing")
+        )
+        return Pool(loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)]), unreachable_env, limit=1)
+
+    @pytest.fixture
+    def tools(self, pool: Pool) -> dict[str, Tool]:
+        return by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+
+    def test_three_silent_stands_cost_one_timeout_not_three(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        started = time.monotonic()
+        lines = tools["run_select"].call({"stands": "*", "schema": "billing", "query": "SELECT 1"}).splitlines()
+        assert time.monotonic() - started < 2.5  # one second of connect timeout each, at the same time
+        assert lines[::2] == [
+            "dev1 / orders / billing",
+            "dev2 / orders / billing",
+            "ift1 / orders / billing",
+        ]  # in the order of the registry, however the stands finished
+        assert all(line.startswith("  ") for line in lines[1::2])  # what stopped each, under its label
+        assert pool.outcomes == {"dev1": "unavailable", "dev2": "unavailable", "ift1": "unavailable"}
+        assert pool.open_count() == 1  # the call opened three, the surplus is closed once it is over
+
+    def test_stands_that_have_not_answered_in_time_are_named(
+        self, monkeypatch: pytest.MonkeyPatch, pool: Pool, tools: dict[str, Tool]
+    ) -> None:
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0)
+        arguments = {"stands": "*", "schema": "billing", "query": "SELECT 1"}
+        assert tools["run_select"].call(arguments).splitlines() == [
+            "dev1–dev2, ift1: no answer within the 0 seconds of the call; ask about them in another call."
+        ]
+        assert pool.outcomes == {"dev1": "skipped", "dev2": "skipped", "ift1": "skipped"}
+        deadline = time.monotonic() + 5
+        while pool.open_count() < 3 and time.monotonic() < deadline:
+            time.sleep(0.02)  # the threads register their connections on their own time
+        pool.trim()
+        assert pool.open_count() == 3  # their threads are still waiting on the host: nothing is closed under them
+        while pool.open_count() > 1 and time.monotonic() < deadline:
+            time.sleep(0.1)
+            pool.trim()
+        assert pool.open_count() == 1  # once the threads gave up, the next call's trim closed the surplus
+
+    def test_a_failing_thread_is_the_line_of_its_stand(self, pool: Pool) -> None:
+        def run(stand: str) -> list[str]:
+            if stand == "dev2":
+                raise RuntimeError("a bug in the worker")
+            return [stand, "  fine"]
+
+        assert stand_tools._each_stand(pool, ["dev1", "dev2", "ift1"], run) == [
+            "dev1",
+            "  fine",
+            "dev2",
+            "  a bug in the worker",
+            "ift1",
+            "  fine",
+        ]
+        assert pool.outcomes == {"dev2": "error"}
+
+    @pytest.mark.usefixtures("russian")
+    def test_the_threads_speak_the_language_of_the_call(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        """A thread of its own starts in English, so a Russian server answered stand by stand in English."""
+        no_rows = i18n.plural("rows.count", 0)
+        answers, late = stand_tools._ask_stands(
+            pool, ["dev1", "dev2"], lambda _stand: [i18n.current(), i18n.plural("rows.count", 0)]
+        )
+        assert late == []
+        assert answers == {"dev1": ["ru", no_rows], "dev2": ["ru", no_rows]}  # what _folded compares with
+        lines = tools["run_select"].call({"stands": "*", "schema": "billing", "query": "SELECT 1"}).splitlines()
+        assert lines[::2] == ["dev1 / orders / billing", "dev2 / orders / billing", "ift1 / orders / billing"]
+        assert all(re.search("[а-я]", line) for line in lines[1::2]), lines  # what stopped each stand, in Russian
 
 
 class TestSilentHost:
@@ -948,15 +1197,15 @@ class TestManyStands:
             registry.matching(raw)
         assert str(caught.value).startswith(message)
 
-    def test_at_most_ten_stands_fit_in_one_call(self) -> None:
-        registry = Registry([Target(f"dev{n}", "orders", "billing", {"host": "db"}, "x") for n in range(1, 13)])
-        ten = ",".join(f"dev{n}" for n in range(1, 11))
-        assert registry.matching(ten) == [f"dev{n}" for n in range(1, 11)]
+    def test_at_most_a_hundred_stands_fit_in_one_call(self) -> None:
+        registry = Registry([Target(f"dev{n}", "orders", "billing", {"host": "db"}, "x") for n in range(1, 102)])
+        hundred = ",".join(f"dev{n}" for n in range(1, 101))
+        assert registry.matching(hundred) == [f"dev{n}" for n in range(1, 101)]
         with pytest.raises(StandError) as caught:
             registry.matching("dev*")
         assert str(caught.value) == (
-            "'dev*' means 12 stands (dev1–dev12), and one call covers at most 10. "
-            "Narrow the pattern or name up to 10 stands separated by commas."
+            "'dev*' means 101 stands (dev1–dev101), and one call covers at most 100. "
+            "Narrow the pattern or name up to 100 stands separated by commas."
         )
 
     @pytest.mark.parametrize(
@@ -991,6 +1240,14 @@ class TestManyStands:
     def test_a_schema_no_stand_has_fails_as_one_stand_would(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="Stand dev1 has no schema 'hr' that the server has a login for"):
             tools["run_select"].call({"stands": "dev1,dev2", "schema": "hr", "query": "SELECT 1"})
+        # ift1 is read as a whole through its one login, so hr is read there, whatever the registry knows
+        lines = tools["run_select"].call({"stands": "dev2,ift1", "schema": "hr", "query": "SELECT 1"}).splitlines()
+        assert lines[:3] == [
+            "dev2",
+            "  Stand dev2 has no schema 'hr' that the server has a login for. Its schemas: billing, returns.",
+            "ift1 / orders / hr",
+        ]
+        assert len(lines) == 4
 
     def test_a_refused_statement_asks_no_stand(self, pool: Pool, tools: dict[str, Tool]) -> None:
         arguments = {"stands": "dev*", "schema": "billing", "database": "orders", "query": "DELETE FROM invoices"}
@@ -1016,13 +1273,13 @@ class TestManyStands:
             tools["list_tables"].call({"stand": "pg"})  # it takes one stand only
 
     def test_more_stands_than_one_call_asks_are_named_as_a_list_or_a_pattern(self, tmp_path: Path) -> None:
-        names = [f"dev{number}" for number in range(1, 13)]
+        names = [f"dev{number}" for number in range(1, 102)]
         many = loaded(
             STANDS_ON, [write(tmp_path / "many.conf", "".join(f"[{name}.db.s]\nhost=h\n\n" for name in names))]
         )
         tools = by_name(build_stand_tools(Pool(many, {}), str(ROOT), profile="analyst"))
         with pytest.raises(
-            ToolError, match=r"pass stands in place of stand: a list or a pattern, at most 10 stands\.$"
+            ToolError, match=r"pass stands in place of stand: a list or a pattern, at most 100 stands\.$"
         ):
             tools["run_select"].call({"stand": "pg", "schema": "s", "query": "SELECT 1"})
 
@@ -1050,12 +1307,12 @@ class TestManyStands:
         assert pool.outcomes == {"dev1": "unavailable", "dev2": "unavailable"}
 
     def test_search_in_a_schema_uses_the_login_of_each_stand(self, pool: Pool, tools: dict[str, Tool]) -> None:
-        arguments = {"stands": "ift1,dev1", "text": "order", "schema": "shipping"}
+        arguments = {"stands": "ift1,dev2,dev1", "text": "order", "schema": "shipping"}
         lines = tools["search_schema"].call(arguments).splitlines()
-        assert (lines[0], lines[2]) == ("dev1 / orders / shipping", "ift1")
-        assert lines[3].startswith("  Stand ift1 has no schema 'shipping' that the server has a login for.")
-        assert len(lines) == 4
-        assert pool.outcomes == {"dev1": "unavailable", "ift1": "error"}
+        assert (lines[0], lines[2], lines[4]) == ("dev1 / orders / shipping", "dev2", "ift1 / orders / shipping")
+        assert lines[3].startswith("  Stand dev2 has no schema 'shipping' that the server has a login for.")
+        assert len(lines) == 6
+        assert pool.outcomes == {"dev1": "unavailable", "dev2": "error", "ift1": "unavailable"}
 
     def test_an_unknown_database_on_one_stand_is_a_line_there(self, pool: Pool, tools: dict[str, Tool]) -> None:
         arguments = {"stands": "dev1,dev2", "text": "order", "database": "archive"}
@@ -1063,17 +1320,6 @@ class TestManyStands:
         assert lines[0] == "dev1 / archive"
         assert lines[2:] == ["dev2", "  Stand dev2 has no database 'archive' in the registry. Databases: orders."]
         assert pool.outcomes == {"dev1": "unavailable", "dev2": "error"}
-
-    def test_the_rest_are_named_when_the_call_runs_out_of_time(
-        self, monkeypatch: pytest.MonkeyPatch, pool: Pool, tools: dict[str, Tool]
-    ) -> None:
-        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0)
-        arguments = {"stands": "*", "schema": "billing", "database": "orders", "query": "SELECT 1"}
-        lines = tools["run_select"].call(arguments).splitlines()
-        assert lines[0] == "dev1 / orders / billing"
-        assert lines[2] == "dev2, ift1: not tried, the call would exceed its 0 seconds; ask for them in another call."
-        assert len(lines) == 3
-        assert pool.outcomes == {"dev1": "unavailable", "dev2": "skipped", "ift1": "skipped"}
 
     def test_the_query_log_has_one_line_with_the_outcome_of_each_stand(self, pool: Pool, tmp_path: Path) -> None:
         log = tmp_path / "queries.jsonl"
@@ -1095,7 +1341,7 @@ def serve(env: dict[str, str], *requests: dict[str, Any]) -> list[dict[str, Any]
 
 
 class TestEntry:
-    """main(): stands only when PG_MCP_STANDS asks and the registry has some, the PG* settings otherwise."""
+    """main(): stands only when PG_EXPLORER_MCP_STANDS asks and the registry has some, the PG* settings otherwise."""
 
     INITIALIZE = rpc(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
     TOOLS = rpc(2, "tools/list")
@@ -1105,7 +1351,10 @@ class TestEntry:
     def env(self, tmp_path: Path, unreachable_env: dict[str, str]) -> dict[str, str]:
         own = write(tmp_path / "stands.conf", sections(host="127.0.0.1", port=unreachable_env["PGPORT"]))
         return dict(
-            unreachable_env, PG_MCP_STANDS="*", PG_MCP_STANDS_FILE=str(own), PGSERVICEFILE=str(tmp_path / "absent")
+            unreachable_env,
+            PG_EXPLORER_MCP_STANDS="*",
+            PG_EXPLORER_MCP_STANDS_FILE=str(own),
+            PGSERVICEFILE=str(tmp_path / "absent"),
         )
 
     def answers(self, env: dict[str, str]) -> tuple[str, list[str], str]:
@@ -1117,10 +1366,10 @@ class TestEntry:
         instructions, names, status = self.answers(env)
         assert "This server reaches many stands." in instructions
         assert names == list(STAND_PROFILES["explore"])
-        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in status
+        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 6" in status
 
     def test_without_pg_mcp_stands_the_entry_works_as_before(self, env: dict[str, str]) -> None:
-        del env["PG_MCP_STANDS"]
+        del env["PG_EXPLORER_MCP_STANDS"]
         instructions, names, status = self.answers(env)
         assert "many stands" not in instructions
         assert names == list(PROFILES["explore"])
@@ -1130,7 +1379,7 @@ class TestEntry:
         write(tmp_path / "stands.conf", "")
         _, names, status = self.answers(env)
         assert names == list(PROFILES["explore"])
-        assert "warning: PG_MCP_STANDS is set, but no stands were found in" in status
+        assert "warning: PG_EXPLORER_MCP_STANDS is set, but no stands were found in" in status
         assert "database: unavailable" in status
 
     def test_registry_problems_past_ten_are_counted(self, env: dict[str, str], tmp_path: Path) -> None:
@@ -1143,20 +1392,12 @@ class TestEntry:
     def test_pg_mcp_max_connections_limits_open_connections(
         self, env: dict[str, str], raw: str, connections: int
     ) -> None:
-        status = self.answers(dict(env, PG_MCP_MAX_CONNECTIONS=raw))[2]
+        status = self.answers(dict(env, PG_EXPLORER_MCP_MAX_CONNECTIONS=raw))[2]
         assert f"at most {connections} connections stay open" in status
 
 
-def test_the_time_reserve_of_a_stand_covers_a_silent_host_and_a_slow_statement(tmp_path: Path) -> None:
-    text = "[dev1.orders.billing]\nhost=db\n\n[dev1.orders.shipping]\nhost=db\nconnect_timeout=3\n"
-    registry = loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)])
-    assert stand_tools._reserve(Pool(registry, {}), "dev1") == 15  # 10 seconds to connect, 5 for the statement
-    pool = Pool(registry, {"PG_MCP_SOCKET_TIMEOUT_S": "2", "PG_MCP_STATEMENT_TIMEOUT_MS": "1500"})
-    assert stand_tools._reserve(pool, "dev1") == 5  # the section's 3 seconds over the entry's 2, plus 2 rounded up
-
-
 # Every request to the model carries tools/list, and local models run with small contexts.
-SIZE_LIMITS = {("en", "single"): 4800, ("ru", "single"): 5200, ("en", "stands"): 7000, ("ru", "stands"): 7500}
+SIZE_LIMITS = {("en", "single"): 4700, ("ru", "single"): 5100, ("en", "stands"): 7800, ("ru", "stands"): 8000}
 
 
 @pytest.mark.parametrize(("language", "mode"), list(SIZE_LIMITS))
@@ -1230,9 +1471,11 @@ def test_a_registry_with_a_password_that_others_can_read_is_a_warning(tmp_path: 
 
 
 def test_a_stand_names_its_schemas_when_the_schema_is_missing_or_unknown(registry: Registry) -> None:
-    with pytest.raises(StandError, match=r"Pass schema: .* Its schemas: billing, shipping\.$"):
+    with pytest.raises(
+        StandError, match=r"Pass schema: .* Its schemas: billing, shipping; any schema of archive, passed"
+    ):
         registry.target("dev1", " ")
-    with pytest.raises(StandError, match=r"no schema 'public' .* Its schemas: billing\.$"):
+    with pytest.raises(StandError, match=r"no schema 'public' .* Its schemas: billing, returns\.$"):
         registry.target("dev2", "public")
 
 

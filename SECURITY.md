@@ -16,7 +16,7 @@ The latest release on the [Releases page](https://github.com/dbelokursky/pg-expl
 
 ## What the server guarantees, and in which order
 
-pg-mcp gives an agent read-only access to PostgreSQL. Three layers keep it read-only, and they are
+pg-explorer-mcp gives an agent read-only access to PostgreSQL. Three layers keep it read-only, and they are
 meant to hold in this order ([ADR 0002](docs/adr/0002-read-only-sql-policy.md), in Russian):
 
 1. **The privileges of the PostgreSQL role.** This is the security boundary. The role the agent
@@ -33,7 +33,7 @@ A report that gets past layer 3 alone is worth sending; one that gets past layer
 
 ## What the server does not promise
 
-- The query log (`PG_MCP_QUERY_LOG`, [ADR 0005](docs/adr/0005-query-log.md)) is a journal on the
+- The query log (`PG_EXPLORER_MCP_QUERY_LOG`, [ADR 0005](docs/adr/0005-query-log.md)) is a journal on the
   user's machine, not a tamper-proof audit trail. Audit data access on the PostgreSQL side.
 - Everything a tool returns goes into the model's context. Choose the profile and the role for the
   data the group may see; the `schema` profile shows no data at all.

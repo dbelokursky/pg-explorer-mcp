@@ -8,14 +8,19 @@ from pathlib import Path
 
 import pytest
 
-from pg_mcp import clients
-from pg_mcp.clients import CLIENTS, ClientConfigError
+from pg_explorer_mcp import clients
+from pg_explorer_mcp.clients import CLIENTS, ClientConfigError
 
 ENTRY = {
     "command": "/usr/bin/python3",
-    "args": ["-I", "/opt/pg-mcp/run.py"],
+    "args": ["-I", "/opt/pg-explorer-mcp/run.py"],
     "timeout": 30000,
-    "env": {"PGHOST": "db.example", "PG_MCP_NAME": "pg", "PG_MCP_LANG": "ru", "PGAPPNAME": 'quote " and кириллица'},
+    "env": {
+        "PGHOST": "db.example",
+        "PG_EXPLORER_MCP_NAME": "pg",
+        "PG_EXPLORER_MCP_LANG": "ru",
+        "PGAPPNAME": 'quote " and кириллица',
+    },
 }
 
 
@@ -118,11 +123,11 @@ class TestEntry:
             '    command: "/usr/bin/python3"\n'
             "    args:\n"
             '      - "-I"\n'
-            '      - "/opt/pg-mcp/run.py"\n'
+            '      - "/opt/pg-explorer-mcp/run.py"\n'
             "    env:\n"
             '      "PGHOST": "db.example"\n'
-            '      "PG_MCP_NAME": "pg"\n'
-            '      "PG_MCP_LANG": "ru"\n'
+            '      "PG_EXPLORER_MCP_NAME": "pg"\n'
+            '      "PG_EXPLORER_MCP_LANG": "ru"\n'
             '      "PGAPPNAME": "quote \\" and кириллица"\n'
         )
 
@@ -172,4 +177,4 @@ class TestWrite:
         backup = clients.write(client, path, "pg", {**ENTRY, "args": ["-I", "/new/run.py"]})
         assert backup is not None
         assert '      - "/new/run.py"\n' in path.read_text(encoding="utf-8")
-        assert '      - "/opt/pg-mcp/run.py"\n' in backup.read_text(encoding="utf-8")
+        assert '      - "/opt/pg-explorer-mcp/run.py"\n' in backup.read_text(encoding="utf-8")

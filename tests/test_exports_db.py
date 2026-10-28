@@ -15,8 +15,8 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
-from pg_mcp import exports
-from pg_mcp.db import Settings
+from pg_explorer_mcp import exports
+from pg_explorer_mcp.db import Settings
 
 pytestmark = pytest.mark.integration
 
@@ -53,7 +53,7 @@ def test_psql_connects_through_the_exported_service_with_the_schema_first(settin
         encoding="utf-8",
     )
     service = tmp_path / "pg_service.conf"
-    env = {"PG_MCP_STANDS_FILE": str(registry), "PGSERVICEFILE": str(service)}
+    env = {"PG_EXPLORER_MCP_STANDS_FILE": str(registry), "PGSERVICEFILE": str(service)}
     items, _ = exports.connections(env)
     exports.write(exports.prepare("pg-service", items, env, tmp_path))
     # Only the service names the server: what libpq would take from the shell is left out.

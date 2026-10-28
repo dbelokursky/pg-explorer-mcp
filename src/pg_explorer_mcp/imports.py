@@ -19,15 +19,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .aes import decrypt_cbc
-from .db import pgpass_path
+from .db import pgpass_path, split_hosts
 from .i18n import t
 from .stands import Target, exported_sections, parse_service_file, registry_files
 
 # DBeaver encrypts credentials-config.json with this key unless the user turned on its secure storage.
 DBEAVER_KEY = bytes.fromhex("babb4a9f774ab853c96c2d653dfe544a")
 DBEAVER_PROVIDER = "postgresql"
-DEFAULT_STAND_PATTERN = r"(dev|ift)\d+"
+DEFAULT_STAND_PATTERN = r"(dev|ift)[-_ ]?\d+"  # letters, then a number, with or without a separator between
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")  # what a part of a stand.database.schema section may hold
+_SEPARATORS = re.compile(r"[-_ ]+")  # what a stand the pattern found loses: DEV-27 is the stand dev27
+_NAME_WORD = re.compile(r"[a-z0-9_$]+")  # the words of a connection name that may make a stand name
 _FILE_MODE = 0o600
 
 
@@ -42,16 +44,23 @@ class Connection:
     source: str  # where it came from, for the preview
     name: str
     folder: str
-    host: str
-    port: str
+    host: str  # one host, or several separated by commas, as libpq takes them
+    port: str  # one port for every host, or one per host separated by commas
     database: str
     user: str
     password: str | None
     options: Mapping[str, str] = field(default_factory=dict)  # sslmode and the like
 
     @property
+    def endpoints(self) -> list[tuple[str, str]]:
+        """Each host with its port, in order; the port of every host when there is one port."""
+        hosts = [host.strip() for host in self.host.split(",")]
+        ports = [port.strip() for port in self.port.split(",")]
+        return list(zip(hosts, ports * len(hosts) if len(ports) == 1 else ports))
+
+    @property
     def address(self) -> str:
-        return f"{self.host}:{self.port}"
+        return ",".join(f"{host}:{port}" for host, port in self.endpoints)
 
 
 @dataclass
@@ -62,6 +71,7 @@ class Plan:
     passwords: dict[tuple[str, str, str, str], str] = field(default_factory=dict)  # host, port, db, user
     without_password: list[Target] = field(default_factory=list)
     skipped: list[tuple[Connection, str]] = field(default_factory=list)
+    named: list[Target] = field(default_factory=list)  # whose stand is the connection name: the pattern found none
 
 
 # --- reading -------------------------------------------------------------------------------------
@@ -93,7 +103,7 @@ def read_dbeaver(folder: Path) -> list[Connection]:
             continue
         configuration = entry.get("configuration", {})
         saved = credentials.get(identifier, {}).get("#connection", {})
-        host, port, database = _dbeaver_address(configuration)
+        host, port, database = dbeaver_address(configuration)
         connections.append(
             Connection(
                 source="DBeaver",
@@ -123,19 +133,40 @@ def _dbeaver_credentials(path: Path) -> dict[str, dict[str, dict[str, str]]]:
     return decoded if isinstance(decoded, dict) else {}
 
 
-def _dbeaver_address(configuration: Mapping[str, object]) -> tuple[str, str, str]:
+def dbeaver_address(configuration: Mapping[str, object]) -> tuple[str, str, str]:
+    """Host, port and database of a DBeaver connection, the hosts as a libpq list when there are several.
+
+    The URL comes first and the fields fill in what it lacks: a connection made by URL keeps DBeaver's
+    defaults in its fields, "postgres" as the database among them, and a connection made by fields has
+    its URL built from them anyway. DBeaver keeps several hosts as the host field "h1:6544,h2" with the
+    port field 6544 and the URL jdbc:postgresql://h1:6544,h2:6544/db: a host without a port of its own
+    takes the port field.
+    """
     host = str(configuration.get("host") or "")
-    port = str(configuration.get("port") or "5432")
+    port = str(configuration.get("port") or "")
     database = str(configuration.get("database") or "")
-    url = str(configuration.get("url") or "")
-    match = re.match(r"jdbc:postgresql://([^/:?]+)(?::(\d+))?/([^?]*)", url)
-    if match:
-        host, port, database = (
-            host or match.group(1),
-            port if port != "5432" else (match.group(2) or port),
-            database or match.group(3),
-        )
-    return host, port, database
+    match = re.match(r"jdbc:postgresql://([^/?]+)/?([^?]*)", str(configuration.get("url") or ""))
+    pairs = _endpoints(match.group(1) if match else host, port or "5432")
+    database = (match.group(2) if match else "") or database
+    if not pairs:
+        return "", port or "5432", database
+    numbers = [number for _, number in pairs]
+    return ",".join(name for name, _ in pairs), numbers[0] if len(set(numbers)) == 1 else ",".join(numbers), database
+
+
+def _endpoints(text: str, default_port: str) -> list[tuple[str, str]]:
+    """The host:port pairs of a list such as "h1:6544,h2": a host without a port of its own takes the default."""
+    pairs = []
+    for raw in text.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        name, colon, number = item.rpartition(":")
+        if colon and name and number.isdigit():
+            pairs.append((name, number))
+        else:
+            pairs.append((item, default_port))
+    return pairs
 
 
 def read_pg_service(path: Path) -> list[Connection]:
@@ -168,13 +199,26 @@ def read_pg_service(path: Path) -> list[Connection]:
 
 
 def stand_of(connection: Connection, pattern: re.Pattern[str]) -> str | None:
-    """The stand named in the folder, the connection name or the host, in that order; lower case."""
+    """The stand the pattern finds in the folder, the connection name or the host, in that order.
+
+    Lower case, without the separator a name may put between the letters and the number: DEV-27 is the
+    stand dev27, so that it folds into a range with dev26 and dev28.
+    """
     for text in (connection.folder, connection.name, connection.host):
         match = pattern.search(text)
         if match:
             found = match.group("stand") if "stand" in pattern.groupindex else match.group(0)
-            return found.lower()
+            return _SEPARATORS.sub("", found.lower())
     return None
+
+
+def stand_from_name(name: str) -> str | None:
+    """The connection name as the stand, for a connection the pattern says nothing about: IFT-Caldera is ift-caldera.
+
+    Lower case, the words joined by "-", only what a section name may hold; None when no Latin letter is left.
+    """
+    words = _NAME_WORD.findall(name.lower())
+    return "-".join(words) if any(char.isalpha() for word in words for char in word) else None
 
 
 def compile_pattern(raw: str) -> re.Pattern[str]:
@@ -190,6 +234,9 @@ def plan(connections: Iterable[Connection], pattern: re.Pattern[str]) -> Plan:
     seen: dict[str, Connection] = {}
     for connection in connections:
         stand = stand_of(connection, pattern)
+        from_name = stand is None
+        if from_name:
+            stand = stand_from_name(connection.name)
         problem = _problem(connection, stand)
         if problem is not None:
             result.skipped.append((connection, problem))
@@ -200,18 +247,23 @@ def plan(connections: Iterable[Connection], pattern: re.Pattern[str]) -> Plan:
             continue
         seen[target.name] = connection
         result.targets.append(target)
+        if from_name:
+            result.named.append(target)
         if connection.password is None:
             result.without_password.append(target)
         else:
-            result.passwords[connection.host, connection.port, connection.database, connection.user] = (
-                connection.password
-            )
+            for host, port in connection.endpoints:  # libpq matches a password line against one host
+                result.passwords[host, port, connection.database, connection.user] = connection.password
     return result
 
 
 def _problem(connection: Connection, stand: str | None) -> str | None:
     if not connection.host:
         return t("import.no_host")
+    try:
+        split_hosts(connection.host, connection.port)
+    except ValueError as exc:  # a port that is not a number, or a count of ports that matches no host
+        return str(exc)
     if not connection.database:
         return t("import.no_database")
     if not connection.user:
@@ -239,8 +291,10 @@ def preview(result: Plan, registry_file: Path, passfile: Path) -> list[str]:
     """Lines for the screen: what goes where, without a single password."""
     lines = [t("import.preview_header", count=len(result.targets), registry=registry_file)]
     for target in result.targets:
-        note = "" if target not in result.without_password else "  " + t("import.preview_no_password")
-        lines.append(f"  [{target.name}]  {target.options['host']}:{target.options.get('port', '5432')}{note}")
+        notes = [t("import.preview_named")] if target in result.named else []
+        if target in result.without_password:
+            notes.append(t("import.preview_no_password"))
+        lines.append(f"  [{target.name}]  {target.address}" + "".join(f"  {note}" for note in notes))
     lines.append(t("import.preview_passwords", count=len(result.passwords), passfile=passfile))
     if result.skipped:
         lines.append(t("import.preview_skipped", count=len(result.skipped)))
@@ -285,7 +339,7 @@ def _registry_text(registry_file: Path, targets: Sequence[Target], *, prune: boo
         sections[target.name] = dict(target.options)
     when = datetime.date.today().isoformat()
     out = [
-        f"# Stands of pg-mcp, written by install.py import on {when}. Sections are stand.database.schema;",
+        f"# Stands of pg-explorer-mcp, written by install.py import on {when}. Sections are stand.database.schema;",
         "# the server reads this file when it starts. Passwords belong in the password file.",
         "",
     ]
@@ -351,7 +405,7 @@ def _escape(part: str) -> str:
 
 
 def _temporary(path: Path) -> Path:
-    return path.with_name(path.name + ".pg-mcp-new")
+    return path.with_name(path.name + ".pg-explorer-mcp-new")
 
 
 def _prepare(path: Path, text: str) -> None:

@@ -533,8 +533,8 @@ wheels = [
 ]
 
 [[package]]
-name = "pg-mcp"
-version = "0.7.0"
+name = "pg-explorer-mcp"
+version = "0.8.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

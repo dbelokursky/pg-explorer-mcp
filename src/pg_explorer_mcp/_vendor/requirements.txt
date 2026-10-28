@@ -1,0 +1,7 @@
+# Exact versions of the vendored packages: GitHub's dependency graph reads this file as a pip manifest
+# and raises Dependabot alerts for them. scripts/check_vendor.py keeps it in step with the *.dist-info folders.
+pg8000==1.31.5
+scramp==1.4.6
+asn1crypto==1.5.1
+python-dateutil==2.9.0.post0
+six==1.17.0

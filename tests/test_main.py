@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 
-from pg_mcp import __main__ as entry
+import pytest
+
+from pg_explorer_mcp import __main__ as entry
 from tests.helpers import ROOT, rpc
 
 
@@ -34,19 +37,37 @@ def status_from_main(env: dict[str, str]) -> str:
     return str(json.loads(stdout.getvalue())["result"]["content"][0]["text"])
 
 
-def test_main_speaks_the_language_pg_mcp_lang_names(unreachable_env: dict[str, str]) -> None:
-    text = status_from_main(dict(unreachable_env, PG_MCP_LANG="ru"))
+def test_main_speaks_the_language_pg_explorer_mcp_lang_names(unreachable_env: dict[str, str]) -> None:
+    text = status_from_main(dict(unreachable_env, PG_EXPLORER_MCP_LANG="ru"))
     assert "язык: ru" in text
     assert "база: недоступна" in text
 
 
 def test_unknown_language_falls_back_to_english_with_a_warning(unreachable_env: dict[str, str]) -> None:
-    text = status_from_main(dict(unreachable_env, PG_MCP_LANG="de", PG_MCP_PROFILE="admin"))
+    text = status_from_main(dict(unreachable_env, PG_EXPLORER_MCP_LANG="de", PG_EXPLORER_MCP_PROFILE="admin"))
     assert "language: en" in text
-    assert "warning: PG_MCP_LANG='de' is not one of en, ru; using 'en'" in text
-    assert "warning: PG_MCP_PROFILE='admin'" in text
+    assert "warning: PG_EXPLORER_MCP_LANG='de' is not one of en, ru; using 'en'" in text
+    assert "warning: PG_EXPLORER_MCP_PROFILE='admin'" in text
 
 
 def test_status_names_the_server_entry(unreachable_env: dict[str, str]) -> None:
     assert "server name: pg" in status_from_main(unreachable_env).splitlines()
-    assert "server name: pg-sales" in status_from_main(dict(unreachable_env, PG_MCP_NAME="pg-sales")).splitlines()
+    assert (
+        "server name: pg-sales" in status_from_main(dict(unreachable_env, PG_EXPLORER_MCP_NAME="pg-sales")).splitlines()
+    )
+
+
+def test_settings_written_by_pg_mcp_0_7_still_work_and_the_log_says_so(
+    unreachable_env: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    env = {key: value for key, value in unreachable_env.items() if key != "PG_EXPLORER_MCP_LANG"}
+    with caplog.at_level(logging.INFO):
+        text = status_from_main(dict(env, PG_MCP_NAME="pg-sales", PG_MCP_LANG="ru"))
+    assert "имя сервера: pg-sales" in text.splitlines()
+    assert "язык: ru" in text
+    assert "old setting names PG_MCP_LANG, PG_MCP_NAME; install.py writes the new ones" in caplog.text
+
+
+def test_a_new_setting_name_wins_over_its_old_twin(unreachable_env: dict[str, str]) -> None:
+    text = status_from_main(dict(unreachable_env, PG_MCP_NAME="pg-old", PG_EXPLORER_MCP_NAME="pg-new"))
+    assert "server name: pg-new" in text.splitlines()

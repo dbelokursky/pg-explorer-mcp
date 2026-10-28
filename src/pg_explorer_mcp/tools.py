@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
-from . import __version__
+from . import __version__, diagram
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, number, plural, t
@@ -34,13 +34,22 @@ SEARCH_LIMIT = 100
 
 # Tools per group profile, from structure only to free read-only SQL (ADR 0002).
 PROFILES: dict[str, tuple[str, ...]] = {
-    "schema": ("status", "list_tables", "search_schema", "describe_table"),
-    "explore": ("status", "list_tables", "search_schema", "describe_table", "sample_rows", "explain_query"),
+    "schema": ("status", "list_tables", "search_schema", "describe_table", "schema_diagram"),
+    "explore": (
+        "status",
+        "list_tables",
+        "search_schema",
+        "describe_table",
+        "schema_diagram",
+        "sample_rows",
+        "explain_query",
+    ),
     "analyst": (
         "status",
         "list_tables",
         "search_schema",
         "describe_table",
+        "schema_diagram",
         "sample_rows",
         "explain_query",
         "run_select",
@@ -94,7 +103,8 @@ LIST_TABLES_SQL = (
     + 'ORDER BY n.nspname COLLATE "C", c.relname COLLATE "C"\nLIMIT :limit'
 )
 
-SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1\nLIMIT 50"
+ALL_SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1"
+SCHEMAS_SQL = ALL_SCHEMAS_SQL + "\nLIMIT 50"
 
 # Whether a schema holds a table or view at all, readable or not. One that holds none was guessed,
 # "public" most often; one whose tables the role cannot read was not, and it is refused as before.
@@ -165,7 +175,8 @@ SEARCH_SQL = (
 )
 
 # On a stand the catalog is read through any login of the database, so instead of that
-# login's privileges the queries keep to the schemas the registry has logins for.
+# login's privileges the queries keep to the schemas the registry has logins for. A database
+# one login reads as a whole is read with the queries above instead: its privileges decide.
 _PRIVILEGE = "  AND has_table_privilege(c.oid, 'SELECT')\n"
 _REGISTRY_RELATIONS = _READABLE_RELATIONS.replace(_PRIVILEGE, "  AND n.nspname = ANY (CAST(:schemas AS text[]))\n")
 LIST_TABLES_IN_SCHEMAS_SQL = LIST_TABLES_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
@@ -291,8 +302,8 @@ class Tool:
 
 
 def profile_from_env(env: Mapping[str, str]) -> tuple[str, str | None]:
-    """The profile PG_MCP_PROFILE names, and a warning when the value is unusable."""
-    raw = env.get("PG_MCP_PROFILE") or DEFAULT_PROFILE
+    """The profile PG_EXPLORER_MCP_PROFILE names, and a warning when the value is unusable."""
+    raw = env.get("PG_EXPLORER_MCP_PROFILE") or DEFAULT_PROFILE
     if raw.strip().lower() in PROFILES:
         return raw.strip().lower(), None
     return STRICTEST_PROFILE, t("warning.profile", value=raw, choices=", ".join(PROFILES), fallback=STRICTEST_PROFILE)
@@ -357,6 +368,18 @@ def build_tools(
             properties={"table": table_argument, "schema": schema_argument},
             required=("table",),
             handler=lambda args: describe_table(db, args.get("table"), args.get("schema")),
+        ),
+        Tool(
+            name="schema_diagram",
+            title=t("tool.schema_diagram.title"),
+            description=t("tool.schema_diagram.description"),
+            properties={
+                "schema": {"type": "string", "description": t("argument.schema_diagram")},
+                **diagram_properties(),
+            },
+            handler=lambda args: schema_diagram(
+                db, args.get("schema"), args.get("table"), args.get("depth"), args.get("columns"), budget=budget
+            ),
         ),
         Tool(
             name="sample_rows",
@@ -552,6 +575,73 @@ def sample_rows(db: Database, table: Any, schema: Any, columns: Any, limit: Any)
     return [f"{schema_name}.{relation}:", *_format_rows(names, rows, more=more)]
 
 
+def diagram_properties() -> dict[str, Any]:
+    """The arguments of schema_diagram besides the schema, which a stand takes with its login."""
+    return {
+        "table": {"type": "string", "description": t("argument.table_diagram")},
+        "depth": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": diagram.DEPTH_LIMIT,
+            "description": t("argument.depth", limit=diagram.DEPTH_LIMIT, default=diagram.DEPTH_DEFAULT),
+        },
+        "columns": {"type": "string", "enum": list(diagram.DETAILS), "description": t("argument.columns_diagram")},
+    }
+
+
+def schema_diagram(
+    db: Database, schema: Any, table: Any, depth: Any, columns: Any, *, budget: int = DEFAULT_BUDGET
+) -> list[str]:
+    """Mermaid erDiagram of a schema, or of one table with its neighbours by foreign keys; the data is not read.
+
+    The answer has to fit the budget whole, since a cut diagram does not render: when it would not,
+    the columns go first, then the keys, and a diagram that does not fit even so is an error that
+    says how to ask for a part of it.
+    """
+    detail = _detail(columns)
+    hops = _whole_number(depth, "depth", diagram.DEPTH_DEFAULT, 0, diagram.DEPTH_LIMIT)
+    if table not in (None, ""):
+        oid, schema_name, relation = _resolve_relation(db, table, schema or None)[:3]
+        model = diagram.around(db, oid, schema_name, relation, hops)
+        name = f"{schema_name}.{relation}"
+        if hops:
+            what = t("diagram.of_table", table=name, hops=plural("diagram.hops", hops))
+        else:
+            what = t("diagram.of_table_alone", table=name)
+    else:
+        if not isinstance(schema, str) or not schema.strip():
+            raise ToolError(t("diagram.need_schema", visible=_visible_schemas(db)))
+        name = schema.strip().strip('"')
+        model = diagram.of_schema(db, name)
+        if not model.tables:
+            raise ToolError(_closed_schema(db, name))
+        what = t("diagram.of_schema", schema=name)
+    tables = plural("diagram.tables", len(model.tables))
+    relationships = plural("diagram.relationships", len(model.foreign_keys))
+    summary = t("diagram.summary", what=what, tables=tables, relationships=relationships)
+    for level in diagram.DETAILS[diagram.DETAILS.index(detail) :]:
+        notes = [summary]
+        if level != detail:
+            notes.append(t("diagram.columns_cut" if level == diagram.KEYS else "diagram.keys_cut"))
+        lines = diagram.render(model, level, notes)
+        if len("\n".join(lines)) <= budget:
+            return lines
+    raise ToolError(t("diagram.too_big", budget=budget, tables=tables, relationships=relationships))
+
+
+def _detail(columns: Any) -> str:
+    """How much of the columns a diagram shows: the keys unless asked for every column or none."""
+    if columns in (None, ""):
+        return diagram.KEYS
+    if isinstance(columns, str) and columns.strip().lower() in diagram.DETAILS:
+        return columns.strip().lower()
+    raise ToolError(t("diagram.columns_mode"))
+
+
+def _visible_schemas(db: Database) -> str:
+    return ", ".join(str(row[0]) for row in db.query(SCHEMAS_SQL)) or t("error.none")
+
+
 def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str] | None = None) -> list[str]:
     if check_read_only(query) not in ROW_SOURCES:
         raise ToolError(t("error.explain_row_sources"))
@@ -634,9 +724,9 @@ def missing_table_hint(db: Database, error: QueryFailedError, schemas: Sequence[
         return str(error)
     name = found.group(1).split(".")[-1]
     try:
-        rows = _relations_named(db, name, schemas)
+        rows = relations_named(db, name, schemas)
         if not rows and name != name.lower():
-            rows = _relations_named(db, name.lower(), schemas)
+            rows = relations_named(db, name.lower(), schemas)
     except (QueryFailedError, DatabaseUnavailableError):
         return str(error)  # the hint is a courtesy: the error itself still has to reach the model
     if not rows:
@@ -646,7 +736,8 @@ def missing_table_hint(db: Database, error: QueryFailedError, schemas: Sequence[
     return t("error.table_elsewhere", error=error, tables=", ".join(f"{row[1]}.{row[2]}" for row in rows))
 
 
-def _relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> list[Sequence[Any]]:
+def relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> list[Sequence[Any]]:
+    """The readable relations of that name in any schema, or on a stand those in the registry's schemas."""
     if schemas is None:
         return db.query(FIND_RELATION_SQL, name=name, schema=None)
     return db.query(FIND_RELATION_IN_SCHEMAS_SQL, name=name, schema=None, schemas=list(schemas))

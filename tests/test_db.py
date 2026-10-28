@@ -1,6 +1,6 @@
 """Integration tests against a real PostgreSQL.
 
-Run them with PG_MCP_IT=1 and the usual PG* variables pointing at a database
+Run them with PG_EXPLORER_MCP_IT=1 and the usual PG* variables pointing at a database
 where the tests may create and drop the schemas mcp_it, mcp_it_archive and
 mcp_it_role and the roles mcp_it_agent and mcp_it_login.
 """
@@ -20,9 +20,9 @@ import pg8000.exceptions
 import pg8000.native
 import pytest
 
-from pg_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
-from pg_mcp.querylog import QueryLog
-from pg_mcp.tools import Tool, ToolError, build_tools
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_explorer_mcp.querylog import QueryLog
+from pg_explorer_mcp.tools import Tool, ToolError, build_tools
 from tests.helpers import ROOT
 
 pytestmark = pytest.mark.integration
@@ -121,8 +121,9 @@ class TestStructure:
         assert "database: connected" in text
         assert "read only = on" in text
         assert (
-            "profile: explore (status, list_tables, search_schema, describe_table, sample_rows, explain_query)" in text
-        )
+            "profile: explore (status, list_tables, search_schema, describe_table, schema_diagram, sample_rows, "
+            "explain_query)"
+        ) in text
 
     def test_list_tables_shows_tables_views_estimates_and_comments(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["list_tables"], schema=SCHEMA) == [
@@ -169,6 +170,38 @@ class TestStructure:
         ]
         assert lines[9] == "indexes:"
         assert f"  CREATE INDEX orders_customer_idx ON {SCHEMA}.orders USING btree (customer_id)" in lines[10:]
+
+    def test_schema_diagram_draws_keys_and_foreign_keys(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["schema_diagram"], schema=SCHEMA) == [
+            "erDiagram",
+            f"  %% schema {SCHEMA}: 3 tables, 1 relationship",
+            "  customers {",
+            "    integer id PK",
+            "    text email UK",
+            "  }",
+            "  orders {",
+            "    integer id PK",
+            "    integer customer_id FK",
+            "  }",
+            '  "заказы" {',
+            "    integer номер PK",
+            "  }",
+            "  orders }o--|| customers : customer_id",
+        ]
+        around = lines_of(tools["schema_diagram"], table="orders", schema=SCHEMA, depth=1, columns="all")
+        assert around[1] == f"  %% {SCHEMA}.orders and its neighbours within 1 foreign key: 2 tables, 1 relationship"
+        assert around[6:11] == [
+            "  orders {",
+            "    integer id PK",
+            '    integer customer_id FK "Покупатель"',
+            "    numeric total",
+            "    text note",
+        ]
+        assert lines_of(tools["schema_diagram"], schema=ARCHIVE) == [
+            "erDiagram",
+            f"  %% schema {ARCHIVE}: 1 table, 0 relationships",
+            "  orders",
+        ]
 
     def test_describe_table_lists_tables_that_reference_it(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["describe_table"], table="customers", schema=SCHEMA)
@@ -302,6 +335,7 @@ class TestData:
             "SELECT set_config('default_transaction_read_only', 'off', false)",
             f"SELECT 1; DROP TABLE {SCHEMA}.orders",
             f"SELECT * FROM {SCHEMA}.orders FOR UPDATE",
+            'SELECT U&"pg\\005fterminate\\005fbackend"(pg_backend_pid())',  # pg_terminate_backend, escaped
         ],
     )
     def test_run_select_refuses_every_kind_of_write(self, analyst: dict[str, Tool], query: str) -> None:
@@ -419,7 +453,7 @@ class TestDefences:
             db.query("SELECT 1; COMMIT; SELECT 2")
 
     def test_a_slow_statement_is_cancelled_by_postgresql(self) -> None:
-        database = Database(env_with(PG_MCP_STATEMENT_TIMEOUT_MS="200"))
+        database = Database(env_with(PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS="200"))
         try:
             with pytest.raises(QueryFailedError, match="statement timeout"):
                 database.read_only(SLOW_STATEMENT, 1, cursor=True)
@@ -429,7 +463,7 @@ class TestDefences:
 
     def test_the_socket_outwaits_the_statement_timeout(self) -> None:
         """A short socket timeout must not cut a running statement, or it would be run again."""
-        database = Database(env_with(PG_MCP_SOCKET_TIMEOUT_S="1", PG_MCP_STATEMENT_TIMEOUT_MS="2500"))
+        database = Database(env_with(PG_EXPLORER_MCP_SOCKET_TIMEOUT_S="1", PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS="2500"))
         try:
             started = time.monotonic()
             with pytest.raises(QueryFailedError, match="statement timeout"):
@@ -440,7 +474,7 @@ class TestDefences:
 
     def test_lost_connection_is_reopened(self, db: Database, admin: pg8000.native.Connection) -> None:
         db.server_info()
-        admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-mcp'")
+        admin.run("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'pg-explorer-mcp'")
         assert db.server_info()["read_only"] == "on"
 
 
@@ -579,6 +613,22 @@ def test_the_server_can_be_reached_through_its_unix_socket(admin: pg8000.native.
     text = status_with(PGHOST=directory)
     assert f"target: {Settings.from_env(os.environ).user}@{directory}:{port}/" in text
     assert "database: connected to" in text
+
+
+class TestSeveralHosts:
+    """PGHOST may list several hosts: the server tries them in turn and keeps the first that lets it in."""
+
+    def test_a_dead_first_host_only_costs_the_time_to_refuse(self, unreachable_env: dict[str, str]) -> None:
+        dead, live = unreachable_env["PGPORT"], Settings.from_env(os.environ)
+        text = status_with(PGHOST=f"127.0.0.1,{live.host}", PGPORT=f"{dead},{live.port}")
+        assert f"@127.0.0.1:{dead},{live.host}:{live.port}/" in text
+        assert "database: connected to" in text
+
+    def test_every_dead_host_is_named(self, unreachable_env: dict[str, str]) -> None:
+        dead = unreachable_env["PGPORT"]
+        text = status_with(PGHOST="127.0.0.1,127.0.0.1", PGPORT=dead)
+        assert "None of the hosts let the login in." in text
+        assert text.count(f"Nothing accepts connections at 127.0.0.1:{dead}") == 2
 
 
 class TestConnectionHints:

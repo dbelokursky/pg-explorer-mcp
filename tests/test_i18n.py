@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from pg_mcp import i18n, tools
-from pg_mcp.budget import fit_to_budget
-from pg_mcp.db import Database
-from pg_mcp.protocol import Server
-from pg_mcp.sqlguard import (
+from pg_explorer_mcp import i18n, tools
+from pg_explorer_mcp.budget import fit_to_budget
+from pg_explorer_mcp.db import Database
+from pg_explorer_mcp.protocol import Server
+from pg_explorer_mcp.sqlguard import (
     FORBIDDEN_FRAGMENTS,
     FORBIDDEN_FUNCTIONS,
     FORBIDDEN_PREFIXES,
@@ -21,11 +21,11 @@ from pg_mcp.sqlguard import (
     SqlRejectedError,
     check_read_only,
 )
-from pg_mcp.tools import RELATION_KINDS, Tool, ToolError, build_tools
+from pg_explorer_mcp.tools import RELATION_KINDS, Tool, ToolError, build_tools
 from tests.helpers import ROOT, rpc
 
 PLURAL_SUFFIX = re.compile(r"\.(one|few|many|other)$")
-SOURCES = [*sorted((ROOT / "src" / "pg_mcp").glob("*.py")), ROOT / "install.py"]
+SOURCES = [*sorted((ROOT / "src" / "pg_explorer_mcp").glob("*.py")), ROOT / "install.py"]
 # t("key") and plural("key", n): the texts the code asks for by name.
 REQUESTED = re.compile(r"""\b(t|plural)\(\s*"([\w.]+)"\s*[,)]""")
 # Any string literal shaped like a key, including keys kept in tables and conditionals.
@@ -97,11 +97,11 @@ class TestChoosingTheLanguage:
         ("env", "system", "expected"),
         [
             ({}, None, ("en", None)),
-            ({"PG_MCP_LANG": "ru"}, None, ("ru", None)),
-            ({"PG_MCP_LANG": " RU "}, None, ("ru", None)),
-            ({"PG_MCP_LANG": "ru_RU.UTF-8"}, None, ("ru", None)),
-            ({"PG_MCP_LANG": "en-US", "LANG": "ru_RU.UTF-8"}, None, ("en", None)),
-            ({"PG_MCP_LANG": "de"}, "ru_RU", ("en", "de")),
+            ({"PG_EXPLORER_MCP_LANG": "ru"}, None, ("ru", None)),
+            ({"PG_EXPLORER_MCP_LANG": " RU "}, None, ("ru", None)),
+            ({"PG_EXPLORER_MCP_LANG": "ru_RU.UTF-8"}, None, ("ru", None)),
+            ({"PG_EXPLORER_MCP_LANG": "en-US", "LANG": "ru_RU.UTF-8"}, None, ("en", None)),
+            ({"PG_EXPLORER_MCP_LANG": "de"}, "ru_RU", ("en", "de")),
             ({"LANG": "ru_RU.UTF-8"}, None, ("ru", None)),
             ({"LANG": "en_RU.UTF-8"}, None, ("en", None)),
             ({"LC_ALL": "C.UTF-8", "LANG": "ru_RU.UTF-8"}, None, ("en", None)),

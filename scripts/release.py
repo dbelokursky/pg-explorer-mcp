@@ -3,10 +3,10 @@
 
     python3 scripts/release.py version [--tag v0.7.0]   the version, once every file that holds it agrees
     python3 scripts/release.py notes                    the CHANGELOG.md section of that version
-    python3 scripts/release.py check pg-mcp-0.7.0.zip   unpack the archive and start the server from it
+    python3 scripts/release.py check pg-explorer-mcp-0.7.0.zip   unpack the archive and start the server from it
 
 .github/workflows/release.yml runs these when a tag is pushed. The version lives in pyproject.toml,
-src/pg_mcp/__init__.py, both extension manifests and the first versioned heading of CHANGELOG.md
+src/pg_explorer_mcp/__init__.py, both extension manifests and the first versioned heading of CHANGELOG.md
 (tests/test_version.py keeps them in step), and the tag must be v<version>. The check does what a
 user without git does: unpacks the archive on its own, away from the checkout, and runs
 `install.py --check` from the folder against a port where nothing listens. The server must start
@@ -30,18 +30,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 # The archive unpacks into this folder whatever the version: an update replaces the folder, and the
-# path in the agent settings and the extension link stay valid.
-FOLDER = "pg-mcp"
+# path in the agent settings and the extension link stay valid. 0.8.0 renamed it once, from pg-mcp (ADR 0007).
+FOLDER = "pg-explorer-mcp"
 # Without these a user cannot install, run or link the extension; the rest of the tree is git's business.
 REQUIRED = (
     "run.py",
     "install.py",
-    "src/pg_mcp/__init__.py",
-    "src/pg_mcp/_vendor/pg8000/__init__.py",
+    "src/pg_explorer_mcp/__init__.py",
+    "src/pg_explorer_mcp/_vendor/pg8000/__init__.py",
     "scripts/check_vendor.py",
     "gigacode-extension.json",
     "qwen-extension.json",
-    "pg-mcp-context.md",
+    "pg-explorer-mcp-context.md",
     "commands/pg/setup.md",
     "README.md",
     "README.ru.md",
@@ -57,7 +57,9 @@ def versions(root: Path = ROOT) -> dict[str, str]:
     """The version each file declares; for CHANGELOG.md, its first versioned heading."""
     found = {
         "pyproject.toml": _first(root / "pyproject.toml", r'^version = "([^"]+)"'),
-        "src/pg_mcp/__init__.py": _first(root / "src" / "pg_mcp" / "__init__.py", r'^__version__ = "([^"]+)"'),
+        "src/pg_explorer_mcp/__init__.py": _first(
+            root / "src" / "pg_explorer_mcp" / "__init__.py", r'^__version__ = "([^"]+)"'
+        ),
         "CHANGELOG.md": _first(root / "CHANGELOG.md", r"^## (\d+\.\d+\.\d+)(?=\s)"),
     }
     for manifest in ("gigacode-extension.json", "qwen-extension.json"):
@@ -93,14 +95,14 @@ def check(archive: Path) -> list[str]:
             for name in NOT_FOR_USERS
             if any(path.partition("/")[0] == name for path in inside)
         ]
-        labelled = re.fullmatch(r"pg-mcp-(.+)\.zip", archive.name)
+        labelled = re.fullmatch(r"pg-explorer-mcp-(.+)\.zip", archive.name)
         if labelled and "qwen-extension.json" in inside:
             version = json.loads(zipped.read(f"{FOLDER}/qwen-extension.json"))["version"]
             if version != labelled.group(1):
                 problems.append(f"{archive.name} holds version {version}")
         if problems:
             return problems
-        with tempfile.TemporaryDirectory(prefix="pg-mcp-release-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="pg-explorer-mcp-release-") as temporary:
             zipped.extractall(temporary)
             folder = Path(temporary, FOLDER).resolve()
             return starts(folder) + vendor_intact(folder)

@@ -1,5 +1,8 @@
 # Keeps CI actions and development tools fresh. The vendored runtime packages in
-# src/pg_mcp/_vendor are updated by hand, as src/pg_mcp/_vendor/README.md describes.
+# src/pg_explorer_mcp/_vendor are updated by hand, as src/pg_explorer_mcp/_vendor/README.md describes:
+# a pip entry here would only bump their requirements.txt, and scripts/check_vendor.py
+# would fail that pull request. Dependabot alerts cover them all the same: the
+# dependency graph reads that requirements.txt without any entry in this file.
 # Dependabot reads this file from the default branch, main, which holds releases;
 # its pull requests go to develop, like every other change.
 version: 2
@@ -18,7 +21,7 @@ updates:
       dev-tools:
         patterns: ["*"]
     ignore:
-      # From mypy 1.20 and pytest 9 on, both need Python 3.10, and pg-mcp still supports 3.9
+      # From mypy 1.20 and pytest 9 on, both need Python 3.10, and pg-explorer-mcp still supports 3.9
       # (ADR 0003): uv cannot resolve them for the 3.9 branch of uv.lock, so Dependabot would fail.
       - dependency-name: mypy
         versions: [">=1.20"]

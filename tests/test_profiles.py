@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from pg_mcp.db import Database
-from pg_mcp.tools import PROFILES, Tool, build_tools, profile_from_env
+from pg_explorer_mcp.db import Database
+from pg_explorer_mcp.tools import PROFILES, Tool, build_tools, profile_from_env
 from tests.helpers import ROOT
 
 
@@ -15,22 +15,22 @@ def tools_for(profile: str, warning: str | None = None) -> dict[str, Tool]:
 
 @pytest.mark.parametrize(
     ("env", "expected"),
-    [({}, ("explore", None)), ({"PG_MCP_PROFILE": " Analyst "}, ("analyst", None))],
+    [({}, ("explore", None)), ({"PG_EXPLORER_MCP_PROFILE": " Analyst "}, ("analyst", None))],
 )
 def test_profile_comes_from_the_environment(env: dict[str, str], expected: tuple[str, None]) -> None:
     assert profile_from_env(env) == expected
 
 
 def test_unknown_profile_falls_back_to_the_strictest_with_a_warning() -> None:
-    profile, warning = profile_from_env({"PG_MCP_PROFILE": "admin"})
+    profile, warning = profile_from_env({"PG_EXPLORER_MCP_PROFILE": "admin"})
     assert profile == "schema"
     assert warning is not None
-    assert "PG_MCP_PROFILE='admin'" in warning
+    assert "PG_EXPLORER_MCP_PROFILE='admin'" in warning
     status = tools_for(profile, warning)["status"].call({})
-    assert "profile: schema (status, list_tables, search_schema, describe_table)" in status
+    assert "profile: schema (status, list_tables, search_schema, describe_table, schema_diagram)" in status
     # Said in the answer too, which no size limit binds: a model told "read only = on" still offered to delete.
     assert "access: read only. Nothing can be inserted, changed or deleted through this server" in status
-    assert "warning: PG_MCP_PROFILE='admin'" in status
+    assert "warning: PG_EXPLORER_MCP_PROFILE='admin'" in status
 
 
 @pytest.mark.parametrize(("profile", "names"), PROFILES.items())

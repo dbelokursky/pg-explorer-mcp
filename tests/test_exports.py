@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from pg_mcp import exports
-from pg_mcp.exports import Connection, Export, ExportRefusedError
+from pg_explorer_mcp import exports
+from pg_explorer_mcp.exports import Connection, Export, ExportRefusedError
 from tests.test_imports import dbeaver_workspace, postgres
 
 BILLING = Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orders", "billing", None)
@@ -24,16 +24,19 @@ ITEMS = [BILLING, SHIPPING, IFT]
 VERIFIED = Connection(
     "dev9", "orders", "billing", "h", 5432, "orders", "billing", "verify-full", "/etc/my certs/ca.pem"
 )
+# Stands with two hosts: each with a port of its own, and both on one port.
+TWO = Connection("ift1", "orders", "billing", "h1", 6544, "orders", "billing", None, more_hosts=(("h2", 6545),))
+SAME = Connection("ift2", "orders", "billing", "h1", 6544, "orders", "billing", None, more_hosts=(("h2", 6544),))
 
 
 def registry(tmp_path: Path, text: str, service: str | None = None) -> dict[str, str]:
-    """PG_MCP_STANDS_FILE with this text and PGSERVICEFILE with the other, if any."""
+    """PG_EXPLORER_MCP_STANDS_FILE with this text and PGSERVICEFILE with the other, if any."""
     path = tmp_path / "stands.conf"
     path.write_text(text, encoding="utf-8")
     service_path = tmp_path / "service.conf"
     if service is not None:
         service_path.write_text(service, encoding="utf-8")
-    return {"PG_MCP_STANDS_FILE": str(path), "PGSERVICEFILE": str(service_path)}
+    return {"PG_EXPLORER_MCP_STANDS_FILE": str(path), "PGSERVICEFILE": str(service_path)}
 
 
 def parse(text: str) -> ET.Element:
@@ -104,14 +107,61 @@ class TestConnections:
         assert exports.connections(env)[0] == [VERIFIED]
 
 
+class TestSeveralHosts:
+    """A stand with several hosts: every tool gets as many of them as it can take."""
+
+    def test_the_registry_gives_each_host_its_port(self, tmp_path: Path) -> None:
+        env = registry(
+            tmp_path,
+            "[ift1.orders.billing]\nhost=h1,h2\nport=6544,6545\n\n[ift2.orders.billing]\nhost=h1, h2\nport=6544\n",
+        )
+        items, _ = exports.connections(env)
+        assert items == [TWO, SAME]
+        assert (items[0].hosts, items[1].hosts) == ((("h1", 6544), ("h2", 6545)), (("h1", 6544), ("h2", 6544)))
+
+    def test_libpq_and_pgjdbc_take_every_host(self) -> None:
+        assert exports.jdbc_url(TWO) == "jdbc:postgresql://h1:6544,h2:6545/orders"
+        assert exports.pg_service([TWO, SAME], "") == (
+            "# pg-explorer-mcp export\n[ift1.orders.billing]\nhost=h1,h2\nport=6544,6545\ndbname=orders\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
+            "\n# pg-explorer-mcp export\n[ift2.orders.billing]\nhost=h1,h2\nport=6544\ndbname=orders\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
+        )
+
+    def test_dbeaver_gets_the_hosts_the_way_it_writes_them(self) -> None:
+        connections = json.loads(exports.dbeaver([TWO, SAME]))["connections"]
+        two = connections[f"postgres-jdbc-pg-mcp-{TWO.uid()}"]["configuration"]
+        assert (two["host"], two["port"], two["url"]) == (
+            "h1:6544,h2",
+            "6545",
+            "jdbc:postgresql://h1:6544,h2:6545/orders",
+        )
+        same = connections[f"postgres-jdbc-pg-mcp-{SAME.uid()}"]["configuration"]
+        assert (same["host"], same["port"]) == ("h1:6544,h2", "6544")
+
+    def test_a_dbeaver_connection_with_the_same_hosts_is_left_out(self, tmp_path: Path) -> None:
+        entry = postgres("ift", "H1:6544,h2", "orders", user="billing", port="6544")
+        folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": entry}, {})
+        assert exports.prepare("dbeaver", [SAME, TWO], {}, tmp_path, workspace=folder).items == [TWO]
+
+    def test_tools_with_one_port_field_take_every_host_only_when_the_port_is_shared(self) -> None:
+        servers = json.loads(exports.pgadmin([SAME, TWO], "/p"))["Servers"]
+        assert (servers["1"]["Host"], servers["1"]["Port"]) == ("h1,h2", 6544)
+        assert (servers["2"]["Host"], servers["2"]["Port"]) == ("h1", 6544)
+        pgsql = exports.vscode_pgsql([SAME, TWO], {})["pgsql.connections"]
+        assert [(entry["server"], entry["port"]) for entry in pgsql] == [("h1,h2", "6544"), ("h1", "6544")]
+        [sqltools] = exports.sqltools([SAME], {})["sqltools.connections"]
+        assert (sqltools["server"], sqltools["port"]) == ("h1", 6544)  # node-postgres takes one host
+
+
 class TestPgService:
     def test_sections_for_psql_under_the_export_line_with_the_schema_first(self) -> None:
         assert exports.pg_service([BILLING, SHIPPING, VERIFIED], "") == (
-            "# pg-mcp export\n[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\nuser=billing\n"
-            "options=-c search_path=billing,public\n"
-            "\n# pg-mcp export\n[dev7.orders.shipping]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
+            "# pg-explorer-mcp export\n[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
+            "\n# pg-explorer-mcp export\n[dev7.orders.shipping]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
             "user=shipping_ro\nsslmode=require\noptions=-c search_path=shipping,public\n"
-            "\n# pg-mcp export\n[dev9.orders.billing]\nhost=h\nport=5432\ndbname=orders\nuser=billing\n"
+            "\n# pg-explorer-mcp export\n[dev9.orders.billing]\nhost=h\nport=5432\ndbname=orders\nuser=billing\n"
             "sslmode=verify-full\nsslrootcert=/etc/my certs/ca.pem\noptions=-c search_path=billing,public\n"
         )
 
@@ -122,20 +172,29 @@ class TestPgService:
         earlier += "\n# the reporting replica\n[replica]\nhost=replica\n"  # the user's, after the export
         assert exports.pg_service([BILLING], earlier) == (
             "# my services\n[reports]\nhost=rep\n"
-            "\n# pg-mcp export\n[ift2.orders.billing]\nhost=ift2-db.example\nport=6432\ndbname=orders_ift\n"
+            "\n# pg-explorer-mcp export\n[ift2.orders.billing]\nhost=ift2-db.example\nport=6432\ndbname=orders_ift\n"
             "user=billing\noptions=-c search_path=billing,public\n"
             "\n# the reporting replica\n[replica]\nhost=replica\n"
-            "\n# pg-mcp export\n[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
+            "\n# pg-explorer-mcp export\n[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
             "user=billing\noptions=-c search_path=billing,public\n"
         )
         assert exports.pg_service([BILLING], "[reports]\nhost=rep\n\n\n").startswith(
-            "[reports]\nhost=rep\n\n# pg-mcp export\n[dev7.orders.billing]\n"  # one empty line, however many before
+            # one empty line, however many before
+            "[reports]\nhost=rep\n\n# pg-explorer-mcp export\n[dev7.orders.billing]\n"
+        )
+
+    def test_a_section_pg_mcp_0_7_exported_is_replaced_under_the_new_line(self) -> None:
+        earlier = "# my services\n[reports]\nhost=rep\n\n# pg-mcp export\n[dev7.orders.billing]\nhost=old\n"
+        assert exports.pg_service([BILLING], earlier) == (
+            "# my services\n[reports]\nhost=rep\n"
+            "\n# pg-explorer-mcp export\n[dev7.orders.billing]\nhost=dev7-db.example\nport=5432\ndbname=orders\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
         )
 
     def test_the_export_line_tells_the_sections_apart(self) -> None:
         text = (
-            "[DEV7.orders.billing]\nhost=mine\n\n# pg-mcp export\n[dev8.orders.billing]\nhost=h\n"
-            "\n# pg-mcp export\n\n[dev9.orders.billing]\nhost=h\n[reports]\nhost=r\n"
+            "[DEV7.orders.billing]\nhost=mine\n\n# pg-explorer-mcp export\n[dev8.orders.billing]\nhost=h\n"
+            "\n# pg-explorer-mcp export\n\n[dev9.orders.billing]\nhost=h\n[reports]\nhost=r\n"
         )
         assert exports.service_sections(text) == {
             "dev7.orders.billing": False,  # the user's, whatever the case of the stand
@@ -156,7 +215,7 @@ class TestPgService:
         assert export.items == [IFT]
         assert export.notes == [f"left out, already in {tmp_path / 'service.conf'}: 1"]
         [(_, text)] = export.files
-        assert text.startswith(mine + "\n# pg-mcp export\n[ift2.orders.billing]\n")
+        assert text.startswith(mine + "\n# pg-explorer-mcp export\n[ift2.orders.billing]\n")
 
     def test_the_sections_read_from_the_service_file_itself_are_left_out(self, tmp_path: Path) -> None:
         env = registry(
@@ -169,7 +228,9 @@ class TestPgService:
         assert export.notes == [f"left out, already in {service}: 1"]
         [(path, text)] = export.files
         assert path == service
-        assert text.startswith("# mine\n[dev8.crm.sales]\nhost=dev8-db\n\n# pg-mcp export\n[dev7.orders.billing]\n")
+        assert text.startswith(
+            "# mine\n[dev8.crm.sales]\nhost=dev8-db\n\n# pg-explorer-mcp export\n[dev7.orders.billing]\n"
+        )
         assert export.next_step.startswith('Connect with psql "service=dev7.orders.billing"')
 
     def test_the_registry_does_not_take_exported_sections_for_stands(self, tmp_path: Path) -> None:
@@ -579,11 +640,14 @@ class TestPreviewAndWrite:
     def test_a_new_text_that_cannot_be_written_changes_nothing(self, tmp_path: Path) -> None:
         path = tmp_path / "settings.json"
         path.write_text("old\n", encoding="utf-8")
-        (tmp_path / "settings.json.pg-mcp-new").mkdir()  # where the new text would go
+        (tmp_path / "settings.json.pg-explorer-mcp-new").mkdir()  # where the new text would go
         with pytest.raises(ExportRefusedError, match="cannot write"):
             exports.write(Export("sqltools", [], [(path, "new\n")], ""))
         assert path.read_text(encoding="utf-8") == "old\n"
-        assert sorted(child.name for child in tmp_path.iterdir()) == ["settings.json", "settings.json.pg-mcp-new"]
+        assert sorted(child.name for child in tmp_path.iterdir()) == [
+            "settings.json",
+            "settings.json.pg-explorer-mcp-new",
+        ]
 
     def test_a_file_that_cannot_be_replaced_stays_as_it_was(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -593,7 +657,7 @@ class TestPreviewAndWrite:
         replace = Path.replace
 
         def busy(self: Path, target: Path) -> Path:
-            if Path(target) == second and self.name.endswith(".pg-mcp-new"):
+            if Path(target) == second and self.name.endswith(".pg-explorer-mcp-new"):
                 raise PermissionError("the file is in use")
             return replace(self, target)
 

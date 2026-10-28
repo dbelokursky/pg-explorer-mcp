@@ -14,7 +14,7 @@ on:
       - scripts/release.py
       - tests/test_release.py
       - pyproject.toml
-      - src/pg_mcp/__init__.py
+      - src/pg_explorer_mcp/__init__.py
       - gigacode-extension.json
       - qwen-extension.json
       - CHANGELOG.md
@@ -55,19 +55,19 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          git archive --format=zip --prefix=pg-mcp/ --output="pg-mcp-$VERSION.zip" HEAD
-          sha256sum "pg-mcp-$VERSION.zip" | tee SHA256SUMS
+          git archive --format=zip --prefix=pg-explorer-mcp/ --output="pg-explorer-mcp-$VERSION.zip" HEAD
+          sha256sum "pg-explorer-mcp-$VERSION.zip" | tee SHA256SUMS
       - name: unpack the archive and start the server from it
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: python3 scripts/release.py check "pg-mcp-$VERSION.zip"
+        run: python3 scripts/release.py check "pg-explorer-mcp-$VERSION.zip"
       - name: release notes from CHANGELOG.md
         run: python3 scripts/release.py notes | tee release-notes.md
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: pg-mcp-${{ steps.version.outputs.version }}
+          name: pg-explorer-mcp-${{ steps.version.outputs.version }}
           path: |
-            pg-mcp-*.zip
+            pg-explorer-mcp-*.zip
             SHA256SUMS
             release-notes.md
           if-no-files-found: error
@@ -89,16 +89,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
-          name: pg-mcp-${{ needs.archive.outputs.version }}
+          name: pg-explorer-mcp-${{ needs.archive.outputs.version }}
       - name: attest where the archive was built (gh attestation verify checks it)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
-          subject-path: pg-mcp-${{ needs.archive.outputs.version }}.zip
+          subject-path: pg-explorer-mcp-${{ needs.archive.outputs.version }}.zip
       - name: create the release, or refresh the files of one that exists
         run: |
           if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" --clobber "pg-mcp-$VERSION.zip" SHA256SUMS
+            gh release upload "$TAG" --clobber "pg-explorer-mcp-$VERSION.zip" SHA256SUMS
           else
-            gh release create "$TAG" --verify-tag --title "pg-mcp $VERSION" --notes-file release-notes.md \
-              "pg-mcp-$VERSION.zip" SHA256SUMS
+            gh release create "$TAG" --verify-tag --title "pg-explorer-mcp $VERSION" --notes-file release-notes.md \
+              "pg-explorer-mcp-$VERSION.zip" SHA256SUMS
           fi

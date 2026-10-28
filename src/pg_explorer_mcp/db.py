@@ -2,7 +2,9 @@
 
 Connection settings come from the PG* environment variables and the password
 file that psql uses, so a user can check access with psql and the server picks
-up the same configuration. Failures are raised with a message that tells the
+up the same configuration. PGHOST may list several hosts separated by commas,
+with one port for all of them or one per host in PGPORT, and they are tried in
+turn, as libpq tries them. Failures are raised with a message that tells the
 model, and through it the user, what to fix.
 """
 
@@ -16,14 +18,16 @@ import socket
 import ssl
 import stat
 import sys
+import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pg8000.exceptions
 import pg8000.native
 
+from . import environment
 from .i18n import t
 
 # No route to the host: with the stands behind a VPN, the usual sign that the VPN is down.
@@ -61,19 +65,39 @@ class QueryFailedError(Exception):
 
 @dataclass
 class Counters:
-    """Statements run through read_only and the rows they returned, for the query log."""
+    """Statements run through read_only and the rows they returned, for the query log.
+
+    A call over several stands runs its statements in threads, so the counts are bumped under a lock.
+    """
 
     statements: int = 0
     rows: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def count(self, rows: int) -> None:
+        with self._lock:
+            self.statements += 1
+            self.rows += rows
+
+
+@dataclass(frozen=True)
+class Endpoint:
+    """One host of the settings, with its port and the password the password file holds for that host."""
+
+    host: str
+    port: int
+    password: str | None
+
+    @property
+    def address(self) -> str:
+        return f"{self.host}:{self.port}"
 
 
 @dataclass(frozen=True)
 class Settings:
-    host: str
-    port: int
+    endpoints: tuple[Endpoint, ...]  # the hosts in the order to try them; at least one
     database: str
     user: str
-    password: str | None
     sslmode: str
     sslrootcert: str | None
     statement_timeout_ms: int
@@ -85,29 +109,51 @@ class Settings:
     def from_env(cls, env: Mapping[str, str]) -> Settings:
         """Read libpq-style settings; ValueError explains a bad value."""
         user = env.get("PGUSER") or getpass.getuser()
-        host = env.get("PGHOST") or "localhost"
-        port = _int_setting(env, "PGPORT", 5432)
         database = env.get("PGDATABASE") or user
         sslmode = (env.get("PGSSLMODE") or "prefer").lower()
         if sslmode not in SSL_MODES:
             raise ValueError(t("db.bad_sslmode", value=sslmode, choices=", ".join(SSL_MODES)))
         passfile = pgpass_path(env)
+        password = env.get("PGPASSWORD")
+        # The password file is read per host, as libpq reads it: each host may have a line of its own.
+        endpoints = tuple(
+            Endpoint(host, port, password or read_pgpass(passfile, host, port, database, user))
+            for host, port in split_hosts(env.get("PGHOST") or "localhost", env.get("PGPORT") or "5432")
+        )
         return cls(
-            host=host,
-            port=port,
+            endpoints=endpoints,
             database=database,
             user=user,
-            password=env.get("PGPASSWORD") or read_pgpass(passfile, host, port, database, user),
             sslmode=sslmode,
             sslrootcert=env.get("PGSSLROOTCERT") or None,
-            statement_timeout_ms=_int_setting(env, "PG_MCP_STATEMENT_TIMEOUT_MS", DEFAULT_STATEMENT_TIMEOUT_MS),
+            statement_timeout_ms=_int_setting(
+                env, "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS", DEFAULT_STATEMENT_TIMEOUT_MS
+            ),
             passfile=passfile,
-            socket_timeout_s=_int_setting(env, "PG_MCP_SOCKET_TIMEOUT_S", SOCKET_TIMEOUT_S),
-            search_path=env.get("PG_MCP_SEARCH_PATH") or None,
+            socket_timeout_s=_int_setting(env, "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S", SOCKET_TIMEOUT_S),
+            search_path=env.get("PG_EXPLORER_MCP_SEARCH_PATH") or None,
         )
 
+    @property
+    def host(self) -> str:
+        """The first host: the only one of most settings."""
+        return self.endpoints[0].host
+
+    @property
+    def port(self) -> int:
+        return self.endpoints[0].port
+
+    @property
+    def password(self) -> str | None:
+        return self.endpoints[0].password
+
+    @property
+    def addresses(self) -> str:
+        """host:port of every host, separated by commas."""
+        return ",".join(endpoint.address for endpoint in self.endpoints)
+
     def describe(self) -> str:
-        return f"{self.user}@{self.host}:{self.port}/{self.database} (sslmode={self.sslmode})"
+        return f"{self.user}@{self.addresses}/{self.database} (sslmode={self.sslmode})"
 
 
 class Database:
@@ -119,7 +165,7 @@ class Database:
         self._config_error: str | None = None
         self._counters = counters or Counters()  # shared by all connections of a stands pool
         try:
-            self.settings = Settings.from_env(os.environ if env is None else env)
+            self.settings = Settings.from_env(environment.with_legacy_names(os.environ) if env is None else env)
         except ValueError as exc:
             self._config_error = str(exc)
 
@@ -137,11 +183,15 @@ class Database:
         return self.settings.describe()
 
     def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
-        """Run exactly one statement; :name placeholders take values from params."""
+        """Run exactly one statement in a transaction of its own; :name placeholders take values from params."""
         for attempt in (1, 2):
             conn = self._connection()
             try:
-                return _run_one_statement(conn, sql, params)
+                conn.execute_simple(transaction_start(self.settings))
+                try:
+                    return _run_one_statement(conn, sql, params)
+                finally:
+                    conn.execute_simple("ROLLBACK")
             except pg8000.exceptions.DatabaseError as exc:
                 raise _query_failed(exc) from exc
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
@@ -161,7 +211,7 @@ class Database:
         for attempt in (1, 2):
             conn = self._connection()
             try:
-                conn.execute_simple("BEGIN TRANSACTION READ ONLY")
+                conn.execute_simple(transaction_start(self.settings))
                 try:
                     if cursor:
                         conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
@@ -180,8 +230,7 @@ class Database:
             columns = [str(column["name"]) for column in context.columns or []]
             rows = list(context.rows or [])
             returned = rows[:max_rows]
-            self._counters.statements += 1
-            self._counters.rows += len(returned)
+            self._counters.count(len(returned))
             return columns, returned, len(rows) > max_rows
         raise AssertionError("unreachable")
 
@@ -211,59 +260,106 @@ class Database:
         settings = self.settings
         if settings is None:
             raise DatabaseUnavailableError(t("db.settings_invalid", error=self._config_error))
-        socket_dir = settings.host if settings.host.startswith("/") else None
-        attempts = _ssl_attempts(settings)
-        for number, ssl_context in enumerate(attempts, start=1):
+        # The hosts in turn, as libpq tries them: the session is on the first that lets the login in.
+        # The error names every host that did not, and host_down holds only when none of them answered.
+        failures: list[DatabaseUnavailableError] = []
+        for endpoint in settings.endpoints:
             try:
-                conn = pg8000.native.Connection(
-                    user=settings.user,
-                    password=settings.password,
-                    host=None if socket_dir else settings.host,
-                    port=settings.port,
-                    database=settings.database,
-                    unix_sock=str(Path(socket_dir) / f".s.PGSQL.{settings.port}") if socket_dir else None,
-                    ssl_context=ssl_context,
-                    timeout=connect_timeout(settings),
-                    application_name="pg-mcp",
-                )
-                break
-            except (pg8000.exceptions.Error, OSError) as exc:
-                # pg8000 wraps most socket errors, but not those of its TLS request.
-                down = _host_down(exc)
-                if down or number == len(attempts):  # a host that did not answer will not answer TLS either
-                    raise DatabaseUnavailableError(_explain_connect_failure(exc, settings), host_down=down) from exc
-            except AttributeError as exc:
-                # pg8000 1.31 reports a missing password for cleartext and MD5 logins,
-                # but SCRAM fails on None.decode() instead.
-                if settings.password is not None:
-                    raise
-                raise DatabaseUnavailableError(_password_hint(settings, t("db.password_unset"))) from exc
-        # Connecting waited connect_timeout(); a statement may run for statement_timeout_ms,
-        # so from here on the socket waits longer. pg8000 keeps the socket in _usock.
-        conn._usock.settimeout(socket_timeout(settings))
+                conn = _open(settings, endpoint)
+            except DatabaseUnavailableError as exc:
+                failures.append(exc)
+                continue
+            return _prepared(conn, settings)
+        every_host_down = all(failure.host_down for failure in failures)
+        if len(failures) == 1:
+            raise failures[0]
+        message = t("db.every_host_failed", failures="; ".join(str(failure) for failure in failures))
+        raise DatabaseUnavailableError(message, host_down=every_host_down) from failures[-1]
+
+
+def _open(settings: Settings, endpoint: Endpoint) -> pg8000.native.Connection:
+    """A connection to one host, or DatabaseUnavailableError with what went wrong there."""
+    socket_dir = endpoint.host if endpoint.host.startswith("/") else None
+    attempts = _ssl_attempts(settings)
+    for number, ssl_context in enumerate(attempts, start=1):
         try:
-            # Guardrails, not the security boundary: the role's privileges are.
-            conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
-            conn.run(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
-            if settings.search_path:
-                quoted = '"' + settings.search_path.replace('"', '""') + '"'
-                conn.run(f"SET search_path = {quoted}, public")
-        except pg8000.exceptions.Error as exc:
-            conn.close()
-            raise DatabaseUnavailableError(t("db.session_setup", error=exc)) from exc
-        return conn
+            conn = pg8000.native.Connection(
+                user=settings.user,
+                password=endpoint.password,
+                host=None if socket_dir else endpoint.host,
+                port=endpoint.port,
+                database=settings.database,
+                unix_sock=str(Path(socket_dir) / f".s.PGSQL.{endpoint.port}") if socket_dir else None,
+                ssl_context=ssl_context,
+                timeout=connect_timeout(settings),
+                application_name="pg-explorer-mcp",
+            )
+            break
+        except (pg8000.exceptions.Error, OSError) as exc:
+            # pg8000 wraps most socket errors, but not those of its TLS request.
+            down = _host_down(exc)
+            if down or number == len(attempts):  # a host that did not answer will not answer TLS either
+                raise DatabaseUnavailableError(
+                    _explain_connect_failure(exc, settings, endpoint), host_down=down
+                ) from exc
+        except AttributeError as exc:
+            # pg8000 1.31 reports a missing password for cleartext and MD5 logins,
+            # but SCRAM fails on None.decode() instead.
+            if endpoint.password is not None:
+                raise
+            raise DatabaseUnavailableError(_password_hint(settings, t("db.password_unset"))) from exc
+    return conn
+
+
+def _prepared(conn: pg8000.native.Connection, settings: Settings) -> pg8000.native.Connection:
+    """The connection with the session set up: read only, the statement timeout, the schema first."""
+    # Connecting waited connect_timeout(); a statement may run for statement_timeout_ms,
+    # so from here on the socket waits longer. pg8000 keeps the socket in _usock.
+    conn._usock.settimeout(socket_timeout(settings))
+    try:
+        # Guardrails, not the security boundary: the role's privileges are. Every transaction sets
+        # them again for itself (transaction_start), since a pooler may not keep the session.
+        conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+        conn.run(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
+        if settings.search_path:
+            conn.run(f"SET search_path = {_quote_ident(settings.search_path)}, public")
+    except pg8000.exceptions.Error as exc:
+        conn.close()
+        raise DatabaseUnavailableError(t("db.session_setup", error=exc)) from exc
+    return conn
 
 
 def _run_one_statement(conn: pg8000.native.Connection, sql: str, params: dict[str, Any]) -> list[Sequence[Any]]:
     # Always the extended query protocol, where PostgreSQL rejects a string with
     # several statements. pg8000's run() without parameters uses the simple
     # protocol instead, which executes "SELECT 1; COMMIT; DROP ..." in full.
-    statement = conn.prepare(sql)
-    try:
-        rows: list[Sequence[Any]] = statement.run(**params)
-    finally:
-        statement.close()
-    return rows
+    # The unnamed statement rather than a named one (prepare): a name is one more
+    # thing a pooler can lose between the messages of a call.
+    if params:
+        rows: list[Sequence[Any]] = conn.run(sql, **params)
+        return rows
+    return list(conn.execute_unnamed(sql).rows or [])
+
+
+def transaction_start(settings: Settings | None) -> str:
+    """BEGIN with the limits of the call set for that transaction alone, as one message.
+
+    A pooler in transaction mode between the server and PostgreSQL (pgbouncer, Odyssey) may serve each
+    transaction from another server session, or reset the session in between (DISCARD ALL): what was
+    SET when the connection was made is not there any more, and a prepared statement does not survive
+    from one message to the next. So every call is one transaction, which pins one session for all its
+    messages and carries its own limits.
+    """
+    statements = ["BEGIN TRANSACTION READ ONLY"]
+    if settings is not None:
+        statements.append(f"SET LOCAL statement_timeout = {int(settings.statement_timeout_ms)}")
+        if settings.search_path:
+            statements.append(f"SET LOCAL search_path = {_quote_ident(settings.search_path)}, public")
+    return "; ".join(statements)
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
 
 
 def connect_timeout(settings: Settings) -> int:
@@ -307,6 +403,25 @@ def pgpass_path(env: Mapping[str, str]) -> str:
     if sys.platform == "win32":
         return str(Path(env.get("APPDATA") or Path.home()) / "postgresql" / "pgpass.conf")
     return str(Path.home() / ".pgpass")
+
+
+def split_hosts(hosts: str, ports: str) -> list[tuple[str, int]]:
+    """Hosts paired with their ports the way libpq pairs PGHOST and PGPORT.
+
+    Both are comma-separated lists; a single port goes with every host, otherwise there is one per
+    host. An empty host means localhost. ValueError explains a port that is not a number, or a count
+    of ports that matches no host.
+    """
+    names = [name.strip() or "localhost" for name in hosts.split(",")]
+    numbers = [number.strip() for number in ports.split(",")]
+    if len(numbers) == 1:
+        numbers = numbers * len(names)
+    if len(numbers) != len(names):
+        raise ValueError(t("db.ports_mismatch", value=ports, ports=len(numbers), hosts=len(names)))
+    try:
+        return [(name, int(number)) for name, number in zip(names, numbers)]
+    except ValueError:
+        raise ValueError(t("db.not_a_number", name="PGPORT", value=ports)) from None
 
 
 def read_pgpass(path: str, host: str, port: int, database: str, user: str) -> str | None:
@@ -389,23 +504,23 @@ def _server_message(exc: Exception) -> str:
     return text
 
 
-def _explain_connect_failure(exc: Exception, settings: Settings) -> str:
+def _explain_connect_failure(exc: Exception, settings: Settings, endpoint: Endpoint) -> str:
     cause = exc.__cause__ if exc.__cause__ is not None else exc
     fields = _error_fields(exc)
     code = fields.get("C")
     detail = fields.get("M") or str(exc)
-    where = f"{settings.host}:{settings.port}"
+    where = endpoint.address
     if isinstance(cause, (ConnectionRefusedError, FileNotFoundError)):
         return t("db.refused", where=where)
     if isinstance(cause, socket.gaierror):
-        return t("db.unresolved", host=settings.host)
+        return t("db.unresolved", host=endpoint.host)
     if isinstance(cause, (socket.timeout, TimeoutError)):
         return t("db.timeout", where=where)
     if isinstance(cause, OSError) and cause.errno in _NO_ROUTE:
         return t("db.unreachable", where=where, error=cause.strerror or cause)
     if _dropped(exc):
         return t("db.dropped", where=where, user=settings.user)
-    if code == "28P01" or (not settings.password and "password" in detail.lower()):
+    if code == "28P01" or (not endpoint.password and "password" in detail.lower()):
         return _password_hint(settings, detail)
     if code == "3D000":
         return t("db.no_database", database=settings.database, where=where)
