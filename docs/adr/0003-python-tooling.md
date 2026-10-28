@@ -1,44 +1,44 @@
-# ADR 0003. Инструменты разработки и раскладка кода
+# ADR 0003. Development tools and code layout
 
-Статус: принято 2026-10-22.
+Status: accepted, 2026-10-22.
 
-## Контекст
+## Context
 
-Сервер работает без зависимостей и раздаётся исходниками (ADR 0001), но инструменты разработки
-на машине разработчика и в CI разрешены. Нужно привести проект к тому, что сегодня принято в
-Python-сообществе, не нарушив главного: клон репозитория запускается на голом Python 3.9+.
+The server runs without dependencies and is distributed as sources (ADR 0001), but development tools
+are allowed on the developer's machine and in CI. The project needs to follow what the Python community
+does today without breaking the main rule: a clone of the repository runs on bare Python 3.9+.
 
-## Решение
+## Decision
 
-| Вопрос | Выбор | Почему |
+| Question | Choice | Why |
 |---|---|---|
-| Раскладка | `src/pg_explorer_mcp/` | src-раскладка из рекомендаций PyPA: тесты импортируют установленный пакет, а не случайные файлы из текущей папки |
-| Сторонние пакеты | `src/pg_explorer_mcp/_vendor/`, пакет сам добавляет папку в `sys.path` | так делает pip (`pip/_vendor`); файлы остаются ровно такими, как на PyPI, что проверяет `scripts/check_vendor.py` |
-| Метаданные и настройки | `pyproject.toml` (PEP 621), группы зависимостей (PEP 735) | один файл вместо `setup.py`, `requirements-dev.txt` и отдельных конфигов линтеров |
-| Окружение | uv с `uv.lock`, `.python-version` = 3.9 | воспроизводимые версии инструментов; разработка идёт на той же версии, что у пользователей на macOS |
-| Сборка | `uv_build` | нужна, чтобы uv ставил проект в окружение в editable-режиме; на PyPI проект не уходит (`Private :: Do Not Upload`) |
-| Линтер и форматтер | ruff | заменяет flake8, isort, black, pyupgrade и bandit одним быстрым инструментом |
-| Типы | mypy в режиме strict, `<2` | mypy 2 больше не проверяет код под Python 3.9 |
-| Тесты | pytest, фикстуры, `parametrize`, маркер `integration` | де-факто стандарт; каждый случай проверки SQL — отдельный именованный тест |
-| Покрытие | coverage по веткам, порог 95% | падение покрытия видно в CI сразу |
-| Хуки | pre-commit через `uvx` | pre-commit требует Python 3.11+, поэтому живёт отдельным инструментом, а не зависимостью проекта |
-| CI | uv; линтеры, матрица Linux/Windows/macOS × Python 3.9/3.14, интеграция на PostgreSQL 13–18 (покрытие на 16) и на Windows с PostgreSQL 17. На PR — без macOS и с PostgreSQL 13, 16 и 18; полный набор на push в `develop` и `main` | крайние поддерживаемые версии на всех платформах пользователей; у корпоративных баз версии разные; минута macOS стоит десять минут Linux, и в приватном репозитории они лимитированы |
-| Действия в CI | закреплены по SHA коммита с версией в комментарии | тег можно передвинуть, коммит — нет; `astral-sh/setup-uv` с v8 и не выпускает плавающих тегов вроде `v10`, а dependabot обновляет SHA вместе с комментарием |
-| Обновления | dependabot для GitHub Actions и uv, PR в `develop`; mypy 1.20+ и pytest 9+ не предлагаются; для vendored-пакетов только Dependabot alerts по манифесту `src/pg_explorer_mcp/_vendor/requirements.txt` | vendored-пакеты обновляются вручную, по инструкции: PR Dependabot поменял бы только манифест, а уязвимости в них граф зависимостей видит и без записи в `dependabot.yml`; настройки Dependabot читает из `main`, ветки по умолчанию с выпущенными версиями; начиная с mypy 1.20 и pytest 9 им нужен Python 3.10, и uv не разрешит их для ветки 3.9 в `uv.lock` |
+| Layout | `src/pg_explorer_mcp/` | the src layout recommended by PyPA: tests import the installed package, not stray files from the current folder |
+| Third-party packages | `src/pg_explorer_mcp/_vendor/`, the package adds the folder to `sys.path` itself | this is what pip does (`pip/_vendor`); the files stay exactly as they are on PyPI, which `scripts/check_vendor.py` checks |
+| Metadata and settings | `pyproject.toml` (PEP 621), dependency groups (PEP 735) | one file instead of `setup.py`, `requirements-dev.txt` and separate linter configs |
+| Environment | uv with `uv.lock`, `.python-version` = 3.9 | reproducible tool versions; development runs on the same version users have on macOS |
+| Build | `uv_build` | needed so that uv installs the project into the environment in editable mode; the project does not go to PyPI (`Private :: Do Not Upload`) |
+| Linter and formatter | ruff | replaces flake8, isort, black, pyupgrade and bandit with one fast tool |
+| Types | mypy in strict mode, `<2` | mypy 2 no longer checks code for Python 3.9 |
+| Tests | pytest, fixtures, `parametrize`, the `integration` marker | the de facto standard; each SQL check case is a separate named test |
+| Coverage | branch coverage, 95% threshold | a drop in coverage shows up in CI at once |
+| Hooks | pre-commit through `uvx` | pre-commit needs Python 3.11+, so it lives as a separate tool, not a project dependency |
+| CI | uv; linters, a Linux/Windows/macOS × Python 3.9/3.14 matrix, integration on PostgreSQL 13–18 (coverage on 16) and on Windows with PostgreSQL 17. On a PR, without macOS and with PostgreSQL 13, 16 and 18; the full set on a push to `develop` and `main` | the oldest and newest supported versions on every platform users have; corporate databases run different versions; a macOS minute costs ten Linux minutes, and in a private repository they are limited |
+| Actions in CI | pinned by commit SHA with the version in a comment | a tag can be moved, a commit cannot; `astral-sh/setup-uv` since v8 no longer publishes floating tags such as `v10`, and dependabot updates the SHA together with the comment |
+| Updates | dependabot for GitHub Actions and uv, PRs into `develop`; mypy 1.20+ and pytest 9+ are not offered; for vendored packages only Dependabot alerts from the manifest `src/pg_explorer_mcp/_vendor/requirements.txt` | vendored packages are updated by hand, following the instructions: a Dependabot PR would change only the manifest, and the dependency graph sees vulnerabilities in them without an entry in `dependabot.yml`; Dependabot reads its settings from `main`, the default branch with the released versions; from mypy 1.20 and pytest 9 on they need Python 3.10, and uv will not resolve them for the 3.9 branch in `uv.lock` |
 
-## Рассмотренные варианты
+## Alternatives considered
 
-- **Плоская раскладка** (`pg_explorer_mcp/` в корне) — проще, но тесты могли бы случайно импортировать
-  исходники вместо установленного пакета.
-- **black + isort + flake8** — три инструмента и три конфига там, где хватает ruff.
-- **pyright или ty** вместо mypy — mypy остаётся эталоном, а ty на момент решения ещё молод.
-- **unittest** — без зависимостей и для тестов, но многословнее; раз инструменты разработки
-  разрешены, выигрывает pytest.
-- **Poetry, PDM, Hatch** — uv быстрее, ставит сам Python и уже стоит у разработчиков.
+- **Flat layout** (`pg_explorer_mcp/` at the root): simpler, but tests could accidentally import
+  the sources instead of the installed package.
+- **black + isort + flake8**: three tools and three configs where ruff is enough.
+- **pyright or ty** instead of mypy: mypy remains the reference, and ty was still young when the decision was made.
+- **unittest**: no dependencies for tests either, but more verbose; since development tools
+  are allowed, pytest wins.
+- **Poetry, PDM, Hatch**: uv is faster, installs Python itself and is already on developers' machines.
 
-## Последствия
+## Consequences
 
-- Для работы над проектом нужен uv; запуск сервера по-прежнему требует только Python.
-- Пока поддерживается Python 3.9, mypy закреплён ниже 2, а pytest и coverage в окружении 3.9
-  остаются на последних версиях, которые 3.9 поддерживают. Lock-файл держит обе ветки версий.
-- Все проверки, кроме интеграционных, работают без базы и без сети.
+- Working on the project needs uv; running the server still needs only Python.
+- While Python 3.9 is supported, mypy is pinned below 2, and pytest and coverage in the 3.9 environment
+  stay on the last versions that support 3.9. The lock file holds both branches of versions.
+- All checks except the integration ones work without a database and without a network.

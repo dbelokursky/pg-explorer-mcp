@@ -1,114 +1,114 @@
-# ADR 0002. Какой SQL разрешён агенту
+# ADR 0002. Which SQL the agent may run
 
-Статус: принято 2026-10-22 и реализовано (`sqlguard.py`, инструменты `run_select` и
-`explain_query`, профили групп, `docs/role.sql`). Политика и решения по открытым вопросам
-(раздел в конце) подтверждены на ревью 2026-10-22.
+Status: accepted, 2026-10-22, and implemented (`sqlguard.py`, the `run_select` and
+`explain_query` tools, group profiles, `docs/role.sql`). The policy and the decisions on the open questions
+(the last section) were confirmed at review on 2026-10-22.
 
-## Принцип
+## Principle
 
-Разрешено только чтение: разные `SELECT` и статистика. Любое изменение данных, структуры,
-прав или настроек запрещено. Запрет держится на трёх независимых слоях: если один промахнётся,
-остальные всё равно остановят запись.
+Only reading is allowed: `SELECT`s of all kinds and statistics. Any change to data, structure,
+privileges or settings is forbidden. The ban rests on three independent layers: if one misses,
+the others still stop the write.
 
-| Слой | Что делает | Почему его недостаточно одного |
+| Layer | What it does | Why it is not enough on its own |
 |---|---|---|
-| Роль в PostgreSQL | только `SELECT` на нужные схемы, никаких прав на создание и изменение | это настоящая граница, но её настраивает DBA, и ошибиться легко |
-| Транзакция `READ ONLY` на каждый запрос, в конце `ROLLBACK` | PostgreSQL сам отвергает запись и DDL; откат отменяет любые изменения настроек сессии | не ловит побочные эффекты функций: сигналы другим сессиям, advisory-блокировки, внешние соединения |
-| Проверка текста запроса сервером | пропускает только разрешённые команды, режет запрещённые слова и функции, объясняет модели причину отказа | без настоящего парсера SQL возможны и ложные срабатывания, и обход — поэтому она третья, а не единственная |
+| The PostgreSQL role | only `SELECT` on the needed schemas, no privileges to create or change anything | this is the real boundary, but the DBA sets it up, and it is easy to get wrong |
+| A `READ ONLY` transaction for every query, ending in `ROLLBACK` | PostgreSQL itself rejects writes and DDL; the rollback undoes any change to session settings | does not catch side effects of functions: signals to other sessions, advisory locks, outside connections |
+| A check of the query text by the server | lets only allowed statements through, cuts forbidden words and functions, tells the model why | without a real SQL parser both false positives and bypasses are possible, which is why it is the third layer and not the only one |
 
-## Разрешённые команды
+## Allowed statements
 
-Решение принимается по первому ключевому слову, после пропуска комментариев.
+The decision is made by the first keyword, after skipping comments.
 
-| Команда | Условие |
+| Statement | Condition |
 |---|---|
-| `SELECT` | без `INTO` и без блокировок строк (`FOR UPDATE`, `FOR SHARE` и вариантов) |
-| `WITH … SELECT` | внутри CTE только чтение: никаких `INSERT`, `UPDATE`, `DELETE`, `MERGE` |
+| `SELECT` | without `INTO` and without row locks (`FOR UPDATE`, `FOR SHARE` and their variants) |
+| `WITH … SELECT` | only reads inside the CTEs: no `INSERT`, `UPDATE`, `DELETE`, `MERGE` |
 | `VALUES`, `TABLE` | — |
-| `EXPLAIN` | только для разрешённого запроса; про `ANALYZE` — вопрос 1 ниже |
-| `SHOW` | любой параметр; значения, закрытые для обычных ролей, сервер скрывает сам |
+| `EXPLAIN` | only for an allowed query; for `ANALYZE` see question 1 below |
+| `SHOW` | any parameter; values closed to ordinary roles are hidden by the server itself |
 
-## Запрещённые команды
+## Forbidden statements
 
-Всё, чего нет в списке разрешённых, запрещено. Явно — чтобы модель получала понятную причину:
+Anything not on the allowed list is forbidden. Spelled out explicitly, so the model gets a clear reason:
 
-| Группа | Команды | Почему |
+| Group | Statements | Why |
 |---|---|---|
-| Изменение данных | `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE`, `COPY` в обе стороны, `SELECT … INTO` | меняют данные или создают таблицы; `COPY … TO PROGRAM` выполняет команды на сервере |
-| Структура | `CREATE`, `ALTER`, `DROP` (включая `DROP DATABASE`, `DROP SCHEMA`), `COMMENT`, `SECURITY LABEL`, `REINDEX`, `CLUSTER`, `REFRESH MATERIALIZED VIEW`, `IMPORT FOREIGN SCHEMA` | DDL |
-| Права | `GRANT`, `REVOKE`, `REASSIGN OWNED`, `DROP OWNED`, `ALTER DEFAULT PRIVILEGES` | меняют доступ |
-| Обслуживание | `VACUUM`, `ANALYZE`, `CHECKPOINT`, `LOAD` | пишут статистику или файлы, нагружают сервер |
-| Сессия и транзакции | `SET`, `RESET`, `SET ROLE`, `SET SESSION AUTHORIZATION`, `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PREPARE TRANSACTION`, `DISCARD` | могут снять режим только чтения или сменить роль; транзакцией управляет сервер |
-| Код | `DO`, `CALL`, `PREPARE`, `EXECUTE`, `DEALLOCATE` | выполняют произвольный код, который проверка не видит |
-| Влияние на других | `LOCK`, `LISTEN`, `NOTIFY`, `UNLISTEN` | блокируют или будят чужие сессии |
-| Курсоры | `DECLARE`, `FETCH`, `MOVE`, `CLOSE` | курсором для ограничения строк управляет сервер |
+| Changing data | `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE`, `COPY` in both directions, `SELECT … INTO` | change data or create tables; `COPY … TO PROGRAM` runs commands on the server |
+| Structure | `CREATE`, `ALTER`, `DROP` (including `DROP DATABASE`, `DROP SCHEMA`), `COMMENT`, `SECURITY LABEL`, `REINDEX`, `CLUSTER`, `REFRESH MATERIALIZED VIEW`, `IMPORT FOREIGN SCHEMA` | DDL |
+| Privileges | `GRANT`, `REVOKE`, `REASSIGN OWNED`, `DROP OWNED`, `ALTER DEFAULT PRIVILEGES` | change access |
+| Maintenance | `VACUUM`, `ANALYZE`, `CHECKPOINT`, `LOAD` | write statistics or files, load the server |
+| Session and transactions | `SET`, `RESET`, `SET ROLE`, `SET SESSION AUTHORIZATION`, `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `PREPARE TRANSACTION`, `DISCARD` | can lift read-only mode or switch the role; the server manages the transaction |
+| Code | `DO`, `CALL`, `PREPARE`, `EXECUTE`, `DEALLOCATE` | run arbitrary code the check cannot see |
+| Affecting others | `LOCK`, `LISTEN`, `NOTIFY`, `UNLISTEN` | lock or wake up other sessions |
+| Cursors | `DECLARE`, `FETCH`, `MOVE`, `CLOSE` | the server manages the cursor that limits rows |
 
-## Запрещённые функции, даже внутри SELECT
+## Forbidden functions, even inside SELECT
 
-Транзакция `READ ONLY` их не останавливает, поэтому они в отдельном списке:
+A `READ ONLY` transaction does not stop them, so they have their own list:
 
-| Группа | Функции | Почему |
+| Group | Functions | Why |
 |---|---|---|
-| Сигналы другим сессиям | `pg_terminate_backend`, `pg_cancel_backend` | обрывают чужую работу |
-| Настройки | `set_config` | меняет параметры сессии в обход запрета на `SET` |
-| Advisory-блокировки | `pg_advisory_lock` и все `pg_*advisory*` | сессионные блокировки переживают `ROLLBACK` и мешают приложениям |
-| Внешние соединения | `dblink`, `dblink_exec`, `dblink_connect` и вся семья `dblink*` | отдельное соединение не подчиняется нашему `READ ONLY` |
-| SQL из строки | `query_to_xml`, `query_to_xmlschema`, `query_to_xml_and_xmlschema`, `cursor_to_xml`, `cursor_to_xmlschema` | выполняют текст запроса, который наша проверка не видела |
-| Файлы сервера | `pg_read_file`, `pg_read_binary_file`, `pg_stat_file`, `pg_ls_*`, `lo_import`, `lo_export` | читают и пишут файлы на сервере БД |
-| Администрирование | `pg_reload_conf`, `pg_rotate_logfile`, `pg_switch_wal`, `pg_create_restore_point`, `pg_promote`, `pg_*replication_slot*`, `pg_logical_emit_message`, `pg_notify` | управляют сервером и репликацией |
-| Последовательности и большие объекты | `nextval`, `setval`, `lo_create`, `lo_unlink`, `lo_put`, `lowrite` | меняют состояние |
-| Задержки | `pg_sleep`, `pg_sleep_for`, `pg_sleep_until` | держат соединение без пользы |
+| Signals to other sessions | `pg_terminate_backend`, `pg_cancel_backend` | break off other people's work |
+| Settings | `set_config` | changes session parameters, going around the ban on `SET` |
+| Advisory locks | `pg_advisory_lock` and all `pg_*advisory*` | session locks survive `ROLLBACK` and get in the way of applications |
+| Outside connections | `dblink`, `dblink_exec`, `dblink_connect` and the whole `dblink*` family | a separate connection does not obey our `READ ONLY` |
+| SQL from a string | `query_to_xml`, `query_to_xmlschema`, `query_to_xml_and_xmlschema`, `cursor_to_xml`, `cursor_to_xmlschema` | run query text our check has not seen |
+| Server files | `pg_read_file`, `pg_read_binary_file`, `pg_stat_file`, `pg_ls_*`, `lo_import`, `lo_export` | read and write files on the database server |
+| Administration | `pg_reload_conf`, `pg_rotate_logfile`, `pg_switch_wal`, `pg_create_restore_point`, `pg_promote`, `pg_*replication_slot*`, `pg_logical_emit_message`, `pg_notify` | control the server and replication |
+| Sequences and large objects | `nextval`, `setval`, `lo_create`, `lo_unlink`, `lo_put`, `lowrite` | change state |
+| Delays | `pg_sleep`, `pg_sleep_for`, `pg_sleep_until` | hold the connection for nothing |
 
-## Статистика, которую разрешаем
+## Statistics we allow
 
-- Системные каталоги `pg_catalog.*` и `information_schema.*` — в пределах прав роли.
-- Статистика таблиц и индексов: `pg_stat_user_tables`, `pg_stat_user_indexes`, `pg_statio_user_*`,
-  `pg_stats` (сервер показывает её только по таблицам, к которым у роли есть `SELECT`).
-- Размеры: `pg_relation_size`, `pg_total_relation_size`, `pg_table_size`, `pg_indexes_size`, `pg_size_pretty`.
-- Оценки строк из `pg_class.reltuples`, планы через `EXPLAIN`.
-- `pg_stat_activity` и `pg_stat_statements` — вопрос 2 ниже.
+- The system catalogs `pg_catalog.*` and `information_schema.*`, within the role's privileges.
+- Table and index statistics: `pg_stat_user_tables`, `pg_stat_user_indexes`, `pg_statio_user_*`,
+  `pg_stats` (the server shows it only for tables the role has `SELECT` on).
+- Sizes: `pg_relation_size`, `pg_total_relation_size`, `pg_table_size`, `pg_indexes_size`, `pg_size_pretty`.
+- Row estimates from `pg_class.reltuples`, plans through `EXPLAIN`.
+- `pg_stat_activity` and `pg_stat_statements`: see question 2 below.
 
-## Как будет выполняться `run_select`
+## How `run_select` will run
 
-1. Проверка текста: первое слово из разрешённых, ни одного запрещённого слова или функции вне
-   строк, комментариев и идентификаторов в кавычках. Идентификаторы в записи `U&"..."` отвергаются:
-   PostgreSQL раскрывает в них escape-последовательности, а проверка читает имена как написано, и
-   `U&"pg\005fsleep"` прошёл бы её как безобидное имя. Иначе — ошибка с причиной для модели.
-2. `BEGIN TRANSACTION READ ONLY` и в той же посылке `SET LOCAL statement_timeout` и `SET LOCAL search_path`:
-   пулер в transaction-режиме (pgbouncer, Odyssey) может отдать каждую транзакцию другой серверной сессии или
-   сбросить сессию между ними (`DISCARD ALL`), так что настройки сессии с момента подключения не выживают, а
-   именованный prepared statement не доживает до следующего сообщения. Транзакция закрепляет одну сессию на все
-   сообщения вызова и несёт свои лимиты; так же выполняются и запросы к каталогу.
-3. Запрос одной командой через extended protocol (строку из нескольких команд PostgreSQL отвергнет)
-   внутри курсора: сервер берёт не больше лимита строк плюс одну, чтобы знать, что есть ещё.
-4. `ROLLBACK` — всегда, даже после успеха.
-5. Ответ проходит через бюджет ответа.
+1. A check of the text: the first word is an allowed one, and there is no forbidden word or function outside
+   strings, comments and quoted identifiers. Identifiers written as `U&"..."` are rejected:
+   PostgreSQL expands escape sequences in them, while the check reads names as written, and
+   `U&"pg\005fsleep"` would pass it as a harmless name. Otherwise, an error with the reason for the model.
+2. `BEGIN TRANSACTION READ ONLY` and, in the same message, `SET LOCAL statement_timeout` and `SET LOCAL search_path`:
+   a pooler in transaction mode (pgbouncer, Odyssey) may hand each transaction to a different server session or
+   reset the session between them (`DISCARD ALL`), so session settings made at connect time do not survive, and
+   a named prepared statement does not live until the next message. The transaction pins one session for all
+   messages of the call and carries its own limits; catalog queries run the same way.
+3. The query as a single statement through the extended protocol (PostgreSQL rejects a string of several statements)
+   inside a cursor: the server fetches no more than the row limit plus one, to know there are more.
+4. `ROLLBACK`, always, even after success.
+5. The answer goes through the answer budget.
 
-## Роль для агента
+## A role for the agent
 
-Скрипт для DBA — [docs/role.sql](../role.sql): роль `NOSUPERUSER … CONNECTION LIMIT 5` с
-`default_transaction_read_only = on`, `statement_timeout`, `GRANT SELECT` на выбранные схемы и
-правами по умолчанию на будущие таблицы. Интеграционный тест прогоняет его через `psql` и
-проверяет, что роль читает выданную схему и не может писать, даже если выключить режим только чтения.
+The script for DBAs is [docs/role.sql](../role.sql): a `NOSUPERUSER … CONNECTION LIMIT 5` role with
+`default_transaction_read_only = on`, `statement_timeout`, `GRANT SELECT` on the chosen schemas and
+default privileges for future tables. An integration test runs it through `psql` and
+checks that the role reads the granted schema and cannot write, even with read-only mode switched off.
 
-Чего роли не выдавать: `pg_read_all_stats` и `pg_monitor` (открывают тексты чужих запросов),
+What not to grant the role: `pg_read_all_stats` and `pg_monitor` (they expose the text of other people's queries),
 `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`, `pg_signal_backend`,
-членство в ролях-владельцах таблиц. Право `CREATE` на схемах тоже не нужно: в PostgreSQL 15+
-у `public` оно отозвано по умолчанию, в старых версиях это стоит проверить.
+membership in the roles that own the tables. The `CREATE` privilege on schemas is not needed either: in PostgreSQL 15+
+it is revoked on `public` by default; on older versions it is worth checking.
 
-## Решения по открытым вопросам
+## Decisions on the open questions
 
-Подтверждены на ревью 2026-10-22 без изменений.
+Confirmed at review on 2026-10-22 without changes.
 
-1. **`EXPLAIN ANALYZE`** разрешён для `SELECT` и только профилю `analyst`: запрос выполняется внутри
-   `READ ONLY` и под `statement_timeout`, зато план показывает реальное время.
-2. **`pg_stat_activity` и `pg_stat_statements`** разрешены; от чужих текстов запросов защищает роль без
-   `pg_read_all_stats`, а не сервер.
-3. **Лимит строк `run_select`** — 200; сверху его дополнительно режет бюджет ответа.
-4. **`run_select`** есть только в профиле `analyst`; профили `schema` и `explore` обходятся
-   `describe_table`, `sample_rows` и `explain_query`.
-5. **Ложные срабатывания** приняты: колонку с именем `update` или `delete` нужно брать в кавычки,
-   и ошибка проверки говорит, какое слово её остановило.
-6. **Идентификаторы `U&"..."`** отвергаются (добавлено 2026-10-27): модели такая запись не нужна, а
-   раскрывать escape-последовательности вместе с `UESCAPE` в проверке без парсера — лишний код там, где
-   достаточно отказа с подсказкой написать имя как есть.
+1. **`EXPLAIN ANALYZE`** is allowed for `SELECT` and only in the `analyst` profile: the query runs inside
+   `READ ONLY` and under `statement_timeout`, and in return the plan shows real timings.
+2. **`pg_stat_activity` and `pg_stat_statements`** are allowed; it is the role without
+   `pg_read_all_stats`, not the server, that protects other people's query text.
+3. **The row limit of `run_select`** is 200; on top of that the answer budget cuts it further.
+4. **`run_select`** exists only in the `analyst` profile; the `schema` and `explore` profiles make do with
+   `describe_table`, `sample_rows` and `explain_query`.
+5. **False positives** are accepted: a column named `update` or `delete` has to be quoted,
+   and the check's error says which word stopped it.
+6. **`U&"..."` identifiers** are rejected (added 2026-10-27): the model does not need this notation, and
+   expanding escape sequences together with `UESCAPE` in a check without a parser is extra code where
+   a refusal with a hint to write the name as it is will do.

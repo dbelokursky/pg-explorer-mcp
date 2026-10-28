@@ -1,48 +1,48 @@
-# ADR 0004. Английский и русский
+# ADR 0004. English and Russian
 
-Статус: принято 2026-10-22.
+Status: accepted, 2026-10-22.
 
-## Контекст
+## Context
 
-Сервером пользуются группы, которые работают на русском, и группы, которые работают на английском.
-Тексты сервера читают двое. Модель читает описания инструментов, инструкции и ошибки и по ним
-решает, что делать дальше. Человек видит те же ответы инструментов в интерфейсе агента, вывод
-`install.py` и описания в `/mcp`. Всё это должно быть на языке группы. При этом сервер
-по-прежнему работает без зависимостей и запускается из клона (ADR 0001).
+The server is used by groups that work in Russian and groups that work in English.
+The server's texts have two readers. The model reads tool descriptions, instructions and errors and
+uses them to decide what to do next. A person sees the same tool answers in the agent's interface, the output
+of `install.py` and the descriptions in `/mcp`. All of this has to be in the group's language. At the same time
+the server still runs without dependencies and starts from a clone (ADR 0001).
 
-## Решение
+## Decision
 
-| Вопрос | Выбор | Почему |
+| Question | Choice | Why |
 |---|---|---|
-| Языки | `en` (по умолчанию) и `ru` | других групп пока нет; каталог расширяется ключом языка |
-| Где тексты | `src/pg_explorer_mcp/i18n.py`: два словаря `ключ → шаблон`, функции `t()` и `plural()` | меньше двухсот строк, без файлов `.mo` и шага сборки; тесты сверяют каталоги |
-| Как выбирается язык | `PG_EXPLORER_MCP_LANG`; без неё — переменные локали в порядке модуля gettext (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`), затем локаль системы | на Windows `LANG` обычно не задана, а `locale.getlocale()` показывает `Russian_Russia` |
-| Закрепление | `install.py` записывает выбранный язык в блок `env` сервера | агент может запустить сервер без переменных локали оболочки: SDK MCP по умолчанию передаёт лишь короткий список переменных |
-| Множественное число | категории CLDR: `one`/`other` для английского, `one`/`few`/`many` для русского | «1 строка, 2 строки, 5 строк»; глагол тоже согласуется, поэтому в каждой форме — вся фраза |
-| Что не переводится | имена инструментов и аргументов, ошибки JSON-RPC, журнал в stderr, сообщения PostgreSQL | имена — это интерфейс; клиенты смотрят на коды ошибок; журнал читает администратор; текст ошибок базы задаёт её `lc_messages` |
-| Ответ пользователю | инструкции сервера просят модель отвечать на языке пользователя | язык сервера влияет на то, что читает модель, но не должен навязывать язык ответа |
+| Languages | `en` (the default) and `ru` | there are no other groups yet; the catalog grows by a language key |
+| Where the texts live | `src/pg_explorer_mcp/i18n.py`: two dictionaries `key → template`, the functions `t()` and `plural()` | under two hundred lines, no `.mo` files and no build step; tests compare the catalogs |
+| How the language is chosen | `PG_EXPLORER_MCP_LANG`; without it, the locale variables in the order of the gettext module (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG`), then the system locale | on Windows `LANG` is usually not set, and `locale.getlocale()` shows `Russian_Russia` |
+| Pinning | `install.py` writes the chosen language into the server's `env` block | the agent may start the server without the shell's locale variables: by default the MCP SDK passes on only a short list of variables |
+| Plurals | CLDR categories: `one`/`other` for English, `one`/`few`/`many` for Russian | "1 строка, 2 строки, 5 строк" (1, 2, 5 rows); the verb agrees too, so each form holds the whole phrase |
+| What is not translated | tool and argument names, JSON-RPC errors, the log on stderr, PostgreSQL messages | names are the interface; clients look at error codes; the log is read by an administrator; the text of database errors is set by its `lc_messages` |
+| Answering the user | the server's instructions ask the model to answer in the user's language | the server's language affects what the model reads but should not force the language of the answer |
 
-Язык выбирается один раз при старте и хранится в `ContextVar`. Тесты переключают его
-контекст-менеджером `speaking()` и не оставляют следов в соседних тестах.
+The language is chosen once at start-up and kept in a `ContextVar`. Tests switch it with the
+`speaking()` context manager and leave no traces in neighbouring tests.
 
-## Рассмотренные варианты
+## Alternatives considered
 
-- **gettext с файлами `.po`/`.mo`** — стандарт для больших проектов и удобен переводчикам.
-  Но стандартная библиотека читает только скомпилированные `.mo`: пришлось бы хранить в
-  репозитории двоичные файлы или добавлять шаг сборки, которого у раздачи исходниками нет.
-  Для двух языков и одного переводчика выигрыша нет.
-- **Только английские описания для модели, перевод лишь того, что видит человек** — небольшие
-  локальные модели иногда выбирают инструменты по английским описаниям чуть надёжнее. Но человек
-  видит те же тексты в `/mcp` и в ответах инструментов, поэтому переведено всё. Если модель группы
-  хуже справляется на русском, достаточно `PG_EXPLORER_MCP_LANG=en`: отвечать пользователю она всё равно
-  будет на его языке.
-- **Язык на каждый запрос** (по языку пользователя) — сервер не видит реплик пользователя,
-  а угадывание по тексту SQL ненадёжно.
+- **gettext with `.po`/`.mo` files**: the standard for large projects and convenient for translators.
+  But the standard library reads only compiled `.mo` files: we would have to keep binary files in the
+  repository or add a build step, which distribution as sources does not have.
+  For two languages and one translator there is no gain.
+- **English-only descriptions for the model, translating only what a person sees**: small
+  local models sometimes pick tools from English descriptions a little more reliably. But a person
+  sees the same texts in `/mcp` and in tool answers, so everything is translated. If a group's model
+  copes worse in Russian, `PG_EXPLORER_MCP_LANG=en` is enough: it will still answer the user
+  in their language.
+- **A language per request** (by the user's language): the server does not see the user's messages,
+  and guessing from the SQL text is unreliable.
 
-## Последствия
+## Consequences
 
-- Каждый новый текст добавляется в оба словаря; `tests/test_i18n.py` проверяет, что ключи,
-  формы множественного числа и плейсхолдеры совпадают, что каждый ключ из кода есть в каталоге
-  и что в каталоге нет неиспользуемых текстов.
-- Бюджет ответа считается в символах. Русский текст занимает больше токенов на символ, чем
-  английский, поэтому при малом контексте модели бюджет стоит уменьшить, а не увеличить.
+- Each new text goes into both dictionaries; `tests/test_i18n.py` checks that the keys,
+  plural forms and placeholders match, that every key used in the code is in the catalog
+  and that the catalog has no unused texts.
+- The answer budget is counted in characters. Russian text takes more tokens per character than
+  English, so with a small model context the budget should be lowered, not raised.
