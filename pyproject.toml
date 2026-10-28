@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 # pg-mcp on PyPI is another project, with a pg_mcp package and a pg-mcp command of its own.
 name = "pg-explorer-mcp"
-version = "0.7.0"
+version = "0.8.0"
 description = "Read-only PostgreSQL MCP server for GigaCode CLI and other agents, with no runtime dependencies"
 readme = "README.md"
 # 3.9 stays because macOS Command Line Tools ship it; see docs/adr/0001-python-stdlib-only.md.
