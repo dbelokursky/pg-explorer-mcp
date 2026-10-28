@@ -35,6 +35,7 @@ from pg_explorer_mcp.stands import (
     Registry,
     StandError,
     Target,
+    by_database,
     exported_sections,
     listed,
     load_registry,
@@ -42,16 +43,20 @@ from pg_explorer_mcp.stands import (
     registry_files,
     stands_enabled,
     summarize,
+    whole_database,
 )
-from pg_explorer_mcp.tools import PROFILES, Tool, ToolError, build_tools
+from pg_explorer_mcp.tools import ALL_SCHEMAS_SQL, PROFILES, Tool, ToolError, build_tools
 from tests.helpers import ROOT, rpc
 
 STANDS_ON = {"PG_EXPLORER_MCP_STANDS": "*"}
+# dev1 mixes a database with a login per schema (orders) and one with a single section (archive); dev2 has a
+# login per schema; ift1 is one section, as a connection imported from DBeaver is, read as a whole through it.
 NAMES = (
     "dev1.orders.billing",
     "dev1.orders.shipping",
     "dev1.archive.billing",
     "dev2.orders.billing",
+    "dev2.orders.returns",
     "ift1.orders.billing",
 )
 
@@ -332,6 +337,34 @@ class TestTarget:
         env = Target("dev1", "orders", "billing", {"host": "db"}, "x").env({"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"})
         assert env["PG_EXPLORER_MCP_SOCKET_TIMEOUT_S"] == "20"
 
+    def test_the_login_is_the_user_of_the_section_else_the_schema(self) -> None:
+        assert Target("dev1", "orders", "billing", {"host": "db"}, "x").login == "billing"
+        assert Target("dev1", "orders", "billing", {"host": "db", "user": "reader"}, "x").login == "reader"
+
+    def test_for_schema_keeps_the_login_and_the_server_and_changes_the_rest(self) -> None:
+        section = Target("ift1", "orders", "reader", {"host": "db", "port": "6432", "sslmode": "require"}, "x")
+        target = section.for_schema("hr")
+        assert (target.name, target.label, target.login) == ("ift1.orders.hr", "ift1 / orders / hr", "reader")
+        env = target.env({})
+        assert (env["PGHOST"], env["PGPORT"], env["PGDATABASE"], env["PGSSLMODE"]) == (
+            "db",
+            "6432",
+            "orders",
+            "require",
+        )
+        assert (env["PGUSER"], env["PG_EXPLORER_MCP_SEARCH_PATH"]) == ("reader", "hr")
+        assert (section.schema, section.options.get("user")) == ("reader", None)  # the section is as it was
+
+
+def test_a_database_is_read_as_a_whole_when_its_sections_share_one_login() -> None:
+    reader = Target("ift2", "orders", "reader", {"host": "db"}, "x")
+    billing = Target("ift2", "orders", "billing", {"host": "db", "user": "reader"}, "x")
+    shipping = Target("ift2", "orders", "shipping", {"host": "db"}, "x")
+    assert whole_database([reader]) is reader
+    assert whole_database([reader, billing]) is reader  # two sections, one login
+    assert whole_database([billing, shipping]) is None  # a login per schema
+    assert by_database([shipping, reader]) == [("orders", [reader, shipping])]
+
 
 class TestRegistry:
     def test_stands_sort_by_their_numbers(self) -> None:
@@ -363,22 +396,68 @@ class TestRegistry:
     @pytest.mark.parametrize(
         ("schema", "database", "message"),
         [
-            (None, None, "Pass schema: on stand dev1 the server reads data with the login of the schema you name."),
-            ("", None, "Pass schema: on stand dev1 the server reads data with the login of the schema you name."),
+            (None, None, "Pass schema: on stand dev1 data is read in the schema you name, with its login."),
+            ("", None, "Pass schema: on stand dev1 data is read in the schema you name, with its login."),
             ("billing", None, "Schema 'billing' exists in several databases of dev1: archive, orders. Pass database"),
             ("shipping", "archive", "Schema 'shipping' of dev1 is in orders, not in 'archive'. Pass one of those"),
             ("shiping", None, "Stand dev1 has no schema 'shiping' that the server has a login for. Similar: shipping."),
             (
                 "hr",
                 None,
-                "Stand dev1 has no schema 'hr' that the server has a login for. Its schemas: billing, shipping.",
+                "Stand dev1 has no schema 'hr' that the server has a login for. Its schemas: billing, shipping; "
+                "any schema of archive, passed with database.",
             ),
+            ("hr", "nowhere", "Stand dev1 has no database 'nowhere' in the registry. Databases: archive, orders."),
         ],
     )
     def test_a_wrong_schema_is_explained(self, registry: Registry, schema: Any, database: Any, message: str) -> None:
         with pytest.raises(StandError) as caught:
             registry.target("dev1", schema, database)
         assert str(caught.value).startswith(message)
+
+    def test_a_database_with_one_login_reads_any_schema_through_it(self, registry: Registry) -> None:
+        """ift1 is one section: a stand where one login reads dozens of schemas is imported as such a section."""
+        target = registry.target("ift1", ' "Public" ')
+        assert (target.name, target.label, target.login) == ("ift1.orders.public", "ift1 / orders / public", "billing")
+        env = target.env({})
+        assert (env["PGUSER"], env["PG_EXPLORER_MCP_SEARCH_PATH"], env["PGHOST"]) == (
+            "billing",
+            "public",
+            "db.example.com",
+        )
+        assert registry.target("ift1", "billing").name == "ift1.orders.billing"  # a schema of the registry, as it is
+        # On dev1, archive is read as a whole and orders has a login per schema: a schema the registry lacks
+        # is refused unless database names archive.
+        assert registry.target("dev1", "hr", "archive").name == "dev1.archive.hr"
+        assert registry.target("dev1", "hr", "archive").login == "billing"
+        with pytest.raises(
+            StandError, match=r"^Stand dev1 has no schema 'hr' .* any schema of archive, passed with database\.$"
+        ):
+            registry.target("dev1", "hr", "orders")
+
+    def test_two_databases_read_as_a_whole_need_the_database_named(self, tmp_path: Path) -> None:
+        text = (
+            "[ift2.orders.reader]\nhost=db\n\n"
+            "[ift2.orders.billing]\nhost=db\nuser=reader\n\n"  # two sections, one login: still read as a whole
+            "[ift2.archive.reader]\nhost=db\n\n"
+        )
+        registry = loaded(STANDS_ON, [write(tmp_path / "stands.conf", text)])
+        assert registry.target("ift2", "hr", "orders").login == "reader"
+        assert registry.target("ift2", "billing").name == "ift2.orders.billing"
+        with pytest.raises(StandError) as caught:
+            registry.target("ift2", "hr")
+        assert str(caught.value) == (
+            "Schema 'hr' is not in the registry of ift2, and its databases archive, orders are each read as a whole "
+            "with one login. Pass database to say which one holds it."
+        )
+        assert registry.schemas_hint("ift2") == "any schema of archive, orders: list_schemas shows them"
+        with pytest.raises(StandError, match=r"Its schemas: any schema of archive, orders: list_schemas shows them\.$"):
+            registry.target("ift2", "")
+
+    @pytest.mark.usefixtures("russian")
+    def test_the_schemas_hint_in_russian(self, registry: Registry) -> None:
+        assert registry.schemas_hint("dev1") == "billing, shipping; любая схема базы archive вместе с database"
+        assert registry.schemas_hint("ift1") == "любая схема базы orders: list_schemas покажет их"
 
 
 @pytest.mark.parametrize(
@@ -491,7 +570,7 @@ class TestOfflineTools:
         self, pool: Pool, tools: dict[str, Tool]
     ) -> None:
         lines = tools["status"].call({}).splitlines()
-        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in lines
+        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 6" in lines
         assert any(line.startswith("access: read only. Nothing can be inserted") for line in lines)
         assert any(line.endswith("stands covers at most 100 stands per call") for line in lines)
         assert "pass stand to status to check that stand's connection" in lines
@@ -499,11 +578,9 @@ class TestOfflineTools:
 
     def test_status_with_a_stand_lists_its_schemas_and_checks_one_login(self, tools: dict[str, Tool]) -> None:
         lines = tools["status"].call({"stand": "dev1"}).splitlines()
-        assert lines[-4:-1] == [
-            "dev1 / archive: billing",
-            "dev1 / orders: billing, shipping",
-            "checked with dev1 / archive / billing",
-        ]
+        # archive is read as a whole: its schemas come from the catalog, which is out of reach here
+        assert lines[-4].startswith("dev1 / archive: Nothing accepts connections at 127.0.0.1:")
+        assert lines[-3:-1] == ["dev1 / orders: billing, shipping", "checked with dev1 / archive / billing"]
         assert lines[-1].startswith("database: unavailable. Nothing accepts connections at 127.0.0.1:")
 
     def test_a_login_the_server_turned_down_is_followed_by_the_next_one(
@@ -544,10 +621,47 @@ class TestOfflineTools:
         ]
 
     def test_list_schemas_shows_the_databases_of_a_stand(self, tools: dict[str, Tool]) -> None:
-        assert tools["list_schemas"].call({"stand": "Dev1"}).splitlines() == [
-            "dev1 / archive: billing",
-            "dev1 / orders: billing, shipping",
+        lines = tools["list_schemas"].call({"stand": "Dev1"}).splitlines()
+        # a database with one login is listed from its catalog, and here its error stands in for the names
+        assert lines[0].startswith("dev1 / archive: Nothing accepts connections at 127.0.0.1:")
+        assert lines[1:] == ["dev1 / orders: billing, shipping"]  # a login per schema: the registry, no connection
+
+    def test_list_schemas_reads_the_catalog_for_a_database_with_one_login(
+        self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        names: list[tuple[str]] = [("hr",), ("shop",)]
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            assert (self.settings is not None and self.settings.user, sql) == ("billing", ALL_SCHEMAS_SQL)
+            return names
+
+        monkeypatch.setattr(Database, "query", query)
+        assert tools["list_schemas"].call({"stand": "ift1"}) == "ift1 / orders: hr, shop"
+        names = [(f"s{number:03}",) for number in range(101)]
+        assert tools["list_schemas"].call({"stand": "ift1"}).endswith("s098, s099 and more, 101 in all")
+        names = []
+        assert (
+            tools["list_schemas"].call({"stand": "ift1"})
+            == "ift1 / orders: no schema with tables that billing can read"
+        )
+
+    def test_a_database_with_one_login_is_listed_by_what_the_login_reads(
+        self, tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        queries: list[tuple[str, dict[str, Any]]] = []
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            queries.append((sql, params))
+            return [("hr", "people", "r", 3, None)]
+
+        monkeypatch.setattr(Database, "query", query)
+        assert tools["list_tables"].call({"stand": "ift1"}).splitlines() == [
+            "ift1 / orders",
+            "hr.people | table | ~3 rows",
         ]
+        ((sql, params),) = queries
+        assert "has_table_privilege" in sql
+        assert "schemas" not in params  # no registry schemas to keep to: the login's privileges decide
 
     def test_one_database_failing_does_not_hide_the_others(self, pool: Pool, tools: dict[str, Tool]) -> None:
         lines = tools["list_tables"].call({"stand": "dev1"}).splitlines()
@@ -645,8 +759,8 @@ def test_a_left_out_schema_is_answered_with_the_schemas_of_the_stand(pool: Pool,
     with pytest.raises(ToolError) as caught:
         tools[tool].call({"stand": "dev1", "schema": "", "query": "SELECT 1"})
     assert str(caught.value) == (
-        "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
-        "Its schemas: billing, shipping."
+        "Pass schema: on stand dev1 data is read in the schema you name, with its login. "
+        "Its schemas: billing, shipping; any schema of archive, passed with database."
     )
     with pytest.raises(ToolError, match=r"^No stand 'dev11' in the registry\. Similar: dev1, dev2\.$"):
         tools[tool].call({"stand": "dev11", "query": "SELECT 1"})
@@ -662,8 +776,8 @@ class TestCompareSchema:
         [
             (
                 {"stand_a": "dev1", "stand_b": "dev2"},
-                "Pass schema: on stand dev1 the server reads data with the login of the schema you name. "
-                "Its schemas: billing, shipping.",
+                "Pass schema: on stand dev1 data is read in the schema you name, with its login. "
+                "Its schemas: billing, shipping; any schema of archive, passed with database.",
             ),
             ({"stand_a": " ", "stand_b": "dev2", "schema": "billing"}, "Pass stand_a, one of: dev1–dev2, ift1."),
             (
@@ -684,7 +798,7 @@ class TestCompareSchema:
             ),
             (
                 {"stand_a": "dev2", "stand_b": "dev1", "schema": "shipping"},
-                "Stand dev2 has no schema 'shipping' that the server has a login for. Its schemas: billing.",
+                "Stand dev2 has no schema 'shipping' that the server has a login for. Its schemas: billing, returns.",
             ),
         ],
     )
@@ -1124,6 +1238,14 @@ class TestManyStands:
     def test_a_schema_no_stand_has_fails_as_one_stand_would(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="Stand dev1 has no schema 'hr' that the server has a login for"):
             tools["run_select"].call({"stands": "dev1,dev2", "schema": "hr", "query": "SELECT 1"})
+        # ift1 is read as a whole through its one login, so hr is read there, whatever the registry knows
+        lines = tools["run_select"].call({"stands": "dev2,ift1", "schema": "hr", "query": "SELECT 1"}).splitlines()
+        assert lines[:3] == [
+            "dev2",
+            "  Stand dev2 has no schema 'hr' that the server has a login for. Its schemas: billing, returns.",
+            "ift1 / orders / hr",
+        ]
+        assert len(lines) == 4
 
     def test_a_refused_statement_asks_no_stand(self, pool: Pool, tools: dict[str, Tool]) -> None:
         arguments = {"stands": "dev*", "schema": "billing", "database": "orders", "query": "DELETE FROM invoices"}
@@ -1183,12 +1305,12 @@ class TestManyStands:
         assert pool.outcomes == {"dev1": "unavailable", "dev2": "unavailable"}
 
     def test_search_in_a_schema_uses_the_login_of_each_stand(self, pool: Pool, tools: dict[str, Tool]) -> None:
-        arguments = {"stands": "ift1,dev1", "text": "order", "schema": "shipping"}
+        arguments = {"stands": "ift1,dev2,dev1", "text": "order", "schema": "shipping"}
         lines = tools["search_schema"].call(arguments).splitlines()
-        assert (lines[0], lines[2]) == ("dev1 / orders / shipping", "ift1")
-        assert lines[3].startswith("  Stand ift1 has no schema 'shipping' that the server has a login for.")
-        assert len(lines) == 4
-        assert pool.outcomes == {"dev1": "unavailable", "ift1": "error"}
+        assert (lines[0], lines[2], lines[4]) == ("dev1 / orders / shipping", "dev2", "ift1 / orders / shipping")
+        assert lines[3].startswith("  Stand dev2 has no schema 'shipping' that the server has a login for.")
+        assert len(lines) == 6
+        assert pool.outcomes == {"dev1": "unavailable", "dev2": "error", "ift1": "unavailable"}
 
     def test_an_unknown_database_on_one_stand_is_a_line_there(self, pool: Pool, tools: dict[str, Tool]) -> None:
         arguments = {"stands": "dev1,dev2", "text": "order", "database": "archive"}
@@ -1242,7 +1364,7 @@ class TestEntry:
         instructions, names, status = self.answers(env)
         assert "This server reaches many stands." in instructions
         assert names == list(STAND_PROFILES["explore"])
-        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 5" in status
+        assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 6" in status
 
     def test_without_pg_mcp_stands_the_entry_works_as_before(self, env: dict[str, str]) -> None:
         del env["PG_EXPLORER_MCP_STANDS"]
@@ -1347,9 +1469,11 @@ def test_a_registry_with_a_password_that_others_can_read_is_a_warning(tmp_path: 
 
 
 def test_a_stand_names_its_schemas_when_the_schema_is_missing_or_unknown(registry: Registry) -> None:
-    with pytest.raises(StandError, match=r"Pass schema: .* Its schemas: billing, shipping\.$"):
+    with pytest.raises(
+        StandError, match=r"Pass schema: .* Its schemas: billing, shipping; any schema of archive, passed"
+    ):
         registry.target("dev1", " ")
-    with pytest.raises(StandError, match=r"no schema 'public' .* Its schemas: billing\.$"):
+    with pytest.raises(StandError, match=r"no schema 'public' .* Its schemas: billing, returns\.$"):
         registry.target("dev2", "public")
 
 
