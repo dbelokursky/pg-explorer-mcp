@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -958,6 +959,19 @@ class TestParallelStands:
             "  fine",
         ]
         assert pool.outcomes == {"dev2": "error"}
+
+    @pytest.mark.usefixtures("russian")
+    def test_the_threads_speak_the_language_of_the_call(self, pool: Pool, tools: dict[str, Tool]) -> None:
+        """A thread of its own starts in English, so a Russian server answered stand by stand in English."""
+        no_rows = i18n.plural("rows.count", 0)
+        answers, late = stand_tools._ask_stands(
+            pool, ["dev1", "dev2"], lambda _stand: [i18n.current(), i18n.plural("rows.count", 0)]
+        )
+        assert late == []
+        assert answers == {"dev1": ["ru", no_rows], "dev2": ["ru", no_rows]}  # what _folded compares with
+        lines = tools["run_select"].call({"stands": "*", "schema": "billing", "query": "SELECT 1"}).splitlines()
+        assert lines[::2] == ["dev1 / orders / billing", "dev2 / orders / billing", "ift1 / orders / billing"]
+        assert all(re.search("[а-я]", line) for line in lines[1::2]), lines  # what stopped each stand, in Russian
 
 
 class TestSilentHost:

@@ -144,6 +144,20 @@ def test_broken_or_multiple_statements_are_refused(sql: str, fragment: str) -> N
         check_read_only(sql)
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        'SELECT U&"pg\\005fsleep"(0)',
+        "SELECT U&\"pg!005fterminate!005fbackend\" UESCAPE '!' (pg_backend_pid())",
+        'SELECT u&"d\\0061ta" FROM orders',
+    ],
+)
+def test_unicode_escaped_identifiers_are_refused_since_the_check_reads_names_as_written(sql: str) -> None:
+    # PostgreSQL reads U&"pg\005fsleep" as pg_sleep: without this refusal the first two run.
+    with pytest.raises(SqlRejectedError, match=r'U&"\.\.\." are not allowed'):
+        check_read_only(sql)
+
+
 def test_query_must_be_a_string() -> None:
     with pytest.raises(SqlRejectedError, match="non-empty string"):
         check_read_only(42)

@@ -302,6 +302,7 @@ class TestData:
             "SELECT set_config('default_transaction_read_only', 'off', false)",
             f"SELECT 1; DROP TABLE {SCHEMA}.orders",
             f"SELECT * FROM {SCHEMA}.orders FOR UPDATE",
+            'SELECT U&"pg\\005fterminate\\005fbackend"(pg_backend_pid())',  # pg_terminate_backend, escaped
         ],
     )
     def test_run_select_refuses_every_kind_of_write(self, analyst: dict[str, Tool], query: str) -> None:

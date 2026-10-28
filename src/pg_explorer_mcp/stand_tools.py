@@ -11,6 +11,7 @@ compare_schema reads one schema on two stands with its login on each.
 
 from __future__ import annotations
 
+import contextvars
 import platform
 import threading
 import time
@@ -580,6 +581,9 @@ def _ask_stands(
     The answers of the stands that made it, and the stands that did not: the client waits only so long
     for the call, so the call does not wait for them. Their threads finish on their own, and the pool
     keeps their connections until then. The time a call takes is that of its slowest stand, not the sum.
+
+    Each thread runs in a copy of the call's context, so that t() speaks the server's language there:
+    a thread of its own starts with the default language, English, whatever the server was told.
     """
     answers: dict[str, list[str]] = {}
 
@@ -591,7 +595,10 @@ def _ask_stands(
             answers[stand] = [stand, f"  {exc}"]
 
     threads = [
-        threading.Thread(target=ask, args=(stand,), name=f"pg-explorer-mcp {stand}", daemon=True) for stand in stands
+        threading.Thread(
+            target=contextvars.copy_context().run, args=(ask, stand), name=f"pg-explorer-mcp {stand}", daemon=True
+        )
+        for stand in stands
     ]
     deadline = time.monotonic() + CALL_TIME_BUDGET_S
     for thread in threads:
