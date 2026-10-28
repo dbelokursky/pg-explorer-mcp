@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .db import DEFAULT_STATEMENT_TIMEOUT_MS, Counters, Database, Settings
+from .db import DEFAULT_STATEMENT_TIMEOUT_MS, Counters, Database, Settings, split_hosts
 from .i18n import plural, t
 
 DEFAULT_MAX_CONNECTIONS = 8
@@ -67,8 +67,12 @@ class Target:
 
     @property
     def address(self) -> str:
-        """host:port, shared by the logins of one server."""
-        return f"{self.options['host']}:{self.options.get('port', '5432')}"
+        """host:port of every host, shared by the logins of one server; a stand may list several hosts."""
+        return ",".join(f"{host}:{port}" for host, port in self.endpoints())
+
+    def endpoints(self) -> list[tuple[str, int]]:
+        """The hosts with their ports, in the order the server tries them: host=h1,h2 with port=p or port=p1,p2."""
+        return split_hosts(self.options["host"], self.options.get("port", "5432"))
 
     def env(self, base: Mapping[str, str]) -> dict[str, str]:
         """PG* variables for Database: the section's settings over what the server itself got."""
@@ -474,9 +478,18 @@ def _target(name: str, options: dict[str, str], source: str, warnings: list[str]
         warnings.append(t("stands.no_host", name=name, path=source))
         return None
     for option in ("port", "connect_timeout"):
-        if option in options and not options[option].isdigit():
+        if option not in options:
+            continue
+        # port may list one port per host, as libpq takes it: host=h1,h2 with port=6544,6545
+        numbers = options[option].split(",") if option == "port" else [options[option]]
+        if not all(number.strip().isdigit() for number in numbers):
             warnings.append(t("stands.bad_number", name=name, path=source, option=option, value=options[option]))
             return None
+    try:
+        split_hosts(options["host"], options.get("port", "5432"))
+    except ValueError as exc:  # more ports than hosts, or fewer
+        warnings.append(t("stands.bad_hosts", name=name, path=source, problem=exc))
+        return None
     stand, database, schema = parts
     return Target(stand.lower(), database, schema, dict(options), source)
 

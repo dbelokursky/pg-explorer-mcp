@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .aes import decrypt_cbc
-from .db import pgpass_path
+from .db import pgpass_path, split_hosts
 from .i18n import t
 from .stands import Target, exported_sections, parse_service_file, registry_files
 
@@ -42,16 +42,23 @@ class Connection:
     source: str  # where it came from, for the preview
     name: str
     folder: str
-    host: str
-    port: str
+    host: str  # one host, or several separated by commas, as libpq takes them
+    port: str  # one port for every host, or one per host separated by commas
     database: str
     user: str
     password: str | None
     options: Mapping[str, str] = field(default_factory=dict)  # sslmode and the like
 
     @property
+    def endpoints(self) -> list[tuple[str, str]]:
+        """Each host with its port, in order; the port of every host when there is one port."""
+        hosts = [host.strip() for host in self.host.split(",")]
+        ports = [port.strip() for port in self.port.split(",")]
+        return list(zip(hosts, ports * len(hosts) if len(ports) == 1 else ports))
+
+    @property
     def address(self) -> str:
-        return f"{self.host}:{self.port}"
+        return ",".join(f"{host}:{port}" for host, port in self.endpoints)
 
 
 @dataclass
@@ -93,7 +100,7 @@ def read_dbeaver(folder: Path) -> list[Connection]:
             continue
         configuration = entry.get("configuration", {})
         saved = credentials.get(identifier, {}).get("#connection", {})
-        host, port, database = _dbeaver_address(configuration)
+        host, port, database = dbeaver_address(configuration)
         connections.append(
             Connection(
                 source="DBeaver",
@@ -123,19 +130,40 @@ def _dbeaver_credentials(path: Path) -> dict[str, dict[str, dict[str, str]]]:
     return decoded if isinstance(decoded, dict) else {}
 
 
-def _dbeaver_address(configuration: Mapping[str, object]) -> tuple[str, str, str]:
+def dbeaver_address(configuration: Mapping[str, object]) -> tuple[str, str, str]:
+    """Host, port and database of a DBeaver connection, the hosts as a libpq list when there are several.
+
+    DBeaver keeps a connection with several hosts as the host field "h1:6544,h2" with the port field
+    6544, and builds the URL jdbc:postgresql://h1:6544,h2:6544/db from them: a host without a port of
+    its own takes the port field. A connection made by URL has the hosts in the URL instead, and so
+    does one whose host field is empty.
+    """
     host = str(configuration.get("host") or "")
-    port = str(configuration.get("port") or "5432")
+    port = str(configuration.get("port") or "")
     database = str(configuration.get("database") or "")
-    url = str(configuration.get("url") or "")
-    match = re.match(r"jdbc:postgresql://([^/:?]+)(?::(\d+))?/([^?]*)", url)
-    if match:
-        host, port, database = (
-            host or match.group(1),
-            port if port != "5432" else (match.group(2) or port),
-            database or match.group(3),
-        )
-    return host, port, database
+    match = re.match(r"jdbc:postgresql://([^/?]+)/([^?]*)", str(configuration.get("url") or ""))
+    by_url = configuration.get("configurationType") == "URL" or not host
+    pairs = _endpoints(match.group(1) if by_url and match else host, port or "5432")
+    database = database or (match.group(2) if match else "")
+    if not pairs:
+        return "", port or "5432", database
+    numbers = [number for _, number in pairs]
+    return ",".join(name for name, _ in pairs), numbers[0] if len(set(numbers)) == 1 else ",".join(numbers), database
+
+
+def _endpoints(text: str, default_port: str) -> list[tuple[str, str]]:
+    """The host:port pairs of a list such as "h1:6544,h2": a host without a port of its own takes the default."""
+    pairs = []
+    for raw in text.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        name, colon, number = item.rpartition(":")
+        if colon and name and number.isdigit():
+            pairs.append((name, number))
+        else:
+            pairs.append((item, default_port))
+    return pairs
 
 
 def read_pg_service(path: Path) -> list[Connection]:
@@ -203,15 +231,18 @@ def plan(connections: Iterable[Connection], pattern: re.Pattern[str]) -> Plan:
         if connection.password is None:
             result.without_password.append(target)
         else:
-            result.passwords[connection.host, connection.port, connection.database, connection.user] = (
-                connection.password
-            )
+            for host, port in connection.endpoints:  # libpq matches a password line against one host
+                result.passwords[host, port, connection.database, connection.user] = connection.password
     return result
 
 
 def _problem(connection: Connection, stand: str | None) -> str | None:
     if not connection.host:
         return t("import.no_host")
+    try:
+        split_hosts(connection.host, connection.port)
+    except ValueError as exc:  # a port that is not a number, or a count of ports that matches no host
+        return str(exc)
     if not connection.database:
         return t("import.no_database")
     if not connection.user:
@@ -240,7 +271,7 @@ def preview(result: Plan, registry_file: Path, passfile: Path) -> list[str]:
     lines = [t("import.preview_header", count=len(result.targets), registry=registry_file)]
     for target in result.targets:
         note = "" if target not in result.without_password else "  " + t("import.preview_no_password")
-        lines.append(f"  [{target.name}]  {target.options['host']}:{target.options.get('port', '5432')}{note}")
+        lines.append(f"  [{target.name}]  {target.address}{note}")
     lines.append(t("import.preview_passwords", count=len(result.passwords), passfile=passfile))
     if result.skipped:
         lines.append(t("import.preview_skipped", count=len(result.skipped)))

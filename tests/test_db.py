@@ -582,6 +582,22 @@ def test_the_server_can_be_reached_through_its_unix_socket(admin: pg8000.native.
     assert "database: connected to" in text
 
 
+class TestSeveralHosts:
+    """PGHOST may list several hosts: the server tries them in turn and keeps the first that lets it in."""
+
+    def test_a_dead_first_host_only_costs_the_time_to_refuse(self, unreachable_env: dict[str, str]) -> None:
+        dead, live = unreachable_env["PGPORT"], Settings.from_env(os.environ)
+        text = status_with(PGHOST=f"127.0.0.1,{live.host}", PGPORT=f"{dead},{live.port}")
+        assert f"@127.0.0.1:{dead},{live.host}:{live.port}/" in text
+        assert "database: connected to" in text
+
+    def test_every_dead_host_is_named(self, unreachable_env: dict[str, str]) -> None:
+        dead = unreachable_env["PGPORT"]
+        text = status_with(PGHOST="127.0.0.1,127.0.0.1", PGPORT=dead)
+        assert "None of the hosts let the login in." in text
+        assert text.count(f"Nothing accepts connections at 127.0.0.1:{dead}") == 2
+
+
 class TestConnectionHints:
     """Connection failures come back as hints that say what to fix."""
 

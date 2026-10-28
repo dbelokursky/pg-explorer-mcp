@@ -24,6 +24,9 @@ ITEMS = [BILLING, SHIPPING, IFT]
 VERIFIED = Connection(
     "dev9", "orders", "billing", "h", 5432, "orders", "billing", "verify-full", "/etc/my certs/ca.pem"
 )
+# Stands with two hosts: each with a port of its own, and both on one port.
+TWO = Connection("ift1", "orders", "billing", "h1", 6544, "orders", "billing", None, more_hosts=(("h2", 6545),))
+SAME = Connection("ift2", "orders", "billing", "h1", 6544, "orders", "billing", None, more_hosts=(("h2", 6544),))
 
 
 def registry(tmp_path: Path, text: str, service: str | None = None) -> dict[str, str]:
@@ -102,6 +105,53 @@ class TestConnections:
             tmp_path, "[dev9.orders.billing]\nhost=h\nsslmode=verify-full\nsslrootcert=/etc/my certs/ca.pem\n"
         )
         assert exports.connections(env)[0] == [VERIFIED]
+
+
+class TestSeveralHosts:
+    """A stand with several hosts: every tool gets as many of them as it can take."""
+
+    def test_the_registry_gives_each_host_its_port(self, tmp_path: Path) -> None:
+        env = registry(
+            tmp_path,
+            "[ift1.orders.billing]\nhost=h1,h2\nport=6544,6545\n\n[ift2.orders.billing]\nhost=h1, h2\nport=6544\n",
+        )
+        items, _ = exports.connections(env)
+        assert items == [TWO, SAME]
+        assert (items[0].hosts, items[1].hosts) == ((("h1", 6544), ("h2", 6545)), (("h1", 6544), ("h2", 6544)))
+
+    def test_libpq_and_pgjdbc_take_every_host(self) -> None:
+        assert exports.jdbc_url(TWO) == "jdbc:postgresql://h1:6544,h2:6545/orders"
+        assert exports.pg_service([TWO, SAME], "") == (
+            "# pg-explorer-mcp export\n[ift1.orders.billing]\nhost=h1,h2\nport=6544,6545\ndbname=orders\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
+            "\n# pg-explorer-mcp export\n[ift2.orders.billing]\nhost=h1,h2\nport=6544\ndbname=orders\n"
+            "user=billing\noptions=-c search_path=billing,public\n"
+        )
+
+    def test_dbeaver_gets_the_hosts_the_way_it_writes_them(self) -> None:
+        connections = json.loads(exports.dbeaver([TWO, SAME]))["connections"]
+        two = connections[f"postgres-jdbc-pg-mcp-{TWO.uid()}"]["configuration"]
+        assert (two["host"], two["port"], two["url"]) == (
+            "h1:6544,h2",
+            "6545",
+            "jdbc:postgresql://h1:6544,h2:6545/orders",
+        )
+        same = connections[f"postgres-jdbc-pg-mcp-{SAME.uid()}"]["configuration"]
+        assert (same["host"], same["port"]) == ("h1:6544,h2", "6544")
+
+    def test_a_dbeaver_connection_with_the_same_hosts_is_left_out(self, tmp_path: Path) -> None:
+        entry = postgres("ift", "H1:6544,h2", "orders", user="billing", port="6544")
+        folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": entry}, {})
+        assert exports.prepare("dbeaver", [SAME, TWO], {}, tmp_path, workspace=folder).items == [TWO]
+
+    def test_tools_with_one_port_field_take_every_host_only_when_the_port_is_shared(self) -> None:
+        servers = json.loads(exports.pgadmin([SAME, TWO], "/p"))["Servers"]
+        assert (servers["1"]["Host"], servers["1"]["Port"]) == ("h1,h2", 6544)
+        assert (servers["2"]["Host"], servers["2"]["Port"]) == ("h1", 6544)
+        pgsql = exports.vscode_pgsql([SAME, TWO], {})["pgsql.connections"]
+        assert [(entry["server"], entry["port"]) for entry in pgsql] == [("h1,h2", "6544"), ("h1", "6544")]
+        [sqltools] = exports.sqltools([SAME], {})["sqltools.connections"]
+        assert (sqltools["server"], sqltools["port"]) == ("h1", 6544)  # node-postgres takes one host
 
 
 class TestPgService:
