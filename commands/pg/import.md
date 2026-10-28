@@ -11,9 +11,11 @@ Bring the user's stand connections into pg-explorer-mcp: from DBeaver, or from a
    connections that would go into the stands registry as `[stand.database.schema]`, how many passwords
    would go into the password file, and what is left out and why. Passwords are never printed; do not
    try to print them either.
-3. Show the user the preview and ask whether to write it. If a stand was not recognised, ask how the
-   stand is named in their folders or connection names and retry with
-   `--stand-pattern '<regular expression>'`; the default is `(dev|ift)\d+`.
+3. Show the user the preview and ask whether to write it. A connection whose folder, name and host
+   match no stand pattern gets its own name as the stand (`IFT-Caldera` becomes `ift-caldera`), and the
+   preview marks such lines; if the user wants a numbered stand instead, ask how the stand is named in
+   their folders or connection names and retry with `--stand-pattern '<regular expression>'`; the
+   default is `(dev|ift)[-_ ]?\d+`, and a separator between the letters and the number is dropped.
 4. Only after the user says yes, run the same command with `--write`. It writes the registry
    (`~/.pg-explorer-mcp/stands.conf`) and adds the passwords to the password file (`~/.pgpass`), keeping backups
    of both, and registers the `pg-stands` entry next to `pg` with `PG_EXPLORER_MCP_STANDS=*`. With `--prune` the

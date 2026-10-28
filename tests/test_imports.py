@@ -22,6 +22,7 @@ from pg_explorer_mcp.imports import (
     preview,
     read_dbeaver,
     read_pg_service,
+    stand_from_name,
     stand_of,
     write,
 )
@@ -86,6 +87,19 @@ class TestStandOf:
         assert stand_of(connection(name="orders", host="pg.ift2.corp"), PATTERN) == "ift2"
         assert stand_of(connection(name="orders", host="db.example"), PATTERN) is None
 
+    def test_a_separator_between_the_letters_and_the_number_is_dropped(self) -> None:
+        assert stand_of(connection(name="DEV-27"), PATTERN) == "dev27"
+        assert stand_of(connection(name="orders", folder="Stands/dev_12"), PATTERN) == "dev12"
+        assert stand_of(connection(name="Dev 3 orders"), PATTERN) == "dev3"
+        assert stand_of(connection(name="IFT-Caldera", host="tvldd-cldr00007.delta.sbrf.ru"), PATTERN) is None
+
+    def test_the_name_is_the_stand_when_the_pattern_finds_nothing(self) -> None:
+        assert stand_from_name("IFT-Caldera") == "ift-caldera"
+        assert stand_from_name("DEV be ai") == "dev-be-ai"
+        assert stand_from_name("Local PostgreSQL 16 (dev)") == "local-postgresql-16-dev"
+        assert stand_from_name("Заказы") is None  # nothing a section name may hold
+        assert stand_from_name("42") is None  # a number alone is no name
+
     def test_a_named_group_picks_the_part_that_is_the_stand(self) -> None:
         pattern = compile_pattern(r"stand[-_](?P<stand>[a-z]+\d+)")
         assert stand_of(connection(name="stand-Dev12 orders"), pattern) == "dev12"
@@ -120,36 +134,53 @@ class TestDBeaver:
         )  # the user is in the configuration
         assert (found["no password"].user, found["no password"].password) == ("", None)
 
-    def test_the_address_falls_back_to_the_jdbc_url(self, tmp_path: Path) -> None:
-        entry = postgres("x", "", "", port="5432")
-        entry["configuration"] = {"url": "jdbc:postgresql://dev3-db.example:6432/sales?ssl=true"}
-        folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": entry}, {})
-        found = read_dbeaver(folder)[0]
-        assert (found.host, found.port, found.database) == ("dev3-db.example", "6432", "sales")
+    def test_the_url_comes_first_and_the_fields_fill_in_what_it_lacks(self, tmp_path: Path) -> None:
+        by_url = postgres("by url", "localhost", "postgres", port="5432")  # DBeaver's defaults stay in the fields
+        by_url["configuration"] = {
+            "configurationType": "URL",
+            "host": "localhost",
+            "port": "5432",
+            "database": "postgres",
+            "url": "jdbc:postgresql://dev3-db.example:6432/sales?ssl=true",
+        }
+        bare = postgres("bare", "", "sales", port="")
+        bare["configuration"] = {
+            "database": "sales",
+            "url": "jdbc:postgresql://dev4-db.example",
+        }  # no slash, no database
+        folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": by_url, "pg-2": bare}, {})
+        found = {c.name: c for c in read_dbeaver(folder)}
+        assert (found["by url"].host, found["by url"].port, found["by url"].database) == (
+            "dev3-db.example",
+            "6432",
+            "sales",
+        )
+        assert (found["bare"].host, found["bare"].port, found["bare"].database) == ("dev4-db.example", "5432", "sales")
 
     def test_several_hosts_come_as_dbeaver_keeps_them(self, tmp_path: Path) -> None:
         """DBeaver writes "h1:6544,h2" with the port 6544, and the URL jdbc:postgresql://h1:6544,h2:6544/db."""
-        by_url = postgres("by url", "stale", "", port="5432")
-        by_url["configuration"] = {  # made by URL: the hosts are in the URL, whatever the host field holds
-            "configurationType": "URL",
-            "url": "jdbc:postgresql://h3:6544,h4:6545/sales",
-            "host": "stale",
-            "port": "5432",
+        mixed = postgres("mixed", "h5:6544,h6:6545", "orders")
+        mixed["configuration"] = {  # a port per host and the port field empty: the URL is the hosts as written
+            "host": "h5:6544,h6:6545",
+            "port": "",
+            "database": "orders",
+            "url": "jdbc:postgresql://h5:6544,h6:6545/orders",
         }
+        shared = postgres("shared port", "h7,h8", "orders", port="6544")  # the URL DBeaver builds: h7,h8:6544
         folder = dbeaver_workspace(
             tmp_path / ".dbeaver",
             {
                 "pg-1": postgres("IFT-Caldera", "h1:6544,h2", "caldera_ift1", port="6544"),
-                "pg-2": by_url,
-                "pg-3": postgres("mixed", "h5:6544,h6:6545", "orders", port="6545"),
+                "pg-2": mixed,
+                "pg-3": shared,
             },
             {},
         )
         found = {c.name: c for c in read_dbeaver(folder)}
         assert (found["IFT-Caldera"].host, found["IFT-Caldera"].port) == ("h1,h2", "6544")
         assert found["IFT-Caldera"].address == "h1:6544,h2:6544"
-        assert (found["by url"].host, found["by url"].port, found["by url"].database) == ("h3,h4", "6544,6545", "sales")
         assert (found["mixed"].host, found["mixed"].port) == ("h5,h6", "6544,6545")
+        assert (found["shared port"].host, found["shared port"].port) == ("h7,h8", "6544")
 
     def test_credentials_in_secure_storage_or_absent_leave_the_logins_empty(self, tmp_path: Path) -> None:
         folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": postgres("orders", "db", "orders")}, {})
@@ -209,7 +240,8 @@ class TestPlan:
                 connection(),
                 connection(name="shop on dev7", database="shop", user="shop", password=None),
                 connection(name="copy of orders on dev7"),
-                connection(name="orders", host="db.example"),
+                connection(name="orders", host="db.example"),  # no stand anywhere: its name serves as one
+                connection(name="Заказы", host="db.example"),  # nor any Latin letter to make one
                 connection(name="no host on dev7", host=""),
                 connection(name="no user on dev7", user=""),
                 connection(name="odd on dev7", database="my db"),
@@ -220,9 +252,11 @@ class TestPlan:
         assert [target.name for target in result.targets] == [
             "dev7.orders.billing",
             "dev7.shop.shop",
+            "orders.orders.billing",
             "ift1.orders.billing",
         ]
-        assert result.targets[2].options == {"host": "ift1-db", "port": "6432", "sslmode": "require"}
+        assert [target.name for target in result.named] == ["orders.orders.billing"]
+        assert result.targets[3].options == {"host": "ift1-db", "port": "6432", "sslmode": "require"}
         assert result.passwords == {
             ("db.example", "5432", "orders", "billing"): "s3cret",
             ("ift1-db", "6432", "orders", "billing"): "s3cret",
@@ -233,7 +267,7 @@ class TestPlan:
                 "copy of orders on dev7",
                 "the same stand, database and user as 'orders on dev7': [dev7.orders.billing] is already taken",
             ),
-            ("orders", "no stand in the folder, the name or the host"),
+            ("Заказы", "no stand: the pattern matched nothing, and the name has no Latin letters to be one"),
             ("no host on dev7", "no host"),
             ("no user on dev7", "no user: pg-explorer-mcp reads a schema with the login of the same name"),
             ("odd on dev7", "'my db' cannot be a part of a section name (letters, digits, _ $ - only)"),
@@ -260,15 +294,20 @@ class TestPlan:
                 connection(),
                 connection(name="shop on dev7", database="shop", user="shop", password=None),
                 connection(name="x"),
+                connection(name="Заказы"),
             ],
             PATTERN,
         )
         lines = preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")
-        assert lines[0] == f"2 connections go into {tmp_path / 'stands.conf'}:"
+        assert lines[0] == f"3 connections go into {tmp_path / 'stands.conf'}:"
         assert lines[1] == "  [dev7.orders.billing]  db.example:5432"
         assert lines[2] == "  [dev7.shop.shop]  db.example:5432  no saved password: add a line to the password file"
-        assert lines[3] == f"1 passwords go into {tmp_path / 'pgpass'}"
-        assert lines[4:] == ["left out: 1", "  test: x  no stand in the folder, the name or the host"]
+        assert lines[3] == "  [x.orders.billing]  db.example:5432  stand from the connection name"
+        assert lines[4] == f"1 passwords go into {tmp_path / 'pgpass'}"
+        assert lines[5:] == [
+            "left out: 1",
+            "  test: Заказы  no stand: the pattern matched nothing, and the name has no Latin letters to be one",
+        ]
         assert "s3cret" not in "\n".join(lines)
 
 

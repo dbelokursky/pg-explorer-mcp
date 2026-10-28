@@ -463,7 +463,8 @@ EN: dict[str, str] = {
     "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
     "install.help.prune": "with --write: replace the registry instead of adding to it",
     "install.help.stand_pattern": (
-        "regular expression that finds the stand in a folder, connection name or host (default: {pattern})"
+        "regular expression that finds the stand in a folder, connection name or host (default: {pattern}); "
+        "a connection it matches nowhere takes its own name as the stand"
     ),
     "import.unreadable": "cannot read {path}: {error}",
     "import.bad_pattern": "the stand pattern {pattern!r} is not a regular expression: {error}",
@@ -471,10 +472,11 @@ EN: dict[str, str] = {
     "import.no_host": "no host",
     "import.no_database": "no database",
     "import.no_user": "no user: pg-explorer-mcp reads a schema with the login of the same name",
-    "import.no_stand": "no stand in the folder, the name or the host",
+    "import.no_stand": "no stand: the pattern matched nothing, and the name has no Latin letters to be one",
     "import.bad_name": "{part!r} cannot be a part of a section name (letters, digits, _ $ - only)",
     "import.reading": "reading {source}",
     "import.preview_header": "{count} connections go into {registry}:",
+    "import.preview_named": "stand from the connection name",
     "import.preview_no_password": "no saved password: add a line to the password file",
     "import.preview_passwords": "{count} passwords go into {passfile}",
     "import.preview_skipped": "left out: {count}",
@@ -967,7 +969,8 @@ RU: dict[str, str] = {
     "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
     "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
     "install.help.stand_pattern": (
-        "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern})"
+        "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern}); "
+        "подключение, где оно ничего не нашло, получает стендом своё имя"
     ),
     "import.unreadable": "не удалось прочитать {path}: {error}",
     "import.bad_pattern": "шаблон стенда {pattern!r} — не регулярное выражение: {error}",
@@ -975,10 +978,11 @@ RU: dict[str, str] = {
     "import.no_host": "нет хоста",
     "import.no_database": "нет базы",
     "import.no_user": "нет пользователя: pg-explorer-mcp читает схему под одноимённой учёткой",
-    "import.no_stand": "стенд не найден ни в папке, ни в имени, ни в хосте",
+    "import.no_stand": "нет стенда: шаблон ничего не нашёл, а в имени нет латинских букв, чтобы стать им",
     "import.bad_name": "{part!r} не годится в имя секции (только буквы, цифры, _ $ -)",
     "import.reading": "читаю {source}",
     "import.preview_header": "в {registry} попадут подключения: {count}",
+    "import.preview_named": "стенд из имени подключения",
     "import.preview_no_password": "пароль не сохранён: добавьте строку в файл паролей",
     "import.preview_passwords": "в {passfile} попадут пароли: {count}",
     "import.preview_skipped": "пропущено: {count}",

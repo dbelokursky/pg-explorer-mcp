@@ -26,8 +26,10 @@ from .stands import Target, exported_sections, parse_service_file, registry_file
 # DBeaver encrypts credentials-config.json with this key unless the user turned on its secure storage.
 DBEAVER_KEY = bytes.fromhex("babb4a9f774ab853c96c2d653dfe544a")
 DBEAVER_PROVIDER = "postgresql"
-DEFAULT_STAND_PATTERN = r"(dev|ift)\d+"
+DEFAULT_STAND_PATTERN = r"(dev|ift)[-_ ]?\d+"  # letters, then a number, with or without a separator between
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")  # what a part of a stand.database.schema section may hold
+_SEPARATORS = re.compile(r"[-_ ]+")  # what a stand the pattern found loses: DEV-27 is the stand dev27
+_NAME_WORD = re.compile(r"[a-z0-9_$]+")  # the words of a connection name that may make a stand name
 _FILE_MODE = 0o600
 
 
@@ -69,6 +71,7 @@ class Plan:
     passwords: dict[tuple[str, str, str, str], str] = field(default_factory=dict)  # host, port, db, user
     without_password: list[Target] = field(default_factory=list)
     skipped: list[tuple[Connection, str]] = field(default_factory=list)
+    named: list[Target] = field(default_factory=list)  # whose stand is the connection name: the pattern found none
 
 
 # --- reading -------------------------------------------------------------------------------------
@@ -133,18 +136,18 @@ def _dbeaver_credentials(path: Path) -> dict[str, dict[str, dict[str, str]]]:
 def dbeaver_address(configuration: Mapping[str, object]) -> tuple[str, str, str]:
     """Host, port and database of a DBeaver connection, the hosts as a libpq list when there are several.
 
-    DBeaver keeps a connection with several hosts as the host field "h1:6544,h2" with the port field
-    6544, and builds the URL jdbc:postgresql://h1:6544,h2:6544/db from them: a host without a port of
-    its own takes the port field. A connection made by URL has the hosts in the URL instead, and so
-    does one whose host field is empty.
+    The URL comes first and the fields fill in what it lacks: a connection made by URL keeps DBeaver's
+    defaults in its fields, "postgres" as the database among them, and a connection made by fields has
+    its URL built from them anyway. DBeaver keeps several hosts as the host field "h1:6544,h2" with the
+    port field 6544 and the URL jdbc:postgresql://h1:6544,h2:6544/db: a host without a port of its own
+    takes the port field.
     """
     host = str(configuration.get("host") or "")
     port = str(configuration.get("port") or "")
     database = str(configuration.get("database") or "")
-    match = re.match(r"jdbc:postgresql://([^/?]+)/([^?]*)", str(configuration.get("url") or ""))
-    by_url = configuration.get("configurationType") == "URL" or not host
-    pairs = _endpoints(match.group(1) if by_url and match else host, port or "5432")
-    database = database or (match.group(2) if match else "")
+    match = re.match(r"jdbc:postgresql://([^/?]+)/?([^?]*)", str(configuration.get("url") or ""))
+    pairs = _endpoints(match.group(1) if match else host, port or "5432")
+    database = (match.group(2) if match else "") or database
     if not pairs:
         return "", port or "5432", database
     numbers = [number for _, number in pairs]
@@ -196,13 +199,26 @@ def read_pg_service(path: Path) -> list[Connection]:
 
 
 def stand_of(connection: Connection, pattern: re.Pattern[str]) -> str | None:
-    """The stand named in the folder, the connection name or the host, in that order; lower case."""
+    """The stand the pattern finds in the folder, the connection name or the host, in that order.
+
+    Lower case, without the separator a name may put between the letters and the number: DEV-27 is the
+    stand dev27, so that it folds into a range with dev26 and dev28.
+    """
     for text in (connection.folder, connection.name, connection.host):
         match = pattern.search(text)
         if match:
             found = match.group("stand") if "stand" in pattern.groupindex else match.group(0)
-            return found.lower()
+            return _SEPARATORS.sub("", found.lower())
     return None
+
+
+def stand_from_name(name: str) -> str | None:
+    """The connection name as the stand, for a connection the pattern says nothing about: IFT-Caldera is ift-caldera.
+
+    Lower case, the words joined by "-", only what a section name may hold; None when no Latin letter is left.
+    """
+    words = _NAME_WORD.findall(name.lower())
+    return "-".join(words) if any(char.isalpha() for word in words for char in word) else None
 
 
 def compile_pattern(raw: str) -> re.Pattern[str]:
@@ -218,6 +234,9 @@ def plan(connections: Iterable[Connection], pattern: re.Pattern[str]) -> Plan:
     seen: dict[str, Connection] = {}
     for connection in connections:
         stand = stand_of(connection, pattern)
+        from_name = stand is None
+        if from_name:
+            stand = stand_from_name(connection.name)
         problem = _problem(connection, stand)
         if problem is not None:
             result.skipped.append((connection, problem))
@@ -228,6 +247,8 @@ def plan(connections: Iterable[Connection], pattern: re.Pattern[str]) -> Plan:
             continue
         seen[target.name] = connection
         result.targets.append(target)
+        if from_name:
+            result.named.append(target)
         if connection.password is None:
             result.without_password.append(target)
         else:
@@ -270,8 +291,10 @@ def preview(result: Plan, registry_file: Path, passfile: Path) -> list[str]:
     """Lines for the screen: what goes where, without a single password."""
     lines = [t("import.preview_header", count=len(result.targets), registry=registry_file)]
     for target in result.targets:
-        note = "" if target not in result.without_password else "  " + t("import.preview_no_password")
-        lines.append(f"  [{target.name}]  {target.address}{note}")
+        notes = [t("import.preview_named")] if target in result.named else []
+        if target in result.without_password:
+            notes.append(t("import.preview_no_password"))
+        lines.append(f"  [{target.name}]  {target.address}" + "".join(f"  {note}" for note in notes))
     lines.append(t("import.preview_passwords", count=len(result.passwords), passfile=passfile))
     if result.skipped:
         lines.append(t("import.preview_skipped", count=len(result.skipped)))
