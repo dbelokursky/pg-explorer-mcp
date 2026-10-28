@@ -2,9 +2,12 @@
 
 The registry uses the pg_service.conf format of libpq: one section per
 connection, named stand.database.schema, with host, port, dbname and user (the
-schema's name when omitted); passwords stay in the password file. The server
-only reads the registry, and reads it leniently: a missing file, an unreadable
-file or a broken section becomes a warning in status, never a failure (ADR 0006).
+schema's name when omitted); passwords stay in the password file. A database
+whose sections all share one login is read through it as a whole: that login
+takes any schema, and the catalog, not the registry, says which schemas there
+are. The server only reads the registry, and reads it leniently: a missing
+file, an unreadable file or a broken section becomes a warning in status, never
+a failure (ADR 0006).
 """
 
 from __future__ import annotations
@@ -17,7 +20,8 @@ import sys
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from itertools import groupby
 from pathlib import Path
 from typing import Any
 
@@ -70,9 +74,22 @@ class Target:
         """host:port of every host, shared by the logins of one server; a stand may list several hosts."""
         return ",".join(f"{host}:{port}" for host, port in self.endpoints())
 
+    @property
+    def login(self) -> str:
+        """The role the server connects as: the section's user, else the schema's own name (ADR 0006)."""
+        return self.options.get("user", self.schema)
+
     def endpoints(self) -> list[tuple[str, int]]:
         """The hosts with their ports, in the order the server tries them: host=h1,h2 with port=p or port=p1,p2."""
         return split_hosts(self.options["host"], self.options.get("port", "5432"))
+
+    def for_schema(self, schema: str) -> Target:
+        """This section's login reading another schema of its database, for a database read as a whole.
+
+        The login stays fixed, the schema goes first on the search path, and the name changes with it:
+        the pool keeps a connection per name, so each schema read this way has one of its own.
+        """
+        return replace(self, schema=schema, options={**self.options, "user": self.login})
 
     def env(self, base: Mapping[str, str]) -> dict[str, str]:
         """PG* variables for Database: the section's settings over what the server itself got."""
@@ -91,7 +108,7 @@ class Target:
         env["PGHOST"] = self.options["host"]
         env["PGPORT"] = self.options.get("port", "5432")
         env["PGDATABASE"] = self.options.get("dbname", self.database)
-        env["PGUSER"] = self.options.get("user", self.schema)
+        env["PGUSER"] = self.login
         env["PG_EXPLORER_MCP_SEARCH_PATH"] = self.schema
         optional = (
             ("sslmode", "PGSSLMODE"),
@@ -103,6 +120,25 @@ class Target:
             if self.options.get(option):
                 env[variable] = self.options[option]
         return env
+
+
+def by_database(targets: Sequence[Target]) -> list[tuple[str, list[Target]]]:
+    """The sections of a stand grouped by database, databases and schemas in name order."""
+    ordered = sorted(targets, key=lambda target: (target.database, target.schema))
+    return [(database, list(group)) for database, group in groupby(ordered, key=lambda target: target.database)]
+
+
+def whole_database(sections: Sequence[Target]) -> Target | None:
+    """The section whose login reads a database as a whole: the first, when the database's sections share one login.
+
+    A database with a login per schema has a section per schema, each under its own login (ADR 0006).
+    A database the registry holds one login for is read through that login as a whole: a connection
+    imported from DBeaver is one section, named after its login, whatever schemas that login reads.
+    For such a database the schema a call names need not be in the registry, and the catalog, read
+    with the login's own privileges, says which schemas there are.
+    """
+    logins = {section.login for section in sections}
+    return sections[0] if len(logins) == 1 else None
 
 
 @dataclass
@@ -170,29 +206,63 @@ class Registry:
         return stands
 
     def target(self, stand: str, schema: Any, database: Any = None) -> Target:
-        """The connection for a schema of a stand; database only matters when the schema repeats."""
-        known = sorted({target.schema for target in self.of_stand(stand)})
+        """The connection for a schema of a stand; database only matters when the schema repeats.
+
+        A schema the registry lacks is read through the login of a database that is read as a whole,
+        when every database in question is one; with several of them, database says which.
+        """
         if not isinstance(schema, str) or not schema.strip():
-            raise StandError(t("stands.no_schema_argument", stand=stand, schemas=listed(known)))
+            raise StandError(t("stands.no_schema_argument", stand=stand, schemas=self.schemas_hint(stand)))
         wanted = schema.strip().strip('"').lower()
-        matches = [target for target in self.of_stand(stand) if target.schema.lower() == wanted]
+        chosen = self.of_stand(stand)
+        matches = [target for target in chosen if target.schema.lower() == wanted]
         if isinstance(database, str) and database.strip():
-            chosen = [target for target in matches if target.database.lower() == database.strip().lower()]
-            if matches and not chosen:
+            named = database.strip().lower()
+            chosen = [target for target in chosen if target.database.lower() == named]
+            if matches and not any(target in chosen for target in matches):
                 databases = ", ".join(sorted(target.database for target in matches))
                 raise StandError(
                     t("stands.schema_elsewhere", stand=stand, schema=schema, database=database, databases=databases)
                 )
-            matches = chosen
+            if not chosen:
+                databases = ", ".join(name for name, _ in by_database(self.of_stand(stand)))
+                raise StandError(t("stands.unknown_database", stand=stand, database=database, databases=databases))
+            matches = [target for target in matches if target in chosen]
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
             databases = ", ".join(sorted(target.database for target in matches))
             raise StandError(t("stands.schema_in_databases", stand=stand, schema=schema, databases=databases))
+        return self._through_one_login(stand, schema, wanted, chosen)
+
+    def _through_one_login(self, stand: str, schema: str, wanted: str, chosen: Sequence[Target]) -> Target:
+        """A schema the registry lacks: the login of the one database read as a whole, or what is wrong."""
+        groups = by_database(chosen)
+        whole = {database: whole_database(sections) for database, sections in groups}
+        logins = [section for section in whole.values() if section is not None]
+        if logins and len(logins) == len(whole):
+            if len(logins) == 1:
+                return logins[0].for_schema(wanted)
+            databases = ", ".join(whole)
+            raise StandError(t("stands.schema_in_whole_databases", stand=stand, schema=schema, databases=databases))
+        known = sorted({target.schema for name, sections in groups if whole[name] is None for target in sections})
         similar = difflib.get_close_matches(wanted, known, n=5, cutoff=0.6)
         if similar:
             raise StandError(t("stands.unknown_schema_similar", stand=stand, schema=schema, similar=", ".join(similar)))
-        raise StandError(t("stands.unknown_schema", stand=stand, schema=schema, schemas=listed(known)))
+        raise StandError(t("stands.unknown_schema", stand=stand, schema=schema, schemas=self.schemas_hint(stand)))
+
+    def schemas_hint(self, stand: str) -> str:
+        """The schemas an error names for a stand: those with logins of their own, and the databases read as a whole."""
+        groups = by_database(self.of_stand(stand))
+        whole = {database: whole_database(sections) for database, sections in groups}
+        known = sorted({target.schema for name, sections in groups if whole[name] is None for target in sections})
+        as_whole = ", ".join(name for name, section in whole.items() if section is not None)
+        if not known:
+            return t("stands.any_schema", databases=as_whole) if as_whole else t("error.none")
+        parts = [listed(known)]
+        if as_whole:
+            parts.append(t("stands.whole_databases", databases=as_whole))
+        return "; ".join(parts)
 
 
 def listed(names: Sequence[str], limit: int = SCHEMAS_LISTED) -> str:

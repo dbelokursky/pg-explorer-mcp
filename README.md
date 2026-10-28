@@ -42,7 +42,7 @@ English or Russian.
 | Tool | What it does | Profiles |
 |---|---|---|
 | `status` | which database, as which role, which profile and language, which limits; on failure, what to fix | all |
-| `list_schemas` | with [many stands](#many-stands): the databases of a stand and their schemas the server has logins for | all |
+| `list_schemas` | with [many stands](#many-stands): the databases of a stand and their schemas, those the server has logins for or all that a single login reads | all |
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
@@ -394,6 +394,10 @@ user=shop_reader
   both, or `port=6544,6545` with one per host. The server tries them in order and keeps the first that lets
   the login in, so a stand with a standby answers while its primary is down; when none does, the error
   names every host;
+- a database whose sections all name one login (a single section is one) is read as a whole through that
+  login: `schema` takes any schema the database holds, and `list_schemas` and `list_tables` show what the
+  login can read, as for one database; a database with a login per schema keeps to the schemas of the
+  registry;
 - passwords go into the password file, a line per login, just as for one database;
 - the server reads `~/.pg-explorer-mcp/stands.conf` (on Windows `%APPDATA%\pg-explorer-mcp\stands.conf`, or the file
   `PG_EXPLORER_MCP_STANDS_FILE` names) and your own `~/.pg_service.conf`; with equal names the first file wins.
@@ -425,8 +429,9 @@ The stand comes from the DBeaver folder, then the connection name, then the host
 regular expression `(dev|ift)[-_ ]?\d+` (`--stand-pattern` changes it); a separator between the letters
 and the number is dropped, so `DEV-27` is the stand `dev27`. A connection the pattern matches nowhere
 takes its own name as the stand, `IFT-Caldera` becoming `ift-caldera`, and the preview says so. The
-database is the connection's, from its URL first, and the schema is its login, since on a stand every
-schema has a login of its own name. The preview lists
+database is the connection's, from its URL first, and the section is named after its login: which
+schemas that login reads the import cannot know, so the server reads such a database as a whole through
+it, and a stand with a login per schema gets a section per login, as before. The preview lists
 what would be written and what is left out and why; passwords are never shown. `--write` rewrites
 `~/.pg-explorer-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`), adds the passwords
 to the password file without touching its other lines, keeps a dated backup of both files and
@@ -551,8 +556,9 @@ lacks is an error, not a stand full of differences.
 
 Without `schema`, `list_tables`, `search_schema` and `describe_table` cover the whole stand: the names
 come from the system catalog, which every login can see, through one login per database, and only the
-schemas of the registry are shown. The data stays behind each schema's own privileges: a login that
-cannot read a neighbouring schema gets `permission denied` there.
+schemas of the registry are shown; a database with one login shows whatever that login can read. The data
+stays behind each schema's own privileges: a login that cannot read a neighbouring schema gets
+`permission denied` there.
 
 **4. Several stands at once.** `search_schema` and `run_select` take `stands` instead of `stand`: stand
 names separated by commas or a pattern, `dev1,dev2,dev3` or `dev*`, at most 100 stands in one call. The

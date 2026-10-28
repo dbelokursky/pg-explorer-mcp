@@ -331,9 +331,7 @@ EN: dict[str, str] = {
     ),
     "stands.status_note": "With stand it also checks that stand.",
     "tool.list_schemas.title": "List schemas",
-    "tool.list_schemas.description": (
-        "Databases of a stand and the schemas with logins; call it first on a new stand."
-    ),
+    "tool.list_schemas.description": "Databases of a stand and their schemas; call it first on a new stand.",
     "argument.stand": "One of the stands: {stands}.",
     "argument.stands": 'Instead of stand: "dev*" or "dev1,dev2", at most {limit}.',
     "argument.stand_status": "Stand to check; omit for the list.",
@@ -373,12 +371,19 @@ EN: dict[str, str] = {
     "stands.no_rows": "no rows on {stands}",
     "stands.no_matches": "nothing matches on {stands}",
     "stands.no_schema_argument": (
-        "Pass schema: on stand {stand} the server reads data with the login of the schema you name. "
-        "Its schemas: {schemas}."
+        "Pass schema: on stand {stand} data is read in the schema you name, with its login. Its schemas: {schemas}."
     ),
     "stands.unknown_schema": (
         "Stand {stand} has no schema {schema!r} that the server has a login for. Its schemas: {schemas}."
     ),
+    "stands.any_schema": "any schema of {databases}: list_schemas shows them",
+    "stands.whole_databases": "any schema of {databases}, passed with database",
+    "stands.schema_in_whole_databases": (
+        "Schema {schema!r} is not in the registry of {stand}, and its databases {databases} are each read as a "
+        "whole with one login. Pass database to say which one holds it."
+    ),
+    "stands.more_schemas": "{names} and more, {count} in all",
+    "stands.no_readable_schemas": "no schema with tables that {login} can read",
     "stands.more_names": "{names} and more, {count} in all: list_schemas shows them",
     "stands.more_stands": "{names} and more, {count} in all: status lists them",
     "stands.ask_every": 'To look on every stand, call again with stands: "*" in place of stand.',
@@ -400,8 +405,7 @@ EN: dict[str, str] = {
     "stands.table_in_several": "{name!r} exists in several schemas of {stand}: {options}. Pass schema to pick one.",
     "stands.no_tables": "No tables or views in {schemas}: these schemas are empty or missing in this database.",
     "stands.table_not_found": (
-        "No table or view {name!r} in the schemas of {stand} that the server has logins for. "
-        "Call search_schema or list_schemas."
+        "No table or view {name!r} in the schemas of {stand} the server can read. Call search_schema or list_schemas."
     ),
     "stands.table_elsewhere": (
         "{error} In this database a table of that name is in schema {schemas}: call again with that schema."
@@ -831,7 +835,7 @@ RU: dict[str, str] = {
     ),
     "stands.status_note": "Со stand ещё и проверяет этот стенд.",
     "tool.list_schemas.title": "Список схем",
-    "tool.list_schemas.description": "Базы стенда и схемы с учётками; вызывайте первым на новом стенде.",
+    "tool.list_schemas.description": "Базы стенда и их схемы; вызывайте первым на новом стенде.",
     "argument.stand": "Один из стендов: {stands}.",
     "argument.stands": 'Вместо stand: "dev*" или "dev1,dev2", не больше {limit}.',
     "argument.stand_status": "Стенд для проверки; без него — список.",
@@ -875,12 +879,20 @@ RU: dict[str, str] = {
     "stands.no_rows": "нет строк на {stands}",
     "stands.no_matches": "ничего не нашлось на {stands}",
     "stands.no_schema_argument": (
-        "Передайте schema: на стенде {stand} сервер читает данные под учёткой схемы, которую вы назовёте. "
+        "Передайте schema: на стенде {stand} данные читаются в схеме, которую вы назовёте, под её учёткой. "
         "Его схемы: {schemas}."
     ),
     "stands.unknown_schema": (
         "На стенде {stand} нет схемы {schema!r}, для которой у сервера есть учётка. Его схемы: {schemas}."
     ),
+    "stands.any_schema": "любая схема базы {databases}: list_schemas покажет их",
+    "stands.whole_databases": "любая схема базы {databases} вместе с database",
+    "stands.schema_in_whole_databases": (
+        "Схемы {schema!r} нет в реестре стенда {stand}, а его базы {databases} читаются целиком, каждая одной "
+        "учёткой. Передайте database, чтобы сказать, в какой из них она."
+    ),
+    "stands.more_schemas": "{names} и другие, всего {count}",
+    "stands.no_readable_schemas": "ни одной схемы с таблицами, которые читает {login}",
     "stands.more_names": "{names} и другие, всего {count}: list_schemas покажет все",
     "stands.more_stands": "{names} и другие, всего {count}: status покажет все",
     "stands.ask_every": 'Чтобы посмотреть на всех стендах, вызовите ещё раз со stands: "*" вместо stand.',
@@ -906,7 +918,7 @@ RU: dict[str, str] = {
     ),
     "stands.no_tables": "В схемах {schemas} нет таблиц и представлений: схемы пустые или их нет в этой базе.",
     "stands.table_not_found": (
-        "В схемах стенда {stand}, для которых у сервера есть учётки, нет таблицы или представления {name!r}. "
+        "В схемах стенда {stand}, которые читает сервер, нет таблицы или представления {name!r}. "
         "Вызовите search_schema или list_schemas."
     ),
     "stands.table_elsewhere": (

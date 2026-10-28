@@ -9,8 +9,9 @@ Bring the user's stand connections into pg-explorer-mcp: from DBeaver, or from a
    `--lang ru` if the user writes in Russian; `install.py import pg-service <file>` for a service file;
    `--workspace <folder>` when DBeaver keeps its `data-sources.json` elsewhere). The output lists the
    connections that would go into the stands registry as `[stand.database.schema]`, how many passwords
-   would go into the password file, and what is left out and why. Passwords are never printed; do not
-   try to print them either.
+   would go into the password file, and what is left out and why. The schema part is the connection's
+   login; when that login reads many schemas, the server reads the whole database through it, so such a
+   section needs no editing by hand. Passwords are never printed; do not try to print them either.
 3. Show the user the preview and ask whether to write it. A connection whose folder, name and host
    match no stand pattern gets its own name as the stand (`IFT-Caldera` becomes `ift-caldera`), and the
    preview marks such lines; if the user wants a numbered stand instead, ask how the stand is named in
