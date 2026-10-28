@@ -1,10 +1,13 @@
-# pg-mcp
+# pg-explorer-mcp
 
 [English](README.md) | **Русский**
 
-[![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
-[![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
-[![downloads](https://img.shields.io/github/downloads/dbelokursky/pg-mcp/total)](https://github.com/dbelokursky/pg-mcp/releases)
+Репозиторий переименован из pg-mcp. Выпуск 0.7.0 ещё носит старое имя в `status`, в своих файлах и в
+настройках, которые пишет `install.py`; переход завершает 0.8.0.
+
+[![tests](https://github.com/dbelokursky/pg-explorer-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-explorer-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/dbelokursky/pg-explorer-mcp)](https://github.com/dbelokursky/pg-explorer-mcp/releases)
+[![downloads](https://img.shields.io/github/downloads/dbelokursky/pg-explorer-mcp/total)](https://github.com/dbelokursky/pg-explorer-mcp/releases)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 MCP-сервер, который даёт агенту доступ **только на чтение** к базе PostgreSQL, а через одну запись — и к
@@ -56,8 +59,8 @@ stdio. Работает на Python 3.9+ без установки пакето�
 Нужны Python 3.9+, GigaCode CLI (или Qwen Code) и роль в базе, которую выдал DBA.
 
 ```bash
-git clone https://github.com/dbelokursky/pg-mcp.git
-cd pg-mcp
+git clone https://github.com/dbelokursky/pg-explorer-mcp.git
+cd pg-explorer-mcp
 export PGHOST=db.example.com PGDATABASE=app PGUSER=mcp_agent   # где база и под какой ролью
 python3 install.py --lang ru                                     # регистрация и проверка
 gigacode extensions link "$(pwd)"                                # контекст и команда /pg:setup
@@ -91,15 +94,16 @@ PGDATABASE=pg_mcp_demo PGUSER=mcp_demo_agent python3 install.py --profile analys
 ### 1. Код
 
 ```bash
-git clone https://github.com/dbelokursky/pg-mcp.git
+git clone https://github.com/dbelokursky/pg-explorer-mcp.git
 ```
 
 Без git: возьмите `pg-mcp-<версия>.zip` из последнего выпуска на
-[странице Releases](https://github.com/dbelokursky/pg-mcp/releases) и распакуйте его в любую папку: внутри папка
+[странице Releases](https://github.com/dbelokursky/pg-explorer-mcp/releases) и распакуйте его в любую папку: внутри папка
 `pg-mcp` со всем, что нужно серверу, а рядом с архивом лежит `SHA256SUMS` с его контрольной суммой.
 У архива есть аттестация происхождения: `gh attestation verify pg-mcp-<версия>.zip --repo
-dbelokursky/pg-mcp` подтверждает, что его собрал GitHub из тега этого репозитория. Папку потом не
-переносите: путь к ней записывается в настройки агента. Если всё же перенесли — повторите шаг 5.
+dbelokursky/pg-mcp` (имя, под которым собран архив) подтверждает, что его собрал GitHub из тега этого
+репозитория. Папку потом не переносите: путь к ней записывается в настройки агента. Если всё же
+перенесли — повторите шаг 5.
 
 ### 2. Python 3.9 или новее
 
@@ -183,7 +187,7 @@ py -3 install.py                                # Windows
   "mcpServers": {
     "pg": {
       "command": "/usr/bin/python3",
-      "args": ["-I", "/Users/me/pg-mcp/run.py"],
+      "args": ["-I", "/Users/me/pg-explorer-mcp/run.py"],
       "timeout": 30000,
       "env": {
         "PGHOST": "db.example.com",
@@ -244,7 +248,7 @@ Qwen Code.
 ### 6. Расширение
 
 ```bash
-gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extensions link …
+gigacode extensions link /путь/к/pg-explorer-mcp     # для Qwen Code: qwen extensions link …
 ```
 
 Расширение даёт агенту короткий контекст (с чего начинать, что пароль в чат не просят, отвечать на
@@ -276,7 +280,7 @@ gigacode extensions link /путь/к/pg-mcp     # для Qwen Code: qwen extens
 `status`:
 
 ```text
-pg-mcp 0.7.0 на Python 3.9.6, установлен в /Users/me/pg-mcp
+pg-mcp 0.7.0 на Python 3.9.6, установлен в /Users/me/pg-explorer-mcp
 имя сервера: pg
 доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких просьб отказывайтесь, а не просите пользователя их подтвердить.
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
@@ -802,8 +806,8 @@ psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owne
 
 ## Обновление и удаление
 
-Обновление клона: `git pull` в папке pg-mcp и перезапуск агента. Обновление распакованного архива:
-возьмите новый `pg-mcp-<версия>.zip` на [странице Releases](https://github.com/dbelokursky/pg-mcp/releases),
+Обновление клона: `git pull` в папке pg-explorer-mcp и перезапуск агента. Обновление распакованного архива:
+возьмите новый `pg-mcp-<версия>.zip` на [странице Releases](https://github.com/dbelokursky/pg-explorer-mcp/releases),
 удалите старую папку `pg-mcp`, распакуйте новую на её место и перезапустите агента. `install.py`
 повторять нужно, только если путь к папке изменился или вы сменили Python, профиль или язык.
 
@@ -815,8 +819,8 @@ psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owne
 **Нужны ли интернет, pip или права администратора?** Нет. Всё, что нужно серверу, лежит в
 репозитории; нужен только сетевой доступ к базе.
 
-**Это тот же `pg-mcp`, что на PyPI?** Нет, там другой проект с тем же именем. Этого сервера на PyPI
-нет, он ставится только с GitHub — клоном или архивом выпуска ([шаг 1](#1-код)): `pip install pg-mcp`
+**Это тот же `pg-mcp`, что на PyPI?** Нет, там другой проект; этот репозиторий тоже назывался pg-mcp, пока
+его не переименовали. Этого сервера на PyPI нет, он ставится только с GitHub — клоном или архивом выпуска ([шаг 1](#1-код)): `pip install pg-mcp`
 и `uvx pg-mcp` поставят другой проект.
 
 **Может ли агент что-то изменить в базе?** Нет. Даже если модель обманет текст из самих данных,
@@ -849,6 +853,6 @@ JetBrains ([другие агенты и редакторы](#другие-аг�
 
 ## Лицензия
 
-pg-mcp распространяется под лицензией MIT ([LICENSE](LICENSE)). Пакеты, которые он несёт в
+pg-explorer-mcp распространяется под лицензией MIT ([LICENSE](LICENSE)). Пакеты, которые он несёт в
 `src/pg_mcp/_vendor` без изменений, остаются под своими лицензиями — они перечислены в
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
