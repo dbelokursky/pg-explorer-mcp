@@ -1,10 +1,13 @@
-# pg-mcp
+# pg-explorer-mcp
 
 **English** | [Русский](README.ru.md)
 
-[![tests](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-mcp/actions/workflows/tests.yml)
-[![release](https://img.shields.io/github/v/release/dbelokursky/pg-mcp)](https://github.com/dbelokursky/pg-mcp/releases)
-[![downloads](https://img.shields.io/github/downloads/dbelokursky/pg-mcp/total)](https://github.com/dbelokursky/pg-mcp/releases)
+The repository was renamed from pg-mcp. Release 0.7.0 still carries the old name in `status`, in its files and
+in the settings `install.py` writes; 0.8.0 completes the move.
+
+[![tests](https://github.com/dbelokursky/pg-explorer-mcp/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/dbelokursky/pg-explorer-mcp/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/dbelokursky/pg-explorer-mcp)](https://github.com/dbelokursky/pg-explorer-mcp/releases)
+[![downloads](https://img.shields.io/github/downloads/dbelokursky/pg-explorer-mcp/total)](https://github.com/dbelokursky/pg-explorer-mcp/releases)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 An MCP server that gives an agent **read-only** access to a PostgreSQL database, or through one entry to
@@ -56,8 +59,8 @@ The group's administrator picks the profile at installation: [details](#group-pr
 You need Python 3.9+, GigaCode CLI (or Qwen Code) and a database role from your DBA.
 
 ```bash
-git clone https://github.com/dbelokursky/pg-mcp.git
-cd pg-mcp
+git clone https://github.com/dbelokursky/pg-explorer-mcp.git
+cd pg-explorer-mcp
 export PGHOST=db.example.com PGDATABASE=app PGUSER=mcp_agent   # where the database is, which role
 python3 install.py --lang en                                     # register and check
 gigacode extensions link "$(pwd)"                                # context and the /pg:setup command
@@ -91,15 +94,15 @@ arithmetic, not `random()`), so the agent's answers match the examples in this R
 ### 1. The code
 
 ```bash
-git clone https://github.com/dbelokursky/pg-mcp.git
+git clone https://github.com/dbelokursky/pg-explorer-mcp.git
 ```
 
 Without git, take `pg-mcp-<version>.zip` from the latest release on the
-[Releases page](https://github.com/dbelokursky/pg-mcp/releases) and unpack it anywhere: inside is a `pg-mcp` folder
+[Releases page](https://github.com/dbelokursky/pg-explorer-mcp/releases) and unpack it anywhere: inside is a `pg-mcp` folder
 with everything the server needs, and `SHA256SUMS` next to the archive holds its checksum. The archive
 carries a provenance attestation: `gh attestation verify pg-mcp-<version>.zip --repo dbelokursky/pg-mcp`
-confirms that GitHub built it from this repository's tag. Do not move the folder afterwards: its path
-goes into the agent settings. If you do move it, repeat step 5.
+(the name the archive was built under) confirms that GitHub built it from this repository's tag. Do not
+move the folder afterwards: its path goes into the agent settings. If you do move it, repeat step 5.
 
 ### 2. Python 3.9 or newer
 
@@ -183,7 +186,7 @@ This is the entry in `~/.gigacode/settings.json` after `install.py --profile ana
   "mcpServers": {
     "pg": {
       "command": "/usr/bin/python3",
-      "args": ["-I", "/Users/me/pg-mcp/run.py"],
+      "args": ["-I", "/Users/me/pg-explorer-mcp/run.py"],
       "timeout": 30000,
       "env": {
         "PGHOST": "db.example.com",
@@ -242,7 +245,7 @@ too. The extension (the context and the `/pg:` commands) exists for GigaCode CLI
 ### 6. The extension
 
 ```bash
-gigacode extensions link /path/to/pg-mcp     # Qwen Code: qwen extensions link …
+gigacode extensions link /path/to/pg-explorer-mcp     # Qwen Code: qwen extensions link …
 ```
 
 The extension gives the agent a short context (where to start, never to ask for passwords in the chat,
@@ -274,7 +277,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-mcp 0.7.0 on Python 3.9.6, installed at /Users/me/pg-mcp
+pg-mcp 0.7.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
@@ -801,9 +804,9 @@ check, `install.py --check` prints that log.
 
 ## Updating and removing
 
-To update a clone, run `git pull` in the pg-mcp folder and restart the agent. To update an unpacked
+To update a clone, run `git pull` in the pg-explorer-mcp folder and restart the agent. To update an unpacked
 archive, take the new `pg-mcp-<version>.zip` from the
-[Releases page](https://github.com/dbelokursky/pg-mcp/releases), delete the old `pg-mcp` folder, unpack the new
+[Releases page](https://github.com/dbelokursky/pg-explorer-mcp/releases), delete the old `pg-mcp` folder, unpack the new
 one in its place and restart the agent. Run `install.py` again only if the folder's path changed or
 you changed Python, the profile or the language.
 
@@ -815,8 +818,8 @@ the file), run `gigacode extensions uninstall pg-mcp` and delete the folder.
 **Does it need internet access, pip or admin rights?** No. Everything the server needs is in the
 repository; it only needs a network path to the database.
 
-**Is this the `pg-mcp` package on PyPI?** No, that is another project with the same name. This server
-is not on PyPI and installs only from GitHub, as a clone or a release archive ([step 1](#1-the-code)):
+**Is this the `pg-mcp` package on PyPI?** No, that is another project; this repository was called pg-mcp too
+until it was renamed. This server is not on PyPI and installs only from GitHub, as a clone or a release archive ([step 1](#1-the-code)):
 `pip install pg-mcp` and `uvx pg-mcp` install the other project.
 
 **Can the agent change anything in the database?** No. Even if text inside the data tricks the model,
@@ -849,5 +852,5 @@ These documents are in Russian. How to report a vulnerability is in [SECURITY.md
 
 ## License
 
-pg-mcp is under the MIT license ([LICENSE](LICENSE)). The packages it ships unchanged in
+pg-explorer-mcp is under the MIT license ([LICENSE](LICENSE)). The packages it ships unchanged in
 `src/pg_mcp/_vendor` keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

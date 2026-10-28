@@ -1,4 +1,4 @@
-# Разработка pg-mcp
+# Разработка pg-explorer-mcp
 
 ## Окружение
 
@@ -141,8 +141,8 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 --ref <ветка>` (флаг `build_only` включён по умолчанию; снимать его есть смысл только на теге, чтобы
 опубликовать выпуск повторно); архив остаётся в артефактах запуска. По имени файла GitHub находит для
 ручного запуска только workflow из `main`; пока его там нет, подойдёт числовой id из
-`gh api repos/dbelokursky/pg-mcp/actions/workflows`:
-`gh api -X POST repos/dbelokursky/pg-mcp/actions/workflows/<id>/dispatches -f ref=<ветка> -f 'inputs[build_only]=true'`.
+`gh api repos/dbelokursky/pg-explorer-mcp/actions/workflows`:
+`gh api -X POST repos/dbelokursky/pg-explorer-mcp/actions/workflows/<id>/dispatches -f ref=<ветка> -f 'inputs[build_only]=true'`.
 
 ## Раскладка
 
