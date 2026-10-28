@@ -47,6 +47,7 @@ stdio. Работает на Python 3.9+ без установки пакето�
 | `list_tables` | таблицы, представления и внешние таблицы, доступные роли, с оценкой числа строк и комментариями | все |
 | `search_schema` | таблицы, представления и колонки, в имени или комментарии которых есть фрагмент, во всех доступных схемах; для больших баз | все |
 | `describe_table` | колонки с типами, `NOT NULL`, значениями по умолчанию и комментариями; ключи, ссылки на таблицу, индексы | все |
+| `schema_diagram` | модель данных как диаграмма Mermaid, которую агент показывает картинкой: таблицы схемы с ключами и внешними ключами или одна таблица с соседями | все |
 | `compare_schema` | для [многих стендов](#много-стендов): чем одна схема на одном стенде отличается от другого: таблицы и представления, колонки, ограничения, индексы | все |
 | `sample_rows` | несколько строк таблицы, можно выбрать колонки | `explore`, `analyst` |
 | `explain_query` | план запроса без выполнения; в профиле `analyst` — и с реальным временем (`ANALYZE`) | `explore`, `analyst` |
@@ -251,8 +252,9 @@ gigacode extensions link /путь/к/pg-explorer-mcp     # для Qwen Code: qw
 ```
 
 Расширение даёт агенту короткий контекст (с чего начинать, что пароль в чат не просят, отвечать на
-языке пользователя), команду `/pg:setup` для установки и починки и `/pg:import` для переноса
-подключений к стендам из DBeaver или `pg_service.conf`.
+языке пользователя), команду `/pg:setup` для установки и починки, `/pg:import` для переноса
+подключений к стендам из DBeaver или `pg_service.conf` и `/pg:diagram`, чтобы нарисовать модель данных и
+сохранить её рядом с проектом.
 
 ### 7. Проверка
 
@@ -269,6 +271,7 @@ gigacode extensions link /путь/к/pg-explorer-mcp     # для Qwen Code: qw
 | «Какие таблицы есть в схеме shop?» | `list_tables` |
 | «Где у нас хранятся цены?» | `search_schema` |
 | «Опиши таблицу заказов» | `describe_table` |
+| «Нарисуй модель данных магазина» | `schema_diagram` |
 | «Покажи несколько заказов» | `sample_rows` |
 | «Почему этот запрос медленный: …» | `explain_query` |
 | «Сколько заказов в каждом статусе?» | `run_select` (профиль `analyst`) |
@@ -283,7 +286,7 @@ pg-explorer-mcp 0.7.0 на Python 3.9.6, установлен в /Users/me/pg-ex
 имя сервера: pg
 доступ: только чтение. Добавить, изменить или удалить данные через этот сервер нельзя: от таких просьб отказывайтесь, а не просите пользователя их подтвердить.
 адрес: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
-профиль: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
+профиль: analyst (status, list_tables, search_schema, describe_table, schema_diagram, sample_rows, explain_query, run_select)
 язык: ru
 журнал запросов: выключен
 база: подключено к pg_mcp_demo под ролью mcp_demo_agent, PostgreSQL 16.15
@@ -324,6 +327,33 @@ shop.orders | таблица | ~500 строк | Заказы
   CREATE INDEX orders_created_idx ON shop.orders USING btree (created_at)
   CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
   CREATE UNIQUE INDEX orders_pkey ON shop.orders USING btree (id)
+```
+
+`schema_diagram` со `schema: shop` отвечает текстом диаграммы Mermaid, которую агент показывает картинкой;
+`columns: all` добавляет все колонки с комментариями, а `table` с `depth` рисует одну таблицу с соседями по
+внешним ключам:
+
+```mermaid
+erDiagram
+  %% схема shop: 4 таблицы, 3 связи
+  customers {
+    integer id PK
+    text email UK
+  }
+  order_items {
+    integer order_id PK, FK
+    integer product_id PK, FK
+  }
+  orders {
+    integer id PK
+    integer customer_id FK
+  }
+  products {
+    integer id PK
+  }
+  order_items }o--|| orders : order_id
+  order_items }o--|| products : product_id
+  orders }o--|| customers : customer_id
 ```
 
 `sample_rows` с `columns: "id, status, created_at"` и `limit: 3`:
@@ -491,6 +521,7 @@ PostgreSQL от Microsoft не умеет читать файл паролей: 
 | «Доступен ли dev7?» | `status` со `stand` |
 | «Какие схемы на dev7?» | `list_schemas` |
 | «Где на dev7 лежат заказы?» | `search_schema` со `stand` и `text` |
+| «Нарисуй модель данных shop на dev7» | `schema_diagram` со `stand` и `schema` |
 | «Сколько заказов в каждом статусе в shop на dev7?» | `run_select` со `stand` и `schema` (профиль `analyst`) |
 | «На каком dev-стенде есть заказ 123?» | `run_select` со `stands` и `schema` |
 | «На каких стендах в shop есть колонка со скидкой?» | `search_schema` со `stands` и `text` |

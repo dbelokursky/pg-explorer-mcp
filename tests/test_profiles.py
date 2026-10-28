@@ -27,7 +27,7 @@ def test_unknown_profile_falls_back_to_the_strictest_with_a_warning() -> None:
     assert warning is not None
     assert "PG_EXPLORER_MCP_PROFILE='admin'" in warning
     status = tools_for(profile, warning)["status"].call({})
-    assert "profile: schema (status, list_tables, search_schema, describe_table)" in status
+    assert "profile: schema (status, list_tables, search_schema, describe_table, schema_diagram)" in status
     # Said in the answer too, which no size limit binds: a model told "read only = on" still offered to delete.
     assert "access: read only. Nothing can be inserted, changed or deleted through this server" in status
     assert "warning: PG_EXPLORER_MCP_PROFILE='admin'" in status

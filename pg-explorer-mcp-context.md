@@ -17,6 +17,9 @@ reaches dozens of stands through the same tools.
 - To learn how a schema differs between two stands (tables, columns, constraints, indexes), call
   `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand; with
   `stands` instead of `stand_b` it sets several stands against `stand_a` (at most 100) and says which differ.
+- To show the data model, call `schema_diagram` (a schema, or a table with its neighbours by foreign keys)
+  and put its answer into a ```mermaid block as it is: the user sees a picture. `/pg:diagram` does that and
+  saves the file.
 - To bring the user's DBeaver or `pg_service.conf` connections into pg-explorer-mcp, run `/pg:import`: it previews
   first and writes only after the user confirms.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.

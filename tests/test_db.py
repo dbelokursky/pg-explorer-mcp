@@ -121,8 +121,9 @@ class TestStructure:
         assert "database: connected" in text
         assert "read only = on" in text
         assert (
-            "profile: explore (status, list_tables, search_schema, describe_table, sample_rows, explain_query)" in text
-        )
+            "profile: explore (status, list_tables, search_schema, describe_table, schema_diagram, sample_rows, "
+            "explain_query)"
+        ) in text
 
     def test_list_tables_shows_tables_views_estimates_and_comments(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["list_tables"], schema=SCHEMA) == [
@@ -169,6 +170,38 @@ class TestStructure:
         ]
         assert lines[9] == "indexes:"
         assert f"  CREATE INDEX orders_customer_idx ON {SCHEMA}.orders USING btree (customer_id)" in lines[10:]
+
+    def test_schema_diagram_draws_keys_and_foreign_keys(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["schema_diagram"], schema=SCHEMA) == [
+            "erDiagram",
+            f"  %% schema {SCHEMA}: 3 tables, 1 relationship",
+            "  customers {",
+            "    integer id PK",
+            "    text email UK",
+            "  }",
+            "  orders {",
+            "    integer id PK",
+            "    integer customer_id FK",
+            "  }",
+            '  "заказы" {',
+            "    integer номер PK",
+            "  }",
+            "  orders }o--|| customers : customer_id",
+        ]
+        around = lines_of(tools["schema_diagram"], table="orders", schema=SCHEMA, depth=1, columns="all")
+        assert around[1] == f"  %% {SCHEMA}.orders and its neighbours within 1 foreign key: 2 tables, 1 relationship"
+        assert around[6:11] == [
+            "  orders {",
+            "    integer id PK",
+            '    integer customer_id FK "Покупатель"',
+            "    numeric total",
+            "    text note",
+        ]
+        assert lines_of(tools["schema_diagram"], schema=ARCHIVE) == [
+            "erDiagram",
+            f"  %% schema {ARCHIVE}: 1 table, 0 relationships",
+            "  orders",
+        ]
 
     def test_describe_table_lists_tables_that_reference_it(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["describe_table"], table="customers", schema=SCHEMA)

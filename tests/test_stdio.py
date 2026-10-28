@@ -32,6 +32,7 @@ def test_legacy_session_without_a_reachable_database(unreachable_env: dict[str, 
         "list_tables",
         "search_schema",
         "describe_table",
+        "schema_diagram",
         "sample_rows",
         "explain_query",
     ]
@@ -55,7 +56,7 @@ def test_modern_session_needs_no_initialize(unreachable_env: dict[str, str]) -> 
     assert len(lines) == 3, proc.stderr.decode("utf-8", "replace")
     discover, tools, status = (json.loads(line) for line in lines)
     assert discover["result"]["supportedVersions"] == ["2026-07-28"]
-    assert len(tools["result"]["tools"]) == 6
+    assert len(tools["result"]["tools"]) == 7
     assert status["result"]["resultType"] == "complete"
     assert "database: unavailable" in status["result"]["content"][0]["text"]
 

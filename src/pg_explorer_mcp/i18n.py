@@ -152,6 +152,40 @@ EN: dict[str, str] = {
     "argument.query": "One SQL statement.",
     "argument.text": 'Part of a name or comment, e.g. "order".',
     "argument.analyze": "Run the query for real timings.",
+    # schema_diagram: the tables of a schema and their foreign keys as a Mermaid erDiagram (diagram.py).
+    "tool.schema_diagram.title": "Draw a schema",
+    "tool.schema_diagram.description": (
+        "Mermaid erDiagram of a schema's tables with their keys and foreign keys, or of one table with its "
+        "neighbours. Show it to the user in a ```mermaid block."
+    ),
+    "argument.schema_diagram": "Schema to draw; with table, its schema.",
+    "argument.schema_diagram_stand": "Schema to draw, with its login.",
+    "argument.table_diagram": '"orders" or "sales.orders": it with the tables it refers to and that refer to it.',
+    "argument.depth": "With table: foreign keys away, 0 to {limit}. Default {default}.",
+    "argument.columns_diagram": "keys (default), all (with comments) or none.",
+    "diagram.need_schema": (
+        "Pass schema to draw a schema, or table to draw a table with its neighbours. "
+        "Schemas with readable tables: {visible}."
+    ),
+    "diagram.columns_mode": 'columns must be "keys", "all" or "none"',
+    "diagram.summary": "{what}: {tables}, {relationships}",
+    "diagram.of_schema": "schema {schema}",
+    "diagram.of_table": "{table} and its neighbours within {hops}",
+    "diagram.of_table_alone": "{table} alone",
+    "diagram.hops.one": "{count} foreign key",
+    "diagram.hops.other": "{count} foreign keys",
+    "diagram.tables.one": "{count} table",
+    "diagram.tables.other": "{count} tables",
+    "diagram.relationships.one": "{count} relationship",
+    "diagram.relationships.other": "{count} relationships",
+    "diagram.columns_cut": (
+        "columns left out: with them the diagram would not fit the answer; pass table and depth for a part"
+    ),
+    "diagram.keys_cut": "tables and relationships only: even the keys would not fit the answer",
+    "diagram.too_big": (
+        "The diagram does not fit {budget} characters even without columns: {tables}, {relationships}. "
+        "Pass table with depth to draw a part of it."
+    ),
     "status.version": "pg-explorer-mcp {version} on Python {python}, installed at {path}",
     "status.name": "server name: {name}",
     "status.read_only": (
@@ -645,6 +679,44 @@ RU: dict[str, str] = {
     "argument.query": "Одна SQL-команда.",
     "argument.text": 'Фрагмент имени или комментария, например "заказ".',
     "argument.analyze": "Выполнить запрос, чтобы увидеть реальное время.",
+    "tool.schema_diagram.title": "Нарисовать схему",
+    "tool.schema_diagram.description": (
+        "Диаграмма erDiagram в Mermaid: таблицы схемы с ключами и внешними ключами или одна таблица с "
+        "соседями. Покажите её пользователю в блоке ```mermaid."
+    ),
+    "argument.schema_diagram": "Схема для рисунка; вместе с table — её схема.",
+    "argument.schema_diagram_stand": "Схема для рисунка, под её учёткой.",
+    "argument.table_diagram": (
+        '"orders" или "sales.orders": она с таблицами, на которые ссылается и которые ссылаются на неё.'
+    ),
+    "argument.depth": "Вместе с table: сколько внешних ключей вокруг, от 0 до {limit}. По умолчанию {default}.",
+    "argument.columns_diagram": "keys (по умолчанию), all (с комментариями) или none.",
+    "diagram.need_schema": (
+        "Передайте schema, чтобы нарисовать схему, или table — таблицу с соседями. "
+        "Схемы с доступными таблицами: {visible}."
+    ),
+    "diagram.columns_mode": 'columns должно быть "keys", "all" или "none"',
+    "diagram.summary": "{what}: {tables}, {relationships}",
+    "diagram.of_schema": "схема {schema}",
+    "diagram.of_table": "{table} и соседи не дальше {hops}",
+    "diagram.of_table_alone": "{table} без соседей",
+    "diagram.hops.one": "{count} внешнего ключа",
+    "diagram.hops.few": "{count} внешних ключей",
+    "diagram.hops.many": "{count} внешних ключей",
+    "diagram.tables.one": "{count} таблица",
+    "diagram.tables.few": "{count} таблицы",
+    "diagram.tables.many": "{count} таблиц",
+    "diagram.relationships.one": "{count} связь",
+    "diagram.relationships.few": "{count} связи",
+    "diagram.relationships.many": "{count} связей",
+    "diagram.columns_cut": (
+        "колонки опущены: с ними диаграмма не уместилась бы в ответ; передайте table и depth, чтобы нарисовать часть"
+    ),
+    "diagram.keys_cut": "только таблицы и связи: даже ключи не уместились бы в ответ",
+    "diagram.too_big": (
+        "Диаграмма не умещается в {budget} символов даже без колонок: {tables}, {relationships}. "
+        "Передайте table с depth, чтобы нарисовать часть."
+    ),
     "status.version": "pg-explorer-mcp {version} на Python {python}, установлен в {path}",
     "status.name": "имя сервера: {name}",
     "status.read_only": (
