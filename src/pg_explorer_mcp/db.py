@@ -183,11 +183,15 @@ class Database:
         return self.settings.describe()
 
     def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
-        """Run exactly one statement; :name placeholders take values from params."""
+        """Run exactly one statement in a transaction of its own; :name placeholders take values from params."""
         for attempt in (1, 2):
             conn = self._connection()
             try:
-                return _run_one_statement(conn, sql, params)
+                conn.execute_simple(transaction_start(self.settings))
+                try:
+                    return _run_one_statement(conn, sql, params)
+                finally:
+                    conn.execute_simple("ROLLBACK")
             except pg8000.exceptions.DatabaseError as exc:
                 raise _query_failed(exc) from exc
             except (pg8000.exceptions.InterfaceError, OSError) as exc:
@@ -207,7 +211,7 @@ class Database:
         for attempt in (1, 2):
             conn = self._connection()
             try:
-                conn.execute_simple("BEGIN TRANSACTION READ ONLY")
+                conn.execute_simple(transaction_start(self.settings))
                 try:
                     if cursor:
                         conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
@@ -313,12 +317,12 @@ def _prepared(conn: pg8000.native.Connection, settings: Settings) -> pg8000.nati
     # so from here on the socket waits longer. pg8000 keeps the socket in _usock.
     conn._usock.settimeout(socket_timeout(settings))
     try:
-        # Guardrails, not the security boundary: the role's privileges are.
+        # Guardrails, not the security boundary: the role's privileges are. Every transaction sets
+        # them again for itself (transaction_start), since a pooler may not keep the session.
         conn.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
         conn.run(f"SET statement_timeout = {int(settings.statement_timeout_ms)}")
         if settings.search_path:
-            quoted = '"' + settings.search_path.replace('"', '""') + '"'
-            conn.run(f"SET search_path = {quoted}, public")
+            conn.run(f"SET search_path = {_quote_ident(settings.search_path)}, public")
     except pg8000.exceptions.Error as exc:
         conn.close()
         raise DatabaseUnavailableError(t("db.session_setup", error=exc)) from exc
@@ -329,12 +333,33 @@ def _run_one_statement(conn: pg8000.native.Connection, sql: str, params: dict[st
     # Always the extended query protocol, where PostgreSQL rejects a string with
     # several statements. pg8000's run() without parameters uses the simple
     # protocol instead, which executes "SELECT 1; COMMIT; DROP ..." in full.
-    statement = conn.prepare(sql)
-    try:
-        rows: list[Sequence[Any]] = statement.run(**params)
-    finally:
-        statement.close()
-    return rows
+    # The unnamed statement rather than a named one (prepare): a name is one more
+    # thing a pooler can lose between the messages of a call.
+    if params:
+        rows: list[Sequence[Any]] = conn.run(sql, **params)
+        return rows
+    return list(conn.execute_unnamed(sql).rows or [])
+
+
+def transaction_start(settings: Settings | None) -> str:
+    """BEGIN with the limits of the call set for that transaction alone, as one message.
+
+    A pooler in transaction mode between the server and PostgreSQL (pgbouncer, Odyssey) may serve each
+    transaction from another server session, or reset the session in between (DISCARD ALL): what was
+    SET when the connection was made is not there any more, and a prepared statement does not survive
+    from one message to the next. So every call is one transaction, which pins one session for all its
+    messages and carries its own limits.
+    """
+    statements = ["BEGIN TRANSACTION READ ONLY"]
+    if settings is not None:
+        statements.append(f"SET LOCAL statement_timeout = {int(settings.statement_timeout_ms)}")
+        if settings.search_path:
+            statements.append(f"SET LOCAL search_path = {_quote_ident(settings.search_path)}, public")
+    return "; ".join(statements)
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
 
 
 def connect_timeout(settings: Settings) -> int:

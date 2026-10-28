@@ -172,18 +172,87 @@ def test_scram_login_without_a_password_gets_the_password_file_hint(monkeypatch:
 
 
 class FakeConnection:
-    """What db.py asks of a pg8000 connection once it is open: the socket's timeout, run() and close()."""
+    """What db.py asks of a pg8000 connection once it is open, recording every statement it is sent."""
 
     def __init__(self) -> None:
         self.statements: list[str] = []
         self._usock = SimpleNamespace(settimeout=lambda _seconds: None)
 
-    def run(self, sql: str) -> list[object]:
+    def run(self, sql: str, **params: object) -> list[object]:
         self.statements.append(sql)
-        return []
+        return [[params["x"]]] if params else []
+
+    def execute_simple(self, sql: str) -> SimpleNamespace:
+        self.statements.append(sql)
+        return SimpleNamespace(columns=[{"name": "n"}], rows=[[1]])
+
+    def execute_unnamed(self, sql: str) -> SimpleNamespace:
+        self.statements.append(sql)
+        return SimpleNamespace(columns=[{"name": "n"}], rows=[[1]])
+
+    def prepare(self, sql: str) -> None:
+        raise AssertionError(f"a named prepared statement for {sql!r}: a pooler may lose it between messages")
 
     def close(self) -> None:
         pass
+
+
+class TestEveryCallIsOneTransaction:
+    """A pooler in transaction mode may serve each transaction from another session, or reset the session
+    in between: a call pins one session with BEGIN and carries its limits with SET LOCAL."""
+
+    @pytest.fixture
+    def connection(self, monkeypatch: pytest.MonkeyPatch) -> FakeConnection:
+        fake = FakeConnection()
+        monkeypatch.setattr("pg8000.native.Connection", lambda **_kwargs: fake)
+        return fake
+
+    def test_query_runs_inside_a_read_only_transaction_with_its_limits(self, connection: FakeConnection) -> None:
+        env = {
+            "PGUSER": "app",
+            "PGPASSFILE": os.devnull,
+            "PG_EXPLORER_MCP_SEARCH_PATH": 'bill"ing',
+            "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS": "7000",
+        }
+        assert Database(env).query("SELECT :x", x=42) == [[42]]
+        assert connection.statements == [
+            "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+            "SET statement_timeout = 7000",
+            'SET search_path = "bill""ing", public',
+            "BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 7000; "
+            'SET LOCAL search_path = "bill""ing", public',
+            "SELECT :x",
+            "ROLLBACK",
+        ]
+
+    def test_a_statement_without_parameters_is_unnamed_too_and_rolled_back_on_failure(
+        self, connection: FakeConnection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = Database({"PGUSER": "app", "PGPASSFILE": os.devnull})
+        assert db.query("SELECT 1") == [[1]]
+        assert connection.statements[-3:] == [
+            "BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 5000",
+            "SELECT 1",
+            "ROLLBACK",
+        ]
+
+        def refuse(sql: str) -> SimpleNamespace:
+            raise pg8000.exceptions.DatabaseError({"C": "42P01", "M": f"{sql}: relation does not exist"})
+
+        monkeypatch.setattr(connection, "execute_unnamed", refuse)
+        with pytest.raises(DatabaseUnavailableError if False else Exception, match="42P01"):
+            db.query("SELECT * FROM nowhere")
+        assert connection.statements[-1] == "ROLLBACK"  # the transaction is closed whatever happened in it
+
+    def test_read_only_sets_the_limits_for_its_transaction_too(self, connection: FakeConnection) -> None:
+        db = Database({"PGUSER": "app", "PGPASSFILE": os.devnull, "PG_EXPLORER_MCP_SEARCH_PATH": "shop"})
+        assert db.read_only("SELECT 1", 5, cursor=True) == (["n"], [[1]], False)
+        assert connection.statements[-4:] == [
+            'BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 5000; SET LOCAL search_path = "shop", public',
+            "DECLARE pg_mcp_rows NO SCROLL CURSOR FOR SELECT 1",
+            "FETCH FORWARD 6 FROM pg_mcp_rows",
+            "ROLLBACK",
+        ]
 
 
 class TestSeveralHosts:
