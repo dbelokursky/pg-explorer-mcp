@@ -243,6 +243,10 @@ EN: dict[str, str] = {
     ),
     "db.bad_sslmode": "PGSSLMODE={value!r} is not one of {choices}",
     "db.not_a_number": "{name}={value!r} is not a number",
+    "db.ports_mismatch": (
+        "PGPORT={value!r} lists {ports} ports for {hosts} hosts: give one port for all of them, or one for each"
+    ),
+    "db.every_host_failed": "None of the hosts let the login in. {failures}",
     "db.lost": "Lost the connection to {target}: {error}",
     "db.session_setup": "Connected, but could not set up a read-only session: {error}",
     "db.password_unset": "the server asks for a password and none is set",
@@ -407,6 +411,7 @@ EN: dict[str, str] = {
     "stands.line": "line {number} is neither [section] nor key=value",
     "stands.no_host": "stand connection {name} in {path} has no host, skipped",
     "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
+    "stands.bad_hosts": "stand connection {name} in {path}: {problem}, skipped",
     "stands.none_found": (
         "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings"
     ),
@@ -736,6 +741,10 @@ RU: dict[str, str] = {
     ),
     "db.bad_sslmode": "PGSSLMODE={value!r} — не один из вариантов: {choices}",
     "db.not_a_number": "{name}={value!r} — не число",
+    "db.ports_mismatch": (
+        "PGPORT={value!r}: портов {ports}, а хостов {hosts}; укажите один порт для всех или по одному на хост"
+    ),
+    "db.every_host_failed": "Ни один из хостов не пустил. {failures}",
     "db.lost": "Соединение с {target} потеряно: {error}",
     "db.session_setup": "Подключение есть, но включить сессию только на чтение не удалось: {error}",
     "db.password_unset": "сервер просит пароль, а он не задан",
@@ -906,6 +915,7 @@ RU: dict[str, str] = {
     "stands.line": "строка {number} — не [секция] и не ключ=значение",
     "stands.no_host": "у подключения {name} в {path} нет host, пропущено",
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
+    "stands.bad_hosts": "у подключения {name} в {path}: {problem}, пропущено",
     "stands.none_found": (
         "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*"
     ),

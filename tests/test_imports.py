@@ -127,6 +127,30 @@ class TestDBeaver:
         found = read_dbeaver(folder)[0]
         assert (found.host, found.port, found.database) == ("dev3-db.example", "6432", "sales")
 
+    def test_several_hosts_come_as_dbeaver_keeps_them(self, tmp_path: Path) -> None:
+        """DBeaver writes "h1:6544,h2" with the port 6544, and the URL jdbc:postgresql://h1:6544,h2:6544/db."""
+        by_url = postgres("by url", "stale", "", port="5432")
+        by_url["configuration"] = {  # made by URL: the hosts are in the URL, whatever the host field holds
+            "configurationType": "URL",
+            "url": "jdbc:postgresql://h3:6544,h4:6545/sales",
+            "host": "stale",
+            "port": "5432",
+        }
+        folder = dbeaver_workspace(
+            tmp_path / ".dbeaver",
+            {
+                "pg-1": postgres("IFT-Caldera", "h1:6544,h2", "caldera_ift1", port="6544"),
+                "pg-2": by_url,
+                "pg-3": postgres("mixed", "h5:6544,h6:6545", "orders", port="6545"),
+            },
+            {},
+        )
+        found = {c.name: c for c in read_dbeaver(folder)}
+        assert (found["IFT-Caldera"].host, found["IFT-Caldera"].port) == ("h1,h2", "6544")
+        assert found["IFT-Caldera"].address == "h1:6544,h2:6544"
+        assert (found["by url"].host, found["by url"].port, found["by url"].database) == ("h3,h4", "6544,6545", "sales")
+        assert (found["mixed"].host, found["mixed"].port) == ("h5,h6", "6544,6545")
+
     def test_credentials_in_secure_storage_or_absent_leave_the_logins_empty(self, tmp_path: Path) -> None:
         folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": postgres("orders", "db", "orders")}, {})
         (folder / "credentials-config.json").write_bytes(os.urandom(48))  # not our key
@@ -215,6 +239,21 @@ class TestPlan:
             ("odd on dev7", "'my db' cannot be a part of a section name (letters, digits, _ $ - only)"),
         ]
 
+    def test_several_hosts_get_one_section_and_a_password_line_each(self, tmp_path: Path) -> None:
+        odd = connection(name="odd on ift1", host="h1,h2", port="1,2,3")
+        result = plan([connection(host="h1,h2", port="6544"), odd], PATTERN)
+        assert result.targets[0].options == {"host": "h1,h2", "port": "6544"}
+        assert result.passwords == {
+            ("h1", "6544", "orders", "billing"): "s3cret",
+            ("h2", "6544", "orders", "billing"): "s3cret",
+        }
+        assert [(c.name, reason) for c, reason in result.skipped] == [
+            ("odd on ift1", "PGPORT='1,2,3' lists 3 ports for 2 hosts: give one port for all of them, or one for each")
+        ]
+        assert preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")[1] == (
+            "  [dev7.orders.billing]  h1:6544,h2:6544"
+        )
+
     def test_the_preview_never_shows_a_password(self, tmp_path: Path) -> None:
         result = plan(
             [
@@ -254,6 +293,18 @@ class TestWrite:
         registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [registry_file])
         assert registry is not None
         assert [target.name for target in registry.targets] == ["dev7.orders.billing", "ift1.orders.billing"]
+
+    def test_a_stand_with_several_hosts_is_read_back_by_the_server(self, tmp_path: Path) -> None:
+        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
+        write(plan([connection(host="h1,h2", port="6544,6545")], PATTERN), registry_file, passfile)
+        assert "[dev7.orders.billing]\nhost=h1,h2\nport=6544,6545\n" in registry_file.read_text(encoding="utf-8")
+        assert passfile.read_text(encoding="utf-8") == (
+            "h1:6544:orders:billing:s3cret\nh2:6545:orders:billing:s3cret\n"
+        )
+        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [registry_file])
+        assert registry is not None
+        assert registry.targets[0].address == "h1:6544,h2:6545"
+        assert read_pgpass(str(passfile), "h2", 6545, "orders", "billing") == "s3cret"
 
     def test_adds_to_what_is_there_and_keeps_backups(self, tmp_path: Path) -> None:
         registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"

@@ -390,6 +390,10 @@ user=shop_reader
 
 - only `host` is required; `port` (5432), `dbname` (the database part of the name), `user` (the schema
   name), `sslmode`, `sslrootcert` and `connect_timeout` (10 seconds) are optional;
+- `host` may list several hosts separated by commas, as libpq takes them: `host=h1,h2` with one `port` for
+  both, or `port=6544,6545` with one per host. The server tries them in order and keeps the first that lets
+  the login in, so a stand with a standby answers while its primary is down; when none does, the error
+  names every host;
 - passwords go into the password file, a line per login, just as for one database;
 - the server reads `~/.pg-explorer-mcp/stands.conf` (on Windows `%APPDATA%\pg-explorer-mcp\stands.conf`, or the file
   `PG_EXPLORER_MCP_STANDS_FILE` names) and your own `~/.pg_service.conf`; with equal names the first file wins.
@@ -428,7 +432,10 @@ from its own files while DBeaver keeps them under its default key; with its secu
 on they stay unknown, and the preview says which logins need a line in the password file by hand.
 The agent does the same with `/pg:import`, writing only after you confirm. A running server notices
 a changed registry on its next call, so an import needs no restart; a registry file that holds a
-`password=` line and is readable by other users gets a warning in `status`.
+`password=` line and is readable by other users gets a warning in `status`. A DBeaver connection with
+several hosts (`h1:6544,h2` with the port 6544, as DBeaver writes it, or a URL
+`jdbc:postgresql://h1:6544,h2:6544/db`) keeps them all, and the password file gets a line per host,
+since libpq matches a line against one host.
 
 **Exporting connections to database tools.** The other way round, `install.py export` puts the stands
 into the tools you query them with yourself: a folder or group per stand, every connection logging in
@@ -448,6 +455,10 @@ python3 install.py export pgadmin --write --stands 'dev*,ift2'
 | psql, pgcli | `pg-service` | Sections of `~/.pg_service.conf`, the schema first on the search path | `psql "service=dev7.demo.shop"` |
 | PostgreSQL extension of VS Code (Microsoft) | `vscode-pgsql` | `pgsql.connections` in the user settings; `--editor cursor` or `windsurf` for those editors | Reload the window |
 | SQLTools | `sqltools` | `sqltools.connections` in the user settings, with an empty password | Reload the window |
+
+A stand with several hosts goes to psql, DBeaver and DataGrip with all of them. pgAdmin and the PostgreSQL
+extension have one port field, so they get the list when the hosts share a port and the first host
+otherwise; SQLTools connects to one host and gets the first.
 
 An export replaces only the connections it brings, found by a stable id or by name, and keeps the
 rest: what you made in the tool, and what an earlier export brought for other stands. Each changed
@@ -727,8 +738,8 @@ writes only the new ones.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PGHOST` | `localhost` | database host, or the Unix socket directory (starts with `/`) |
-| `PGPORT` | `5432` | port |
+| `PGHOST` | `localhost` | database host, or several separated by commas, tried in turn; or the Unix socket directory (starts with `/`) |
+| `PGPORT` | `5432` | port; with several hosts, one for all of them or one per host, separated by commas |
 | `PGDATABASE` | same as `PGUSER` | database |
 | `PGUSER` | the OS user name | role |
 | `PGSSLMODE` | `prefer` | `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`; only the last two check the certificate |

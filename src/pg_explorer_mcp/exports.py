@@ -55,6 +55,12 @@ class Connection:
     sslmode: str | None
     sslrootcert: str | None = None  # the CA certificate file, for a stand whose server certificate is checked
     source: str = field(default="", compare=False)  # the registry file the connection comes from
+    more_hosts: tuple[tuple[str, int], ...] = ()  # the further hosts of a stand with several, each with its port
+
+    @property
+    def hosts(self) -> tuple[tuple[str, int], ...]:
+        """Every host with its port, in the order the server tries them."""
+        return ((self.host, self.port), *self.more_hosts)
 
     @property
     def label(self) -> str:
@@ -83,18 +89,43 @@ def connections(env: Mapping[str, str], patterns: Sequence[str] = ("*",)) -> tup
 
 def connection(target: Target) -> Connection:
     options = target.options
+    (host, port), *more = target.endpoints()
     return Connection(
         stand=target.stand,
         database=target.database,
         schema=target.schema,
-        host=options["host"],
-        port=int(options.get("port", "5432")),
+        host=host,
+        port=port,
         dbname=options.get("dbname", target.database),
         user=options.get("user", target.schema),
         sslmode=options.get("sslmode") or None,
         sslrootcert=options.get("sslrootcert") or None,
         source=target.source,
+        more_hosts=tuple(more),
     )
+
+
+def host_list(item: Connection) -> str:
+    """The hosts separated by commas, as libpq takes them in host= and PGHOST."""
+    return ",".join(host for host, _ in item.hosts)
+
+
+def port_list(item: Connection) -> str:
+    """One port when every host has the same, else one per host, as libpq takes them in port= and PGPORT."""
+    ports = [str(port) for _, port in item.hosts]
+    return ports[0] if len(set(ports)) == 1 else ",".join(ports)
+
+
+def one_port(item: Connection) -> tuple[str, int]:
+    """The hosts for a tool whose port field takes one number: all of them when they share the port, else the first."""
+    if len({port for _, port in item.hosts}) == 1:
+        return host_list(item), item.port
+    return item.host, item.port
+
+
+def address_key(pairs: Sequence[tuple[str, object]]) -> str:
+    """host:port of every host, the names in lower case, for telling the same connection in two places."""
+    return ",".join(f"{str(host).lower()}:{port}" for host, port in pairs)
 
 
 def tls_settings(item: Connection) -> dict[str, str]:
@@ -114,7 +145,8 @@ def jdbc_url(item: Connection, *, current_schema: bool = False, tls: bool = True
     if tls:  # pgjdbc decodes the values: a path may hold spaces or backslashes
         parameters.extend(f"{key}={quote(value, safe='/:')}" for key, value in tls_settings(item).items())
     query = "?" + "&".join(parameters) if parameters else ""
-    return f"jdbc:postgresql://{item.host}:{item.port}/{item.dbname}{query}"
+    authority = ",".join(f"{host}:{port}" for host, port in item.hosts)  # pgjdbc tries them in turn too
+    return f"jdbc:postgresql://{authority}/{item.dbname}{query}"
 
 
 # --- libpq: psql, pgcli and every other tool on libpq read ~/.pg_service.conf ------------------------
@@ -143,7 +175,7 @@ def pg_service(items: Sequence[Connection], existing: str) -> str:
     while out and not out[-1].strip():
         out.pop()
     for item in items:
-        out.extend(["", EXPORTED, f"[{item.key}]", f"host={item.host}", f"port={item.port}"])
+        out.extend(["", EXPORTED, f"[{item.key}]", f"host={host_list(item)}", f"port={port_list(item)}"])
         out.extend([f"dbname={item.dbname}", f"user={item.user}"])
         out.extend(f"{key}={value}" for key, value in tls_settings(item).items())
         out.append(f"options=-c search_path={item.schema},public")  # as the server does: the schema first
@@ -194,9 +226,12 @@ def dbeaver(items: Sequence[Connection], previous: Mapping[str, Any] | None = No
     data_sources: dict[str, Any] = dict(old["connections"]) if isinstance(old.get("connections"), dict) else {}
     for item in items:
         folders.setdefault(item.stand, {})
+        # DBeaver builds the URL as host:port, so with several hosts every host but the last carries
+        # its port in the host field: "h1:6544,h2" with the port 6544 gives h1:6544,h2:6544.
+        *earlier, (last_host, last_port) = item.hosts
         configuration: dict[str, Any] = {
-            "host": item.host,
-            "port": str(item.port),
+            "host": ",".join([*(f"{host}:{port}" for host, port in earlier), last_host]),
+            "port": str(last_port),
             "database": item.dbname,
             "url": jdbc_url(item, tls=False),  # DBeaver builds the URL of a MANUAL connection itself
             "configurationType": "MANUAL",
@@ -220,8 +255,8 @@ def dbeaver(items: Sequence[Connection], previous: Mapping[str, Any] | None = No
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
-def in_dbeaver(folder: Path) -> set[tuple[str, int, str, str]]:
-    """Host, port, database and user of the connections DBeaver has of its own; "" where the user is unknown.
+def in_dbeaver(folder: Path) -> set[tuple[str, str, str]]:
+    """Hosts with ports, database and user of the connections DBeaver has of its own; "" where the user is unknown.
 
     The user is unknown when DBeaver keeps the logins in its secure storage.
     """
@@ -229,22 +264,19 @@ def in_dbeaver(folder: Path) -> set[tuple[str, int, str, str]]:
         existing = read_dbeaver(folder)
     except ImportRefusedError:
         return set()
-    return {
-        (item.host.lower(), int(item.port) if item.port.isdigit() else 5432, item.database, item.user)
-        for item in existing
-    }
+    return {(address_key(item.endpoints), item.database, item.user) for item in existing}
 
 
-def not_in_dbeaver(items: Sequence[Connection], present: set[tuple[str, int, str, str]]) -> list[Connection]:
+def not_in_dbeaver(items: Sequence[Connection], present: set[tuple[str, str, str]]) -> list[Connection]:
     """The connections DBeaver does not have of its own.
 
     A connection of DBeaver whose user is unknown stands for a login of the registry only where the
     registry has a single login to that database: with several, there is no telling which it is.
     """
-    logins = Counter((item.host.lower(), item.port, item.dbname) for item in items)
+    logins = Counter((address_key(item.hosts), item.dbname) for item in items)
 
     def known(item: Connection) -> bool:
-        address = (item.host.lower(), item.port, item.dbname)
+        address = (address_key(item.hosts), item.dbname)
         return (*address, item.user) in present or ((*address, "") in present and logins[address] == 1)
 
     return [item for item in items if not known(item)]
@@ -337,11 +369,12 @@ def pgadmin(items: Sequence[Connection], passfile: str) -> str:
         parameters: dict[str, Any] = {"sslmode": item.sslmode or "prefer", "connect_timeout": 10, "passfile": passfile}
         if item.sslrootcert:
             parameters["sslrootcert"] = item.sslrootcert
+        host, port = one_port(item)  # libpq under pgAdmin takes a host list, the Port field one number
         servers[str(number)] = {
             "Name": item.label,
             "Group": item.stand,
-            "Host": item.host,
-            "Port": item.port,
+            "Host": host,
+            "Port": port,
             "MaintenanceDB": item.dbname,
             "Username": item.user,
             "DBRestriction": item.dbname,
@@ -373,12 +406,13 @@ def vscode_pgsql(items: Sequence[Connection], settings: dict[str, Any]) -> dict[
     saved = [entry for entry in _items(settings, "pgsql.connections") if entry.get("id") not in ids]
     groups.extend({"id": f"{OURS}{stand}", "name": stand} for stand in stands)
     for item in items:
+        host, port = one_port(item)  # the extension takes a host list with one port, as Npgsql does
         entry: dict[str, Any] = {
             "id": f"{OURS}{item.uid()}",
             "profileName": item.label,
             "groupId": f"{OURS}{item.stand}",
-            "server": item.host,
-            "port": str(item.port),
+            "server": host,
+            "port": str(port),
             "database": item.dbname,
             "user": item.user,
             "authenticationType": "SqlLogin",
@@ -392,7 +426,8 @@ def vscode_pgsql(items: Sequence[Connection], settings: dict[str, Any]) -> dict[
 def sqltools(items: Sequence[Connection], settings: dict[str, Any]) -> dict[str, Any]:
     """The settings with SQLTools connections of these stands; same-named connections are replaced.
 
-    The empty password leaves node-postgres to find the password in the password file.
+    The empty password leaves node-postgres to find the password in the password file. node-postgres
+    connects to one host, so a stand with several gets the first.
     """
     labels = {item.label for item in items}
     saved = [entry for entry in _items(settings, "sqltools.connections") if entry.get("name") not in labels]

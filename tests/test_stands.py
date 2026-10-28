@@ -214,6 +214,22 @@ class TestLoadRegistry:
             f"stand connection dev1.orders.slow in {own} has connect_timeout='ten', not a number, skipped",
         ]
 
+    def test_a_stand_may_list_several_hosts_with_one_port_each(self, tmp_path: Path) -> None:
+        own = write(
+            tmp_path / "stands.conf",
+            "[dev1.orders.billing]\nhost=h1,h2\nport=6544,6545\n"
+            "[dev1.orders.shared]\nhost=h1, h2\nport=6544\n"
+            "[dev1.orders.odd]\nhost=h1,h2\nport=1,2,3\n"
+            "[dev1.orders.text]\nhost=h1,h2\nport=1,x\n",
+        )
+        registry = loaded(STANDS_ON, [own])
+        assert [target.address for target in registry.targets] == ["h1:6544,h2:6545", "h1:6544,h2:6544"]
+        assert registry.warnings == [
+            f"stand connection dev1.orders.odd in {own}: PGPORT='1,2,3' lists 3 ports for 2 hosts: "
+            "give one port for all of them, or one for each, skipped",
+            f"stand connection dev1.orders.text in {own} has port='1,x', not a number, skipped",
+        ]
+
     def test_missing_files_are_skipped_quietly(self, tmp_path: Path) -> None:
         registry = loaded(STANDS_ON, [tmp_path / "absent.conf", write(tmp_path / "stands.conf", sections())])
         assert (len(registry.targets), registry.warnings) == (len(NAMES), [])
@@ -303,6 +319,14 @@ class TestTarget:
             "in-the-section",
         )
         assert (settings.socket_timeout_s, settings.search_path) == (3, "billing")
+
+    def test_several_hosts_go_to_the_server_as_libpq_takes_them(self) -> None:
+        target = Target("dev1", "orders", "billing", {"host": "h1,h2", "port": "6544,6545"}, "x")
+        env = target.env({})
+        assert (env["PGHOST"], env["PGPORT"]) == ("h1,h2", "6544,6545")
+        assert (target.endpoints(), target.address) == ([("h1", 6544), ("h2", 6545)], "h1:6544,h2:6545")
+        assert [endpoint.address for endpoint in Settings.from_env(env).endpoints] == ["h1:6544", "h2:6545"]
+        assert Target("dev1", "orders", "billing", {"host": "h1, h2"}, "x").address == "h1:5432,h2:5432"
 
     def test_the_entry_timeout_applies_when_the_section_has_none(self) -> None:
         env = Target("dev1", "orders", "billing", {"host": "db"}, "x").env({"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"})
