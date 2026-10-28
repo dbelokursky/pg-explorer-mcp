@@ -422,8 +422,11 @@ python3 install.py import pg-service ~/.pg_service.conf --write
 ```
 
 The stand comes from the DBeaver folder, then the connection name, then the host, matched with the
-regular expression `(dev|ift)\d+` (`--stand-pattern` changes it); the database is the connection's and
-the schema is its login, since on a stand every schema has a login of its own name. The preview lists
+regular expression `(dev|ift)[-_ ]?\d+` (`--stand-pattern` changes it); a separator between the letters
+and the number is dropped, so `DEV-27` is the stand `dev27`. A connection the pattern matches nowhere
+takes its own name as the stand, `IFT-Caldera` becoming `ift-caldera`, and the preview says so. The
+database is the connection's, from its URL first, and the schema is its login, since on a stand every
+schema has a login of its own name. The preview lists
 what would be written and what is left out and why; passwords are never shown. `--write` rewrites
 `~/.pg-explorer-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`), adds the passwords
 to the password file without touching its other lines, keeps a dated backup of both files and
