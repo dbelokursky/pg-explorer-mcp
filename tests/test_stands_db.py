@@ -1,11 +1,13 @@
 """Many stands against a real PostgreSQL: stands emulated on one server, a login per schema (ADR 0006).
 
 Run them with PG_EXPLORER_MCP_IT=1 and the usual PG* variables pointing at a database where the tests may
-create and drop the schemas mcp_it_billing and mcp_it_orders and the roles of the same names, with a
-superuser login that may also create and drop the database mcp_it_stand next to it. Most stands of
-the test registry point at the first database; dev4 and ift1 point at the second, where billing
-holds other rows and orders is built differently, so that stands answer
-differently; each schema's role logs in with a password from a password file of the test's own.
+create and drop the schemas mcp_it_billing and mcp_it_orders, the roles of the same names and the role
+mcp_it_reader, with a superuser login that may also create and drop the database mcp_it_stand next to
+it. Most stands of the test registry point at the first database; dev4 and ift1 point at the second,
+where billing holds other rows and orders is built differently, so that stands answer differently;
+each schema's role logs in with a password from a password file of the test's own. ift2 is one section
+named after mcp_it_reader, which reads both schemas of the first database: a database the registry
+holds one login for is read as a whole through it, as a connection imported from DBeaver is.
 """
 
 from __future__ import annotations
@@ -31,8 +33,9 @@ pytestmark = pytest.mark.integration
 
 BILLING = "mcp_it_billing"
 ORDERS = "mcp_it_orders"
+READER = "mcp_it_reader"  # a role that reads both schemas of the first database, and has no schema of its own
 OTHER_DATABASE = "mcp_it_stand"  # a second database: the stand that points at it answers differently
-PASSWORDS = {BILLING: "billing-secret", ORDERS: "orders-secret"}
+PASSWORDS = {BILLING: "billing-secret", ORDERS: "orders-secret", READER: "reader-secret"}
 
 FIXTURES = (
     f"DROP SCHEMA IF EXISTS {BILLING}, {ORDERS} CASCADE",
@@ -82,10 +85,12 @@ def registry_text(settings: Settings, dead_port: str) -> str:
         f"[dev2.shop.mcp_it_aaa]\n{live}\n"  # a role the server does not have, first in line
         f"[dev2.shop.{BILLING}]\n{live}\n"
         f"[dev3.shop.mcp_it_ghost]\n{live}user={BILLING}\n\n"  # a schema the database does not have
+        f"[dev3.shop.mcp_it_void]\n{live}user={ORDERS}\n\n"  # another, under another login: a login per schema
         f"[dev4.shop.{BILLING}]\n{other}\n"  # the same schema in the second database: other rows
         f"[dev9.shop.{BILLING}]\n{dead}\n"
         f"[ift1.shop.{ORDERS}]\n{other}\n"  # the second database again: the same schema built differently
         f"[ift1.shop.mcp_it_ghost]\n{other}user={ORDERS}\n\n"  # what the first database lacks
+        f"[ift2.shop.{READER}]\n{live}\n"  # one login for the whole database, the section named after it
     )
 
 
@@ -104,9 +109,12 @@ def pool(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Pool]:
     for statement in OTHER_FIXTURES:
         other.run(statement)
     for database in (admin, other):  # the roles belong to the cluster, their privileges to each database
-        for role in PASSWORDS:
+        for role in (BILLING, ORDERS):
             database.run(f"GRANT USAGE ON SCHEMA {role} TO {role}")
             database.run(f"GRANT SELECT ON ALL TABLES IN SCHEMA {role} TO {role}")
+    for schema in (BILLING, ORDERS):  # the reader reads both schemas, in the first database only
+        admin.run(f"GRANT USAGE ON SCHEMA {schema} TO {READER}")
+        admin.run(f"GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO {READER}")
     other.close()
     folder = tmp_path_factory.mktemp("stands")
     passfile = folder / "pgpass"
@@ -147,7 +155,7 @@ def names_of(lines: list[str]) -> list[str]:
 
 class TestStatus:
     def test_lists_the_stands(self, tools: dict[str, Tool]) -> None:
-        assert "stands: 6 (dev1–dev4, dev9, ift1), connections in the registry: 9" in lines_of(tools["status"])
+        assert "stands: 7 (dev1–dev4, dev9, ift1–ift2), connections in the registry: 11" in lines_of(tools["status"])
 
     def test_checks_a_stand_with_a_login_of_its_own(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["status"], stand="dev1")
@@ -189,7 +197,7 @@ class TestStructure:
     def test_schemas_missing_from_the_database_are_named(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["list_tables"], stand="dev3") == [
             "dev3 / shop",
-            "  No tables or views in mcp_it_ghost: these schemas are empty or missing in this database.",
+            "  No tables or views in mcp_it_ghost, mcp_it_void: these schemas are empty or missing in this database.",
         ]
 
     def test_an_unreachable_stand_is_a_line_not_an_error(self, tools: dict[str, Tool]) -> None:
@@ -237,6 +245,66 @@ class TestStructure:
     def test_a_missing_table_is_not_found(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="No table or view 'parcels' in the schemas of dev1"):
             tools["describe_table"].call({"stand": "dev1", "table": "parcels"})
+
+
+class TestWholeDatabase:
+    """ift2: one section, named after a login that reads both schemas; the registry knows no schema of it."""
+
+    def test_list_schemas_comes_from_the_catalog(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["list_schemas"], stand="ift2") == [f"ift2 / shop: {BILLING}, {ORDERS}"]
+        assert lines_of(tools["list_schemas"], stand="dev4") == [f"dev4 / shop: {BILLING}"]  # one section too
+        assert lines_of(tools["list_schemas"], stand="dev1") == [f"dev1 / shop: {BILLING}, {ORDERS}"]  # the registry
+
+    def test_list_tables_shows_what_the_login_reads(self, tools: dict[str, Tool]) -> None:
+        assert names_of(lines_of(tools["list_tables"], stand="ift2")) == [
+            "ift2 / shop",
+            f"{BILLING}.invoices",
+            f"{ORDERS}.invoices",
+            f"{ORDERS}.orders",
+        ]
+        assert names_of(lines_of(tools["list_tables"], stand="dev4")) == ["dev4 / shop", f"{BILLING}.invoices"]
+        found = names_of(lines_of(tools["search_schema"], stand="ift2", text="invoice"))
+        assert {f"{BILLING}.invoices", f"{ORDERS}.invoices"} <= set(found)
+
+    def test_any_schema_is_read_through_the_login(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["run_select"], stand="ift2", schema=ORDERS, query="SELECT count(*) FROM orders")
+        assert lines[:3] == [f"ift2 / shop / {ORDERS}", "count", "3"]
+        query = "SELECT current_user, current_setting('search_path')"
+        assert lines_of(tools["run_select"], stand="ift2", schema=BILLING, query=query)[2] == (
+            f"{READER} | {BILLING}, public"
+        )
+        # a schema the database lacks goes on the search path all the same: PostgreSQL does not mind
+        assert lines_of(tools["run_select"], stand="ift2", schema="nowhere", query="SELECT 1")[2] == "1"
+        assert lines_of(tools["list_tables"], stand="ift2", schema=ORDERS)[0] == f"ift2 / shop / {ORDERS}"
+
+    def test_a_table_is_found_in_the_schemas_the_login_reads(self, tools: dict[str, Tool]) -> None:
+        options = rf"shop\.{BILLING}\.invoices, shop\.{ORDERS}\.invoices"
+        with pytest.raises(ToolError, match=rf"'invoices' exists in several schemas of ift2: {options}\."):
+            tools["describe_table"].call({"stand": "ift2", "table": "invoices"})
+        assert lines_of(tools["describe_table"], stand="ift2", table=f"{BILLING}.invoices")[0] == (
+            f"ift2 / shop / {BILLING}"
+        )
+        assert lines_of(tools["sample_rows"], stand="ift2", table="orders", limit=1)[:2] == [
+            f"ift2 / shop / {ORDERS}",
+            f"{ORDERS}.orders:",
+        ]
+        with pytest.raises(ToolError, match="No table or view 'parcels' in the schemas of ift2 the server can read"):
+            tools["describe_table"].call({"stand": "ift2", "table": "parcels"})
+
+    def test_a_missing_table_is_pointed_to_with_its_schema(self, tools: dict[str, Tool]) -> None:
+        with pytest.raises(ToolError, match=f"42P01.* readable as {ORDERS}\\.orders: write the name with its schema"):
+            tools["run_select"].call({"stand": "ift2", "schema": BILLING, "query": "SELECT count(*) FROM orders"})
+
+    def test_compare_reads_the_schema_through_the_login(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["compare_schema"], stand_a="dev1", stand_b="ift2", schema=ORDERS) == [
+            f"dev1 / shop / {ORDERS}  vs  ift2 / shop / {ORDERS}",
+            "identical: 2 tables, 3 columns",
+        ]
+
+    def test_status_checks_the_one_login(self, tools: dict[str, Tool]) -> None:
+        lines = lines_of(tools["status"], stand="ift2")
+        assert lines[-4:-2] == [f"ift2 / shop: {BILLING}, {ORDERS}", f"checked with ift2 / shop / {READER}"]
+        assert f" as {READER}, PostgreSQL " in lines[-2]
 
 
 class TestCompareSchema:

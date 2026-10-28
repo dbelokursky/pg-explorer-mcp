@@ -103,7 +103,8 @@ LIST_TABLES_SQL = (
     + 'ORDER BY n.nspname COLLATE "C", c.relname COLLATE "C"\nLIMIT :limit'
 )
 
-SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1\nLIMIT 50"
+ALL_SCHEMAS_SQL = "SELECT DISTINCT n.nspname" + _READABLE_RELATIONS + "ORDER BY 1"
+SCHEMAS_SQL = ALL_SCHEMAS_SQL + "\nLIMIT 50"
 
 # Whether a schema holds a table or view at all, readable or not. One that holds none was guessed,
 # "public" most often; one whose tables the role cannot read was not, and it is refused as before.
@@ -174,7 +175,8 @@ SEARCH_SQL = (
 )
 
 # On a stand the catalog is read through any login of the database, so instead of that
-# login's privileges the queries keep to the schemas the registry has logins for.
+# login's privileges the queries keep to the schemas the registry has logins for. A database
+# one login reads as a whole is read with the queries above instead: its privileges decide.
 _PRIVILEGE = "  AND has_table_privilege(c.oid, 'SELECT')\n"
 _REGISTRY_RELATIONS = _READABLE_RELATIONS.replace(_PRIVILEGE, "  AND n.nspname = ANY (CAST(:schemas AS text[]))\n")
 LIST_TABLES_IN_SCHEMAS_SQL = LIST_TABLES_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
@@ -722,9 +724,9 @@ def missing_table_hint(db: Database, error: QueryFailedError, schemas: Sequence[
         return str(error)
     name = found.group(1).split(".")[-1]
     try:
-        rows = _relations_named(db, name, schemas)
+        rows = relations_named(db, name, schemas)
         if not rows and name != name.lower():
-            rows = _relations_named(db, name.lower(), schemas)
+            rows = relations_named(db, name.lower(), schemas)
     except (QueryFailedError, DatabaseUnavailableError):
         return str(error)  # the hint is a courtesy: the error itself still has to reach the model
     if not rows:
@@ -734,7 +736,8 @@ def missing_table_hint(db: Database, error: QueryFailedError, schemas: Sequence[
     return t("error.table_elsewhere", error=error, tables=", ".join(f"{row[1]}.{row[2]}" for row in rows))
 
 
-def _relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> list[Sequence[Any]]:
+def relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> list[Sequence[Any]]:
+    """The readable relations of that name in any schema, or on a stand those in the registry's schemas."""
     if schemas is None:
         return db.query(FIND_RELATION_SQL, name=name, schema=None)
     return db.query(FIND_RELATION_IN_SCHEMAS_SQL, name=name, schema=None, schemas=list(schemas))
