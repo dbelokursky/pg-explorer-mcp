@@ -15,8 +15,8 @@ MCP-сервер, который даёт агенту доступ **тольк
 планы запросов, а аналитики — выполнять свои `SELECT`.
 Изменить данные, структуру или настройки базы через этот сервер нельзя.
 
-Сделан для GigaCode CLI и Qwen Code, но подходит любому клиенту MCP, который запускает серверы через
-stdio. Работает на Python 3.9+ без установки пакетов: драйвер pg8000 лежит в репозитории. Отвечает
+Подходит любому клиенту MCP, который запускает серверы через
+stdio, например Claude Code или Qwen Code. Работает на Python 3.9+ без установки пакетов: драйвер pg8000 лежит в репозитории. Отвечает
 по-английски или по-русски.
 
 ## Содержание
@@ -57,20 +57,20 @@ stdio. Работает на Python 3.9+ без установки пакето�
 
 ## Быстрый старт
 
-Нужны Python 3.9+, GigaCode CLI (или Qwen Code) и роль в базе, которую выдал DBA.
+Нужны Python 3.9+, Qwen Code (или другой клиент MCP) и роль в базе, которую выдал DBA.
 
 ```bash
 git clone https://github.com/dbelokursky/pg-explorer-mcp.git
 cd pg-explorer-mcp
 export PGHOST=db.example.com PGDATABASE=app PGUSER=mcp_agent   # где база и под какой ролью
-python3 install.py --lang ru                                     # регистрация и проверка
-gigacode extensions link "$(pwd)"                                # контекст и команда /pg:setup
+python3 install.py --client qwen --lang ru                       # регистрация и проверка
+qwen extensions link "$(pwd)"                                    # контекст и команда /pg:setup
 ```
 
-Пароль положите в `~/.pgpass` ([как](#4-пароль--в-файл-паролей)), перезапустите GigaCode и спросите
+Пароль положите в `~/.pgpass` ([как](#4-пароль--в-файл-паролей)), перезапустите Qwen Code и спросите
 агента: «Проверь подключение к базе».
 
-Можно и короче: подключите расширение (`gigacode extensions link`), перезапустите GigaCode и
+Можно и короче: подключите расширение (`qwen extensions link`), перезапустите Qwen Code и
 выполните в нём `/pg:setup`. Агент сам найдёт Python, запустит `install.py` и разберёт подсказки.
 
 ## Попробовать на демо-базе
@@ -164,15 +164,14 @@ db.example.com:5432:app:mcp_agent:пароль-от-DBA
 ### 5. Регистрация в агенте
 
 ```bash
-python3 install.py                              # GigaCode, профиль explore, язык — по локали системы
-python3 install.py --profile analyst --lang ru  # профиль и язык явно
-python3 install.py --client qwen                # Qwen Code вместо GigaCode
-py -3 install.py                                # Windows
+python3 install.py --client qwen                                  # Qwen Code, профиль explore, язык — по локали системы
+python3 install.py --client qwen --profile analyst --lang ru      # профиль и язык явно
+py -3 install.py --client qwen                                    # Windows
 ```
 
 Что делает скрипт:
 
-1. сохраняет копию настроек агента (`~/.gigacode/settings.json.bak-<дата>`);
+1. сохраняет копию настроек агента (`~/.qwen/settings.json.bak-<дата>`);
 2. добавляет в `mcpServers` сервер `pg`: тот же Python, которым запущен скрипт, путь к `run.py`,
    переменные `PG*` из терминала (кроме `PGPASSWORD`), профиль и язык;
 3. запускает сервер так же, как агент, вызывает `status` и печатает ответ. Код выхода 0 означает,
@@ -180,7 +179,7 @@ py -3 install.py                                # Windows
 
 `python3 install.py --check` только запускает сервер и вызывает `status`, ничего не меняя.
 
-Так выглядит запись в `~/.gigacode/settings.json` после `install.py --profile analyst --lang ru`:
+Так выглядит запись в `~/.qwen/settings.json` после `install.py --client qwen --profile analyst --lang ru`:
 
 ```json
 {
@@ -222,7 +221,7 @@ PGDATABASE=hr PGUSER=mcp_hr python3 install.py --name hr --profile schema
 
 | `--client` | Куда попадает запись |
 |---|---|
-| `gigacode` (по умолчанию), `qwen` | `~/.gigacode/settings.json`, `~/.qwen/settings.json` |
+| `qwen` | `~/.qwen/settings.json` |
 | `vscode` | пользовательский `mcp.json` VS Code (GitHub Copilot в режиме агента), раздел `servers` |
 | `cursor` | `~/.cursor/mcp.json` |
 | `windsurf` | Windsurf, теперь Devin Desktop: `~/.config/devin/mcp_config.json` или прежний файл, если он уже есть |
@@ -242,13 +241,13 @@ python3 install.py --client vscode --print    # только показать з
 `--print` подходит для клиента, которого нет в списке, или если файл хочется поправить самому. Файл с
 комментариями не переписывается никогда: `install.py` печатает, что в него добавить. При запуске в
 терминале `install.py`, зарегистрировав сервер, находит другие установленные на машине клиенты и
-предлагает добавить его и туда. Расширение (контекст и команды `/pg:`) есть только для GigaCode CLI и
+предлагает добавить его и туда. Расширение (контекст и команды `/pg:`) есть только для
 Qwen Code.
 
 ### 6. Расширение
 
 ```bash
-gigacode extensions link /путь/к/pg-explorer-mcp     # для Qwen Code: qwen extensions link …
+qwen extensions link /путь/к/pg-explorer-mcp
 ```
 
 Расширение даёт агенту короткий контекст (с чего начинать, что пароль в чат не просят, отвечать на
@@ -258,7 +257,7 @@ gigacode extensions link /путь/к/pg-explorer-mcp     # для Qwen Code: qw
 
 ### 7. Проверка
 
-Перезапустите GigaCode, чтобы он запустил сервер с новыми настройками, и спросите: «Проверь
+Перезапустите агента, чтобы он запустил сервер с новыми настройками, и спросите: «Проверь
 подключение к базе». Агент вызовет `status` и перескажет ответ.
 
 ## Как пользоваться
@@ -871,15 +870,14 @@ psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owne
   выгрузки продолжают работать.
 - Архив теперь распаковывается в `pg-explorer-mcp/`, а не в `pg-mcp/`. Один раз запустите `install.py` из
   новой папки: он перепишет пути в настройках агента. Затем подключите расширение заново.
-- GigaCode хранит расширение, подключённое до 0.8.0, в `~/.gigacode/extensions/pg-mcp` (Qwen Code — в
-  `~/.qwen/extensions/pg-mcp`) и не даёт подключить новое, пока эта папка есть. Сначала удалите её;
+- Qwen Code хранит расширение, подключённое до 0.8.0, в `~/.qwen/extensions/pg-mcp` и не даёт подключить новое, пока эта папка есть. Сначала удалите её;
   `install.py` называет её, если находит.
 - Подключения сервера теперь помечены `application_name = 'pg-explorer-mcp'`: если DBA фильтрует по
   `pg-mcp`, фильтру нужно новое имя.
 
 Удаление: уберите `pg` (и записи `pg-<имя>`, если есть) из `mcpServers` в настройках агента (копии прежних настроек лежат рядом),
-выполните `gigacode extensions uninstall pg-explorer-mcp` и удалите папку. Расширение, подключённое до 0.8.0,
-удаляется вместе с папкой `~/.gigacode/extensions/pg-mcp`.
+выполните `qwen extensions uninstall pg-explorer-mcp` и удалите папку. Расширение, подключённое до 0.8.0,
+удаляется вместе с папкой `~/.qwen/extensions/pg-mcp`.
 
 ## Вопросы и ответы
 
@@ -900,9 +898,8 @@ pg-mcp. На PyPI его нет, он ставится только с GitHub �
 **Какие версии протокола MCP понимает?** Ревизии с 2024-11-05 по 2025-11-25 (с рукопожатием
 `initialize`) и 2026-07-28 (без него).
 
-**В каких клиентах сервер проверяют?** CI запускает Qwen Code — открытую основу GigaCode CLI — с сервером,
-который зарегистрировал `install.py`: клиент должен подключиться к серверу и увидеть расширение. Сам
-GigaCode CLI вне компании не достать, поэтому перед выпуском его проверяют вручную.
+**В каких клиентах сервер проверяют?** CI запускает Qwen Code с сервером, который зарегистрировал `install.py`:
+клиент должен подключиться к серверу и увидеть расширение.
 
 **Подойдёт ли другой клиент MCP?** Да, любой, который запускает серверы через stdio. `install.py --client`
 пишет запись для VS Code, Cursor, Windsurf, Cline, Roo Code, Continue, LM Studio, Claude Desktop и

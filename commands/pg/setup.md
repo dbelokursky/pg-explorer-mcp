@@ -5,14 +5,14 @@ Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-explorer-m
 
 1. Find the pg-explorer-mcp folder. If the `status` tool of the `pg` server works, its first line says where
    pg-explorer-mcp is installed ("installed at", in Russian "установлен в"). Otherwise read
-   `mcpServers.pg.args` (or `mcpServers.pg-<name>.args`) in `~/.gigacode/settings.json` (the path
+   `mcpServers.pg.args` (or `mcpServers.pg-<name>.args`) in the agent's settings file, e.g. `~/.qwen/settings.json` (the path
    before `run.py`), or ask the user where they cloned pg-explorer-mcp.
 2. Find Python 3.9 or newer: try `python3 --version`, then `python --version`, and on Windows
    `py -3 --version`. If none works, tell the user to install Python 3.9+ (from the corporate
    software catalog, or the "embeddable package" zip from python.org, which needs no admin rights)
    and stop.
 3. Run `<python> <pg-explorer-mcp folder>/install.py`, with `--lang ru` if the user writes in Russian. It
-   registers the server in `~/.gigacode/settings.json`, backs up the old file, starts the server and
+   registers the server in the agent's settings file, backs up the old file, starts the server and
    prints its status. For a further database add `--name <name>`: it registers `pg-<name>` next to `pg`.
    For another agent or editor add `--client <name>` (vscode, cursor, windsurf, cline, roo, continue,
    lmstudio, claude-desktop, junie, jetbrains); `--print` only shows the entry and where it goes.
@@ -25,9 +25,9 @@ Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-explorer-m
    `<python> <pg-explorer-mcp folder>/install.py --check` again.
 5. When the check reports the database as connected ("database: connected", in Russian
    "база: подключено"), or an entry for stands lists them ("stands:", in Russian "стенды:"), tell the
-   user to restart GigaCode so it starts the server with the new settings.
+   user to restart the agent so it starts the server with the new settings.
 
 The tools the agent gets depend on the profile: `schema` (structure only), `explore` (the default:
 adds sample rows and query plans) or `analyst` (adds read-only SQL). To change it, run
-`<python> <pg-explorer-mcp folder>/install.py --profile <name>` and restart GigaCode. The language works the
+`<python> <pg-explorer-mcp folder>/install.py --profile <name>` and restart the agent. The language works the
 same way: `--lang en` or `--lang ru`.
