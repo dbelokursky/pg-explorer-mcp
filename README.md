@@ -630,7 +630,9 @@ layers of defence, and each one holds even if the others miss something:
 
 1. **The PostgreSQL role** is the real boundary: it has only `SELECT` on the chosen schemas
    ([a script for DBAs](#for-dbas-a-role-for-the-agent)).
-2. **A `READ ONLY` transaction for every query**, always rolled back. A query goes out as a single
+2. **A `READ ONLY` transaction for every query**, always rolled back, with the statement timeout and the
+   schema's search path set for that transaction alone: a connection pooler in transaction mode between
+   the server and PostgreSQL (pgbouncer, Odyssey) changes nothing. A query goes out as a single
    statement, so PostgreSQL rejects a string such as `SELECT 1; COMMIT; DROP …`.
 3. **A check of the query text** lets only read-only statements through and refuses `INSERT`, `UPDATE`,
    `DELETE`, `MERGE`, `SELECT … INTO`, row locks and functions with side effects (`pg_terminate_backend`,

@@ -154,6 +154,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
+      - name: pgbouncer, for the tests through a pooler in transaction mode
+        run: sudo apt-get install -y --no-install-recommends pgbouncer
       - name: all tests with coverage
         if: matrix.postgres == '16'
         run: uv run pytest --cov --cov-report=term-missing
