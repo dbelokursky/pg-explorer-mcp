@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
-from . import __version__
+from . import __version__, diagram
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, number, plural, t
@@ -34,13 +34,22 @@ SEARCH_LIMIT = 100
 
 # Tools per group profile, from structure only to free read-only SQL (ADR 0002).
 PROFILES: dict[str, tuple[str, ...]] = {
-    "schema": ("status", "list_tables", "search_schema", "describe_table"),
-    "explore": ("status", "list_tables", "search_schema", "describe_table", "sample_rows", "explain_query"),
+    "schema": ("status", "list_tables", "search_schema", "describe_table", "schema_diagram"),
+    "explore": (
+        "status",
+        "list_tables",
+        "search_schema",
+        "describe_table",
+        "schema_diagram",
+        "sample_rows",
+        "explain_query",
+    ),
     "analyst": (
         "status",
         "list_tables",
         "search_schema",
         "describe_table",
+        "schema_diagram",
         "sample_rows",
         "explain_query",
         "run_select",
@@ -359,6 +368,18 @@ def build_tools(
             handler=lambda args: describe_table(db, args.get("table"), args.get("schema")),
         ),
         Tool(
+            name="schema_diagram",
+            title=t("tool.schema_diagram.title"),
+            description=t("tool.schema_diagram.description"),
+            properties={
+                "schema": {"type": "string", "description": t("argument.schema_diagram")},
+                **diagram_properties(),
+            },
+            handler=lambda args: schema_diagram(
+                db, args.get("schema"), args.get("table"), args.get("depth"), args.get("columns"), budget=budget
+            ),
+        ),
+        Tool(
             name="sample_rows",
             title=t("tool.sample_rows.title"),
             description=t("tool.sample_rows.description", default=SAMPLE_ROWS_DEFAULT, limit=SAMPLE_ROWS_LIMIT),
@@ -550,6 +571,73 @@ def sample_rows(db: Database, table: Any, schema: Any, columns: Any, limit: Any)
     sql = f"SELECT {columns_sql} FROM {_quote_ident(schema_name)}.{_quote_ident(relation)}"  # noqa: S608
     names, rows, more = db.read_only(sql, count, cursor=True)
     return [f"{schema_name}.{relation}:", *_format_rows(names, rows, more=more)]
+
+
+def diagram_properties() -> dict[str, Any]:
+    """The arguments of schema_diagram besides the schema, which a stand takes with its login."""
+    return {
+        "table": {"type": "string", "description": t("argument.table_diagram")},
+        "depth": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": diagram.DEPTH_LIMIT,
+            "description": t("argument.depth", limit=diagram.DEPTH_LIMIT, default=diagram.DEPTH_DEFAULT),
+        },
+        "columns": {"type": "string", "enum": list(diagram.DETAILS), "description": t("argument.columns_diagram")},
+    }
+
+
+def schema_diagram(
+    db: Database, schema: Any, table: Any, depth: Any, columns: Any, *, budget: int = DEFAULT_BUDGET
+) -> list[str]:
+    """Mermaid erDiagram of a schema, or of one table with its neighbours by foreign keys; the data is not read.
+
+    The answer has to fit the budget whole, since a cut diagram does not render: when it would not,
+    the columns go first, then the keys, and a diagram that does not fit even so is an error that
+    says how to ask for a part of it.
+    """
+    detail = _detail(columns)
+    hops = _whole_number(depth, "depth", diagram.DEPTH_DEFAULT, 0, diagram.DEPTH_LIMIT)
+    if table not in (None, ""):
+        oid, schema_name, relation = _resolve_relation(db, table, schema or None)[:3]
+        model = diagram.around(db, oid, schema_name, relation, hops)
+        name = f"{schema_name}.{relation}"
+        if hops:
+            what = t("diagram.of_table", table=name, hops=plural("diagram.hops", hops))
+        else:
+            what = t("diagram.of_table_alone", table=name)
+    else:
+        if not isinstance(schema, str) or not schema.strip():
+            raise ToolError(t("diagram.need_schema", visible=_visible_schemas(db)))
+        name = schema.strip().strip('"')
+        model = diagram.of_schema(db, name)
+        if not model.tables:
+            raise ToolError(_closed_schema(db, name))
+        what = t("diagram.of_schema", schema=name)
+    tables = plural("diagram.tables", len(model.tables))
+    relationships = plural("diagram.relationships", len(model.foreign_keys))
+    summary = t("diagram.summary", what=what, tables=tables, relationships=relationships)
+    for level in diagram.DETAILS[diagram.DETAILS.index(detail) :]:
+        notes = [summary]
+        if level != detail:
+            notes.append(t("diagram.columns_cut" if level == diagram.KEYS else "diagram.keys_cut"))
+        lines = diagram.render(model, level, notes)
+        if len("\n".join(lines)) <= budget:
+            return lines
+    raise ToolError(t("diagram.too_big", budget=budget, tables=tables, relationships=relationships))
+
+
+def _detail(columns: Any) -> str:
+    """How much of the columns a diagram shows: the keys unless asked for every column or none."""
+    if columns in (None, ""):
+        return diagram.KEYS
+    if isinstance(columns, str) and columns.strip().lower() in diagram.DETAILS:
+        return columns.strip().lower()
+    raise ToolError(t("diagram.columns_mode"))
+
+
+def _visible_schemas(db: Database) -> str:
+    return ", ".join(str(row[0]) for row in db.query(SCHEMAS_SQL)) or t("error.none")
 
 
 def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str] | None = None) -> list[str]:

@@ -223,6 +223,17 @@ class TestStructure:
             f"dev1 / shop / {BILLING}"
         )
 
+    def test_schema_diagram_reads_the_schema_with_its_login(self, tools: dict[str, Tool]) -> None:
+        assert lines_of(tools["schema_diagram"], stand="dev1", schema=ORDERS) == [
+            f"%% dev1 / shop / {ORDERS}",
+            "erDiagram",
+            f"  %% schema {ORDERS}: 2 tables, 0 relationships",
+            "  invoices",
+            "  orders {",
+            "    integer id PK",
+            "  }",
+        ]
+
     def test_a_missing_table_is_not_found(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="No table or view 'parcels' in the schemas of dev1"):
             tools["describe_table"].call({"stand": "dev1", "table": "parcels"})

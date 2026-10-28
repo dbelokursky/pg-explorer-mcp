@@ -63,6 +63,18 @@ def test_orders_are_described_with_keys_and_indexes(tools: dict[str, Tool]) -> N
     assert "  CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)" in lines
 
 
+def test_the_shop_is_drawn_as_the_readme_shows(tools: dict[str, Tool]) -> None:
+    """The ```mermaid block of the README is the tool's answer, so the picture there is a real one."""
+    for readme, summary in (("README.md", "schema shop: 4 tables, 3 relationships"), ("README.ru.md", None)):
+        text = (ROOT / readme).read_text(encoding="utf-8")
+        block = text.split("```mermaid\n", 1)[1].split("```", 1)[0]
+        if summary:
+            assert "\n".join(lines_of(tools["schema_diagram"], schema="shop")) + "\n" == block
+        else:
+            assert block.splitlines()[1] == "  %% схема shop: 4 таблицы, 3 связи"
+            assert block.splitlines()[2:] == lines_of(tools["schema_diagram"], schema="shop")[2:]
+
+
 def test_the_orders_per_status_are_the_readme_numbers(tools: dict[str, Tool]) -> None:
     query = "SELECT status, count(*) FROM shop.orders GROUP BY status ORDER BY 2 DESC"
     assert lines_of(tools["run_select"], query=query) == [

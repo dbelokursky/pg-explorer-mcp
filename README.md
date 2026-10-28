@@ -46,6 +46,7 @@ English or Russian.
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
+| `schema_diagram` | the data model as a Mermaid diagram the agent shows as a picture: the tables of a schema with their keys and foreign keys, or one table with its neighbours | all |
 | `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, columns, constraints, indexes | all |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
@@ -248,8 +249,9 @@ gigacode extensions link /path/to/pg-explorer-mcp     # Qwen Code: qwen extensio
 ```
 
 The extension gives the agent a short context (where to start, never to ask for passwords in the chat,
-to answer in the user's language), the `/pg:setup` command for installing and repairing the server and
-`/pg:import` for bringing stand connections in from DBeaver or `pg_service.conf`.
+to answer in the user's language), the `/pg:setup` command for installing and repairing the server,
+`/pg:import` for bringing stand connections in from DBeaver or `pg_service.conf`, and `/pg:diagram` for
+drawing a data model and saving it next to the project.
 
 ### 7. Check
 
@@ -266,6 +268,7 @@ Talk to the agent in plain words; it picks the tools.
 | "Which tables are in the shop schema?" | `list_tables` |
 | "Where are the customers stored?" | `search_schema` |
 | "Describe the orders table" | `describe_table` |
+| "Draw the data model of the shop" | `schema_diagram` |
 | "Show me a few orders" | `sample_rows` |
 | "Why is this query slow: …" | `explain_query` |
 | "How many orders are there per status?" | `run_select` (profile `analyst`) |
@@ -280,7 +283,7 @@ pg-explorer-mcp 0.7.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
-profile: analyst (status, list_tables, search_schema, describe_table, sample_rows, explain_query, run_select)
+profile: analyst (status, list_tables, search_schema, describe_table, schema_diagram, sample_rows, explain_query, run_select)
 language: en
 query log: off
 database: connected to pg_mcp_demo as mcp_demo_agent, PostgreSQL 16.15
@@ -325,6 +328,33 @@ indexes:
 ```
 
 The comments come from the database itself, so they stay in whatever language they were written in.
+
+`schema_diagram` with `schema: shop` answers with the source of a Mermaid diagram, which the agent shows
+as a picture; `columns: all` adds every column with its comment, and `table` with `depth` draws one
+table with its neighbours by foreign keys:
+
+```mermaid
+erDiagram
+  %% schema shop: 4 tables, 3 relationships
+  customers {
+    integer id PK
+    text email UK
+  }
+  order_items {
+    integer order_id PK, FK
+    integer product_id PK, FK
+  }
+  orders {
+    integer id PK
+    integer customer_id FK
+  }
+  products {
+    integer id PK
+  }
+  order_items }o--|| orders : order_id
+  order_items }o--|| products : product_id
+  orders }o--|| customers : customer_id
+```
 
 `sample_rows` with `columns: "id, status, created_at"` and `limit: 3`:
 
@@ -487,6 +517,7 @@ exists in several databases of the stand.
 | "Is dev7 reachable?" | `status` with `stand` |
 | "Which schemas are on dev7?" | `list_schemas` |
 | "Where are the orders on dev7?" | `search_schema` with `stand` and `text` |
+| "Draw the data model of shop on dev7" | `schema_diagram` with `stand` and `schema` |
 | "How many orders per status are in shop on dev7?" | `run_select` with `stand` and `schema` (profile `analyst`) |
 | "On which dev stand is there an order 123?" | `run_select` with `stands` and `schema` |
 | "Which stands have a discount column in shop?" | `search_schema` with `stands` and `text` |

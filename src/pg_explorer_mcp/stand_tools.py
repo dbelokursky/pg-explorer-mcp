@@ -42,10 +42,12 @@ from .tools import (
     Tool,
     ToolError,
     describe_table,
+    diagram_properties,
     explain_query,
     list_tables,
     run_select,
     sample_rows,
+    schema_diagram,
     search_schema,
     split_name,
 )
@@ -171,6 +173,19 @@ def build_stand_tools(
             },
             required=("stand_a", "schema"),
             handler=lambda args: stand_compare(pool, args),
+        ),
+        Tool(
+            name="schema_diagram",
+            title=t("tool.schema_diagram.title"),
+            description=t("tool.schema_diagram.description"),
+            properties={
+                "stand": stand,
+                "schema": {"type": "string", "description": t("argument.schema_diagram_stand")},
+                "database": database,
+                **diagram_properties(),
+            },
+            required=("stand", "schema"),
+            handler=lambda args: stand_diagram(pool, args, budget),
         ),
         Tool(
             name="sample_rows",
@@ -460,6 +475,19 @@ def _compared(base: Structure, structure: Structure, totals: dict[str, int], *, 
     if detailed:
         return [structure.target.label, *found.sections()]
     return [f"{structure.target.label}: {found.summary()}"]
+
+
+def stand_diagram(pool: Pool, args: Arguments, budget: int) -> list[str]:
+    """The diagram of a schema of a stand, read with the schema's login, under its label as a Mermaid comment.
+
+    The label is a comment so that the whole answer renders when the agent pastes it as it is.
+    """
+    target = _required_target(pool, args)
+    label = f"%% {target.label}"
+    db = pool.database(target)
+    room = budget - len(label) - 1
+    lines = schema_diagram(db, target.schema, args.get("table"), args.get("depth"), args.get("columns"), budget=room)
+    return [label, *lines]
 
 
 def stand_sample(pool: Pool, args: Arguments) -> list[str]:

@@ -461,6 +461,7 @@ class TestOfflineTools:
             "search_schema",
             "describe_table",
             "compare_schema",
+            "schema_diagram",
         )
 
     def test_every_tool_but_status_needs_a_stand_and_data_needs_a_schema(self, pool: Pool) -> None:
@@ -476,6 +477,7 @@ class TestOfflineTools:
             "search_schema": ["text"],
             "describe_table": ["stand", "table"],
             "compare_schema": ["stand_a", "schema"],
+            "schema_diagram": ["stand", "schema"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
             "run_select": ["schema", "query"],
@@ -1273,7 +1275,7 @@ class TestEntry:
 
 
 # Every request to the model carries tools/list, and local models run with small contexts.
-SIZE_LIMITS = {("en", "single"): 4800, ("ru", "single"): 5200, ("en", "stands"): 7000, ("ru", "stands"): 7500}
+SIZE_LIMITS = {("en", "single"): 4700, ("ru", "single"): 5100, ("en", "stands"): 7800, ("ru", "stands"): 8000}
 
 
 @pytest.mark.parametrize(("language", "mode"), list(SIZE_LIMITS))
