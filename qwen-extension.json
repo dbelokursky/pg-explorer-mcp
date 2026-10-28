@@ -1,6 +1,6 @@
 {
   "name": "pg-explorer-mcp",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Read-only PostgreSQL access for the agent: schema, sample rows, query plans and read-only SQL.",
   "contextFileName": "pg-explorer-mcp-context.md"
 }
