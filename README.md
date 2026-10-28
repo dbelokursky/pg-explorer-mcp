@@ -376,6 +376,57 @@ No readable table or view named 'salaries' in schema 'hr'. Call list_tables to s
 
 The last line is about the `hr` schema, which the role has no rights to: the tools show none of its tables.
 
+### Data model diagrams
+
+`schema_diagram` (and the `/pg:diagram` command of the extension) draws the structure of the database as a
+Mermaid `erDiagram`. The answer is text, and GitHub, GitLab, Obsidian, VS Code and agent chats show it as a
+picture.
+
+**What it can draw:**
+
+- **A whole schema** (`schema`): its tables, partitioned and foreign tables, the foreign keys among them, and
+  the tables of other schemas that this schema refers to. Tables of other schemas that refer to this one are
+  left out, so a table everybody refers to does not pull in the whole database.
+- **One table with its neighbours** (`table` and `depth` from 0 to 3, 1 by default): the tables within
+  that many foreign keys of it, in either direction.
+- **The same on a stand**: with [many stands](#many-stands) pass `stand` and `schema`; the first line of
+  the diagram is a `%%` comment saying stand / database / schema.
+
+**How much of each table:**
+
+| `columns` | What a table shows |
+|---|---|
+| `keys` (the default) | the key columns: `PK`, `FK`, `UK` |
+| `all` | every column, with its comment cut to 60 characters |
+| `none` | only the table name; the relationships stay |
+
+**What a relationship line means:**
+
+| Line | Foreign key |
+|---|---|
+| `}o--\|\|` | many to one, the key columns are `NOT NULL` |
+| `}o--o\|` | many to one, the key may be empty |
+| `\|o--\|\|`, `\|o--o\|` | one to one: the key is on the primary key or on unique columns |
+
+The relationship is labelled with the key columns.
+
+**When it does not fit.** An answer has a budget of 8000 characters (`PG_EXPLORER_MCP_MAX_RESPONSE_CHARS`).
+A diagram either fits whole or is not sent: first the columns are left out, then the keys, and a
+`%%` comment at the top says so. If even the tables and relationships do not fit, the answer says to draw a
+part of it with `table` and `depth`.
+
+**Names.** A table name with a dot, Cyrillic or a leading digit is put in quotes (`"hr.employees"`,
+`"заказы"`). A column name keeps letters, digits, `_` and `-`, and gets a `_` before a leading digit. A
+type is one word: `varchar(50)`, `timestamptz`, `numeric` without `(10,2)`. Cyrillic column names need
+Mermaid 11 or newer.
+
+**What it does not draw:** views (they have no keys), data (no row is read), defaults and indexes. For a
+column's exact type and the indexes of a table, ask for `describe_table`.
+
+To keep the picture, ask the agent to save it: `/pg:diagram` writes the block into `<schema>.md` (or the
+bare source into `<schema>.mmd`) next to the project, and `mmdc -i <schema>.mmd -o <schema>.svg` from
+mermaid-cli turns it into an SVG. The reasoning is in [ADR 0008](docs/adr/0008-schema-diagram.md).
+
 ### Limits
 
 | What | How much |
@@ -622,7 +673,7 @@ and `status` with `stand` tries a second login when the server turned the first 
 `status` says why. At most 8 connections stay open (`PG_EXPLORER_MCP_MAX_CONNECTIONS`). A host that does not
 answer is given up after 10 seconds and not tried again for the rest of that call, whatever else the
 stand has on it; a second login of a database is tried only when the server answered and turned the
-first one down. The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
+first one down. The reasoning is in [ADR 0006](docs/adr/0006-stands.md).
 
 ## Group profiles
 
@@ -657,7 +708,7 @@ translated; the language of the latter is set by the database's `lc_messages`.
 
 Either way, the model is asked to answer in the user's language. If your group's model picks tools less
 reliably from Russian descriptions, set `PG_EXPLORER_MCP_LANG=en`: it will still answer in Russian. The reasons
-behind this design are in [ADR 0004](docs/adr/0004-languages.md) (in Russian).
+behind this design are in [ADR 0004](docs/adr/0004-languages.md).
 
 ## Security
 
@@ -674,7 +725,7 @@ layers of defence, and each one holds even if the others miss something:
    `DELETE`, `MERGE`, `SELECT … INTO`, row locks and functions with side effects (`pg_terminate_backend`,
    `set_config`, `dblink`, `pg_sleep` and others), telling the model why.
 
-The full policy is in [ADR 0002](docs/adr/0002-read-only-sql-policy.md) (in Russian).
+The full policy is in [ADR 0002](docs/adr/0002-read-only-sql-policy.md).
 
 Everything the tools return goes into the model's context. With a local model inside your organisation
 the data stays there, but pick the profile by the task: `schema` shows no data at all.
@@ -768,7 +819,7 @@ Refused by the SQL check (2)
 
 The file lives on the user's machine, so it is a journal, not a tamper-proof audit. To audit data access,
 log on the PostgreSQL server (`pgaudit` or `log_statement`); the server's connections carry
-`application_name = 'pg-explorer-mcp'`. The reasoning is in [ADR 0005](docs/adr/0005-query-log.md) (in Russian).
+`application_name = 'pg-explorer-mcp'`. The reasoning is in [ADR 0005](docs/adr/0005-query-log.md).
 
 ## Settings
 
@@ -916,7 +967,7 @@ the server asks it to use the user's language. `PG_EXPLORER_MCP_LANG` sets the l
 
 Environment, checks, code layout and rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Decisions and
 their reasons are in [docs/adr/](docs/adr/), the version history is in [CHANGELOG.md](CHANGELOG.md).
-These documents are in Russian. How to report a vulnerability is in [SECURITY.md](SECURITY.md).
+The decisions are in English; CONTRIBUTING.md and the changelog are in Russian. How to report a vulnerability is in [SECURITY.md](SECURITY.md).
 
 ## License
 
