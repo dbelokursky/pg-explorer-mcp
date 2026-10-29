@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import getpass
+import math
 import os
 import socket
 import ssl
@@ -299,16 +300,18 @@ class Database:
         That thread can only be a stand's that did not answer in time: its call answered without it, and
         it is finishing its statement. The wait is no longer than an open socket waits for an answer, past
         the statement timeout, and not past the end of the waiting thread's own call; a session busy for
-        longer is reported as such. The session is opened in the turn too, so two threads never open two.
+        longer than the socket waits is reported as such. A wait that the end of the call cuts short ends
+        with the call, though on Windows it may end a few milliseconds before time.monotonic() gets there:
+        the thread gives up, and the call names the stand among those that did not answer in time. The
+        session is opened in the turn too, so two threads never open two.
         """
         if overdue():
             raise OverdueError
         wait: float = socket_timeout(self.settings) if self.settings else SOCKET_TIMEOUT_S
         due = deadline()
-        if due is not None:
-            wait = min(wait, due - time.monotonic())
-        if not self._lock.acquire(timeout=max(0.0, wait)):
-            if overdue():
+        left = math.inf if due is None else due - time.monotonic()  # until the call answers
+        if not self._lock.acquire(timeout=max(0.0, min(wait, left))):
+            if left <= wait or overdue():
                 raise OverdueError
             raise DatabaseUnavailableError(t("db.busy", target=self.describe_target()))
         try:
