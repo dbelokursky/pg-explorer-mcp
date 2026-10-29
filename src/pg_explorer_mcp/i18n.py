@@ -546,11 +546,11 @@ EN: dict[str, str] = {
         "no data sources of DataGrip or another JetBrains IDE were found on this machine; pass --project with "
         "the folder of the project that has them"
     ),
-    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-explorer-mcp? [y/N] ",
-    "import.offer_hint": "To import them, run: {command}",
-    "import.found": (
-        "DBeaver connections found in {path}. To see what an import would bring into pg-explorer-mcp: {command}"
-    ),
+    "import.found_dbeaver": "DBeaver connections found in {path}.",
+    "import.found_datagrip": "Data sources of DataGrip or another JetBrains IDE found in {paths}.",
+    "import.offer": "{where} Show what an import would bring into pg-explorer-mcp? [y/N] ",
+    "import.offer_hint": "To import them, run:",
+    "import.found": "{where} To see what an import would bring into pg-explorer-mcp: {command}",
     # install.py export
     "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
     "export.help.tool": (
@@ -1114,11 +1114,11 @@ RU: dict[str, str] = {
         "источники данных DataGrip и других IDE JetBrains на этой машине не найдены; передайте --project с папкой "
         "проекта, где они есть"
     ),
-    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
-    "import.offer_hint": "Чтобы перенести их, выполните: {command}",
-    "import.found": (
-        "Найдены подключения DBeaver в {path}. Посмотреть, что импорт перенесёт в pg-explorer-mcp: {command}"
-    ),
+    "import.found_dbeaver": "Найдены подключения DBeaver в {path}.",
+    "import.found_datagrip": "Найдены источники данных DataGrip и других IDE JetBrains в {paths}.",
+    "import.offer": "{where} Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
+    "import.offer_hint": "Чтобы перенести их, выполните:",
+    "import.found": "{where} Посмотреть, что импорт перенесёт в pg-explorer-mcp: {command}",
     "export.help": (
         "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
     ),
