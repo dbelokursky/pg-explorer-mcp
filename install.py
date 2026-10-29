@@ -392,9 +392,14 @@ def _datagrip_connections(project: Path | None) -> list[imports.Connection] | No
 
 
 def offer_import(language: str) -> None:
-    """At a terminal, when DBeaver is on this machine: offer to show what an import would do."""
+    """When DBeaver is on this machine: at a terminal, offer to show what an import would do; otherwise name
+    the command that shows it, for the agent that runs install.py with no terminal to answer (/pg:setup)."""
     folder = imports.dbeaver_workspace(shell_env())
-    if folder is None or not sys.stdin.isatty():
+    if folder is None:
+        return
+    if not sys.stdin.isatty():
+        preview = f"{sys.executable} {ROOT / 'install.py'} import dbeaver --lang {language}"
+        print(t("import.found", path=folder, command=preview))
         return
     try:
         answer = input(t("import.offer", path=folder))

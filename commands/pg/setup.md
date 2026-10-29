@@ -23,7 +23,11 @@ Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-explorer-m
    `env` block of `mcpServers.pg` (or `pg-<name>`): PGHOST, PGPORT, PGDATABASE, PGUSER, PGSSLMODE.
    The password goes into `~/.pgpass`, which the user edits themselves. Then run
    `<python> <pg-explorer-mcp folder>/install.py --check` again.
-5. When the check reports the database as connected ("database: connected", in Russian
+5. If the output says DBeaver connections were found ("DBeaver connections found", in Russian
+   "Найдены подключения DBeaver"), or warns that no stands were found, tell the user that their stands
+   can be brought into pg-explorer-mcp and offer `/pg:import`: it shows a preview before writing anything
+   and registers `pg-stands`, so one restart covers both.
+6. When the check reports the database as connected ("database: connected", in Russian
    "база: подключено"), or an entry for stands lists them ("stands:", in Russian "стенды:"), tell the
    user to restart the agent so it starts the server with the new settings.
 

@@ -72,6 +72,9 @@ Qwen Code and ask the agent: "Check the database connection".
 There is a shorter way too: link the extension (`qwen extensions link`), restart Qwen Code and run
 `/pg:setup` in it. The agent finds Python, runs `install.py` and works through the hints itself.
 
+Already have the stand connections in DBeaver or in `pg_service.conf`? `python3 install.py import dbeaver`
+shows what it would bring in, and `/pg:import` does the same through the agent: [many stands](#many-stands).
+
 ## Try it on the demo database
 
 The answers shown in [Usage](#usage) come from a small demo database: a shop the agent may read and an
