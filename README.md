@@ -650,7 +650,8 @@ saying so under its header, and the other stands still answer. Stands that answe
 matches, are folded into one line naming them, so the stand that has what was asked for stands out. The
 200 rows of `run_select` and the 100 matches of `search_schema` are shared among the stands, at least 10
 per stand, so the whole answer fits the budget. The call keeps to 25 of the client's 30 seconds: a stand
-that has not answered by then is named as such, and the agent asks about it in another call.
+that has not answered by then is named as such, and the agent asks about it in another call. If the stand is
+still running the query then, that call waits for it to end, no longer than the query timeout plus 5 seconds.
 
 `run_select` with `stands: dev*`, `schema: shop` and `SELECT count(*) FROM orders WHERE id = 123`:
 
