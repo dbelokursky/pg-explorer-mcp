@@ -1217,11 +1217,46 @@ class Session:
         pass
 
 
+def early(timeout: float) -> float:
+    """A timed wait as Windows may end it: on a tick of a timer that steps by 15.6 ms, while time.monotonic() has
+    not yet reached the end of the wait. Here a wait longer than 50 ms ends 50 ms early."""
+    return timeout - 0.05 if timeout > 0.05 else timeout
+
+
+class EarlyLock:
+    """The lock of a session, whose waits end early."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def acquire(self, *, timeout: float) -> bool:
+        return self._lock.acquire(timeout=early(timeout))
+
+    def release(self) -> None:
+        self._lock.release()
+
+
+class EarlyThread(threading.Thread):
+    """The thread of a stand, whose join() ends early."""
+
+    def join(self, timeout: float | None = None) -> None:
+        super().join(None if timeout is None else early(timeout))
+
+
 class TestLateStand:
     """A stand still at work when its call answers: its thread finishes the statement on the stand's session,
     the next call waits for that, and nothing the thread does afterwards reaches the next call."""
 
     LATE = "pg-explorer-mcp dev1"  # the name of the stand's thread
+
+    @pytest.fixture(autouse=True, params=["precise", "early"])
+    def timers(self, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Every case runs with waits that end early too, as on Windows. There a thread's wait for the busy session
+        ended before the end of its call, and the stand answered the call that the session was busy; and the call's
+        wait for its threads ended early, so that a late thread went on to start a statement for the answered call."""
+        if request.param == "early":
+            monkeypatch.setattr(db, "threading", SimpleNamespace(Lock=EarlyLock))
+            monkeypatch.setattr(stand_tools, "threading", SimpleNamespace(Lock=threading.Lock, Thread=EarlyThread))
 
     @pytest.fixture
     def sessions(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[Sessions]:

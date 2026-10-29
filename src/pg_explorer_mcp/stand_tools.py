@@ -24,7 +24,7 @@ from typing import Any, Optional
 from . import __version__
 from .budget import DEFAULT_BUDGET
 from .compare import Structure, compare_schema, comparison, read_structure
-from .db import Database, DatabaseUnavailableError, QueryFailedError, answer_by, overdue
+from .db import Database, DatabaseUnavailableError, OverdueError, QueryFailedError, answer_by, overdue
 from .i18n import current, plural, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
@@ -665,6 +665,8 @@ def _ask_stands(
         answer_by(deadline)
         try:
             lines = run(stand)
+        except OverdueError:
+            return  # the call answers without the stand, naming it among those that did not answer in time
         except Exception as exc:  # whatever stops a thread is the stand's line, not a lost stand
             pool.note(stand, ERROR)
             lines = [stand, f"  {exc}"]
@@ -680,7 +682,10 @@ def _ask_stands(
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(max(0.0, deadline - time.monotonic()))
+        # A wait may end a little before time.monotonic() gets to its end (Windows), and the threads, which go by
+        # that clock, would still be working for the call after it has answered.
+        while thread.is_alive() and time.monotonic() < deadline:
+            thread.join(max(0.0, deadline - time.monotonic()))
     late = [stand for stand in stands if stand not in answers]
     pool.outcomes.update(dict.fromkeys(late, SKIPPED))
     pool.current = None  # the query log names the call's stands and their outcomes, not the last login
