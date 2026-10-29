@@ -12,7 +12,7 @@ import pytest
 import install
 from pg_explorer_mcp import clients, exports, imports
 from tests.helpers import ROOT
-from tests.test_imports import data_source, datagrip_files, dbeaver_workspace, postgres
+from tests.test_imports import data_source, datagrip_files, dbeaver_workspace, postgres, ssh_configs, ssh_properties
 
 ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-explorer-mcp/run.py"]}
 
@@ -362,7 +362,13 @@ def test_import_datagrip_reads_the_ides_their_projects_and_the_project_named(
     orders = data_source("orders on dev7", "jdbc:postgresql://dev7-db.example/orders", uuid="u1", user="billing")
     datagrip_files(options, [orders], application=True)
     shop = tmp_path / "IdeaProjects" / "shop"
-    datagrip_files(shop / ".idea", [data_source("IFT2", "jdbc:postgresql://ift2-db:6432/shop", uuid="u2", user="shop")])
+    tunnelled = data_source(
+        "IFT3", "jdbc:postgresql://localhost/shop", uuid="u3", user="shop", ssh=ssh_properties("c1")
+    )  # its SSH configuration is one the IDE shares between projects
+    datagrip_files(
+        shop / ".idea", [data_source("IFT2", "jdbc:postgresql://ift2-db:6432/shop", uuid="u2", user="shop"), tunnelled]
+    )
+    ssh_configs(options, {"c1": "bastion.example:22"}, application=True)
     broken = tmp_path / "DataGripProjects" / "old" / ".idea"
     broken.mkdir(parents=True)
     (broken / "dataSources.xml").write_text("<project", encoding="utf-8")
@@ -372,6 +378,7 @@ def test_import_datagrip_reads_the_ides_their_projects_and_the_project_named(
     assert f"reading {options}\n2 connections go into" in out  # the broken project leaves the others to read
     assert "  [ift2.shop.shop]  ift2-db:6432  no saved password: add a line to the password file" in out
     assert "  [dev7.orders.billing]  dev7-db.example:5432  no saved password" in out
+    assert "  DataGrip: IFT3  through an SSH tunnel via bastion.example:22: pg-explorer-mcp opens no tunnels" in out
     assert "This was a preview, nothing was written." in out
     assert not (tmp_path / "stands.conf").exists()
 

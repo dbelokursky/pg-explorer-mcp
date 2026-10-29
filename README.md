@@ -541,6 +541,14 @@ never reads: the preview marks those logins, and their lines go into the passwor
 password, user or `sslmode` written in the URL itself is taken from there. Data sources that
 `install.py export datagrip` wrote are not brought back.
 
+A connection that DBeaver or a JetBrains IDE makes through an SSH tunnel is left out, and the preview
+says so, naming the SSH server when the tool's files do (for the IDEs, the SSH configuration in the
+project's `.idea/sshConfigs.xml` or in the IDE's settings): its host is the database's as the SSH server
+sees it, often `localhost`, and pg-explorer-mcp opens no tunnels. To query such a stand, open the tunnel
+yourself, say `ssh -N -L 15432:<database host>:5432 <SSH server>`, then add its section by hand with
+`host=localhost` and `port=15432`, and its line to the password file with the same host and port. A
+connection whose tunnel is switched off in the tool is brought in as usual.
+
 **Exporting connections to database tools.** The other way round, `install.py export` puts the stands
 into the tools you query them with yourself: a folder or group per stand, every connection logging in
 with the password file. No password is copied anywhere.
