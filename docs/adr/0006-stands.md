@@ -48,9 +48,10 @@ set of tools, about 5 thousand characters of descriptions in every request, and 
 
 ## Import
 
-`install.py import dbeaver`, `install.py import datagrip` and `install.py import pg-service <file>`: by default a preview of which
-`stand.database.schema` sections would go into the registry, how many passwords into the password file, what is left out and why;
-writing happens only with `--write`. The stand is recognised from the folder (DBeaver's, or the group of a JetBrains data source), the connection name and the host with a regular
+`install.py import dbeaver`, `install.py import datagrip` and `install.py import pg-service <file>`: by default a
+preview of which `stand.database.schema` sections would go into the registry, how many passwords into the password
+file, what is left out and why; writing happens only with `--write`. The stand is recognised from the folder
+(DBeaver's, or the group of a JetBrains data source), the connection name and the host with a regular
 expression (by default `(dev|ift)[-_ ]?\d+`, changed with `--stand-pattern`; a separator between the letters and the
 number is dropped, and a connection where the pattern found nothing takes its own name as the stand), the database comes from
 the connection, from its URL first, and in place of the schema goes its login: the import does not know which schemas that login reads, and the server

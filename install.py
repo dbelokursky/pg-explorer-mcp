@@ -9,7 +9,7 @@
     PGDATABASE=sales python3 install.py --name sales  another database, as pg-sales
     python3 install.py import dbeaver            show what DBeaver's connections would bring
     python3 install.py import dbeaver --write    write the stands registry, the password file, register pg-stands
-    python3 install.py import datagrip           the same for DataGrip and the other JetBrains IDEs
+    python3 install.py import datagrip           show what DataGrip and the other JetBrains IDEs would bring
     python3 install.py import pg-service ~/.pg_service.conf --write
     python3 install.py export dbeaver            show which stand connections DBeaver would get
     python3 install.py export pgadmin --write    write servers.json for pgAdmin to import

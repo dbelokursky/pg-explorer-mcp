@@ -194,14 +194,13 @@ def datagrip_folders(env: Mapping[str, str], home: Path, project: Path | None = 
     folders = [] if project is None else [project if (project / "dataSources.xml").is_file() else project / ".idea"]
     folders.extend(path.parent for path in sorted((home / "DataGripProjects").glob("*/.idea/dataSources.xml")))
     jetbrains = app_data(env, home) / "JetBrains"
-    newest: dict[str, tuple[tuple[int, int], Path]] = {}
-    for child in sorted(jetbrains.iterdir()) if jetbrains.is_dir() else []:
+    versions = []
+    for child in jetbrains.iterdir() if jetbrains.is_dir() else []:
         match = _IDE_FOLDER.fullmatch(child.name)
         if match and (child / "options" / "dataSources.xml").is_file():
-            ide, version = match.group(1), (int(match.group(2)), int(match.group(3)))
-            if ide not in newest or version > newest[ide][0]:
-                newest[ide] = (version, child / "options")
-    folders.extend(options for _, options in newest.values())
+            versions.append((match.group(1), int(match.group(2)), int(match.group(3)), child / "options"))
+    newest = {ide: options for ide, _, _, options in sorted(versions)}  # each IDE's newest version comes last
+    folders.extend(newest.values())
     unique: dict[Path, Path] = {}
     for folder in folders:  # a project named that is one of DataGrip's is read once
         unique.setdefault(folder.resolve(), folder)
