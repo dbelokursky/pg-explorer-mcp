@@ -73,8 +73,9 @@ qwen extensions link "$(pwd)"                                    # контек�
 Можно и короче: подключите расширение (`qwen extensions link`), перезапустите Qwen Code и
 выполните в нём `/pg:setup`. Агент сам найдёт Python, запустит `install.py` и разберёт подсказки.
 
-Подключения к стендам уже есть в DBeaver или в `pg_service.conf`? `python3 install.py import dbeaver`
-покажет, что перенесёт, а `/pg:import` сделает то же через агента: [много стендов](#много-стендов).
+Подключения к стендам уже есть в DBeaver, DataGrip или в `pg_service.conf`? `python3 install.py import dbeaver`
+(или `import datagrip`) покажет, что перенесёт, а `/pg:import` сделает то же через агента:
+[много стендов](#много-стендов).
 
 ## Попробовать на демо-базе
 

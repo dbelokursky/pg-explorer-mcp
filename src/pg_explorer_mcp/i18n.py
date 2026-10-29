@@ -453,7 +453,7 @@ EN: dict[str, str] = {
     "stands.bad_hosts": "stand connection {name} in {path}: {problem}, skipped",
     "stands.none_found": (
         "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings; "
-        "install.py import brings the stands in from DBeaver or a pg_service.conf file"
+        "install.py import brings the stands in from DBeaver, DataGrip or a pg_service.conf file"
     ),
     "stands.more_warnings": "... and {count} more problems in the stands registry",
     # compare_schema: one schema on two stands.
@@ -1022,7 +1022,7 @@ RU: dict[str, str] = {
     "stands.bad_hosts": "у подключения {name} в {path}: {problem}, пропущено",
     "stands.none_found": (
         "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*; "
-        "стенды из DBeaver или файла pg_service.conf переносит install.py import"
+        "стенды из DBeaver, DataGrip или файла pg_service.conf переносит install.py import"
     ),
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
