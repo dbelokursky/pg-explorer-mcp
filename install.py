@@ -392,26 +392,37 @@ def _datagrip_connections(project: Path | None) -> list[imports.Connection] | No
 
 
 def offer_import(language: str) -> None:
-    """When DBeaver is on this machine: at a terminal, offer to show what an import would do; otherwise name
-    the command that shows it, for the agent that runs install.py with no terminal to answer (/pg:setup)."""
-    folder = imports.dbeaver_workspace(shell_env())
-    if folder is None:
+    """When DBeaver or a JetBrains IDE has connections on this machine: at a terminal, offer to show what an import
+    would do; otherwise name the command that shows it, for the agent that runs install.py with no terminal to
+    answer (/pg:setup). Both found make one question, not two in a row."""
+    found: dict[str, str] = {}  # the source to import from, and where its connections were found
+    dbeaver = imports.dbeaver_workspace(shell_env())
+    if dbeaver is not None:
+        found["dbeaver"] = t("import.found_dbeaver", path=dbeaver)
+    jetbrains = imports.datagrip_folders(shell_env(), Path.home())
+    if jetbrains:
+        found["datagrip"] = t("import.found_datagrip", paths=", ".join(map(str, jetbrains)))
+    if not found:
         return
+    command = f"{sys.executable} {ROOT / 'install.py'} import"
     if not sys.stdin.isatty():
-        preview = f"{sys.executable} {ROOT / 'install.py'} import dbeaver --lang {language}"
-        print(t("import.found", path=folder, command=preview))
+        for source, where in found.items():
+            print(t("import.found", where=where, command=f"{command} {source} --lang {language}"))
         return
     try:
-        answer = input(t("import.offer", path=folder))
+        answer = input(t("import.offer", where=" ".join(found.values())))
     except EOFError:
         return
-    command = f"{sys.executable} {ROOT / 'install.py'} import dbeaver --write --lang {language}"
     if answer.strip().lower() in YES:
-        print()
-        import_command(argparse.Namespace(source="dbeaver", file=None, workspace=None, write=False, prune=False,
-                                          stand_pattern=imports.DEFAULT_STAND_PATTERN, client="gigacode",
-                                          profile=None, lang=language, print=False), language)  # fmt: skip
-    print(t("import.offer_hint", command=command))
+        for source in found:
+            print()
+            import_command(argparse.Namespace(source=source, file=None, workspace=None, project=None, write=False,
+                                              prune=False, stand_pattern=imports.DEFAULT_STAND_PATTERN,
+                                              client="gigacode", profile=None, lang=language, print=False),
+                           language)  # fmt: skip
+    print(t("import.offer_hint"))
+    for source in found:
+        print(f"  {command} {source} --write --lang {language}")
 
 
 def export_command(args: argparse.Namespace) -> int:

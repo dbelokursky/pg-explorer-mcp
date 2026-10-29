@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import install
-from pg_explorer_mcp import clients, exports, imports
+from pg_explorer_mcp import clients, exports, i18n, imports
 from tests.helpers import ROOT
 from tests.test_imports import data_source, datagrip_files, dbeaver_workspace, postgres
 
@@ -384,6 +385,7 @@ def test_a_terminal_user_is_offered_the_dbeaver_preview(
     monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
     folder = dbeaver_folder(tmp_path)
     monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: folder)  # noqa: ARG005
+    monkeypatch.setattr(imports, "datagrip_folders", lambda env, home, project=None: [])  # noqa: ARG005
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     answers = iter(["y", "n"])
     monkeypatch.setattr("builtins.input", lambda prompt: (sys.stdout.write(prompt), next(answers))[1])
@@ -407,6 +409,7 @@ def test_an_agent_is_told_the_command_that_shows_the_dbeaver_preview(
     use_env(monkeypatch, unreachable_env, tmp_path)
     folder = dbeaver_folder(tmp_path)
     monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: folder)  # noqa: ARG005
+    monkeypatch.setattr(imports, "datagrip_folders", lambda env, home, project=None: [])  # noqa: ARG005
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(f"asked {prompt!r} with no terminal"))
     install.offer_import("en")
@@ -417,6 +420,90 @@ def test_an_agent_is_told_the_command_that_shows_the_dbeaver_preview(
     monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: None)  # noqa: ARG005
     install.offer_import("en")
     assert capsys.readouterr().out == ""
+
+
+def test_a_terminal_user_is_asked_once_about_dbeaver_and_the_jetbrains_ides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Both found make one question, not two in a row, and a yes shows what each import would bring."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+    folder = dbeaver_folder(tmp_path)
+    options = tmp_path / "JetBrains" / "IntelliJIdea2026.2" / "options"
+    shop = data_source("IFT3", "jdbc:postgresql://ift3-db:6432/shop", uuid="u3", user="shop")
+    datagrip_files(options, [shop], application=True)
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: folder)  # noqa: ARG005
+    monkeypatch.setattr(imports, "datagrip_folders", lambda env, home, project=None: [options])  # noqa: ARG005
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    answers = iter(["y", "n"])
+    monkeypatch.setattr("builtins.input", lambda prompt: (sys.stdout.write(prompt), next(answers))[1])
+    install.offer_import("en")
+    out = capsys.readouterr().out
+    assert out.startswith(
+        f"DBeaver connections found in {folder}. Data sources of DataGrip or another JetBrains IDE found in "
+        f"{options}. Show what an import would bring into pg-explorer-mcp? [y/N] \n"
+    )
+    assert out.count("[y/N]") == 1
+    assert out.index("[dev7.orders.billing]  dev7-db.example:5432") < out.index(f"reading {options}")
+    assert "  [ift3.shop.shop]  ift3-db:6432  no saved password" in out
+    command = f"{sys.executable} {install.ROOT / 'install.py'} import"
+    assert out.endswith(
+        f"To import them, run:\n  {command} dbeaver --write --lang en\n  {command} datagrip --write --lang en\n"
+    )
+    assert not (tmp_path / "stands.conf").exists()
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: None)  # noqa: ARG005
+    install.offer_import("en")
+    assert capsys.readouterr().out == (
+        f"Data sources of DataGrip or another JetBrains IDE found in {options}. Show what an import would bring "
+        f"into pg-explorer-mcp? [y/N] To import them, run:\n  {command} datagrip --write --lang en\n"
+    )
+
+
+def test_an_agent_is_told_the_command_that_shows_the_jetbrains_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A user of DataGrip or IntelliJ IDEA hears of the import too; with DBeaver as well, each tool gets its line."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    folders = [
+        tmp_path / "DataGripProjects" / "stands" / ".idea",
+        tmp_path / "JetBrains" / "DataGrip2026.2" / "options",
+    ]
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: None)  # noqa: ARG005
+    monkeypatch.setattr(imports, "datagrip_folders", lambda env, home, project=None: folders)  # noqa: ARG005
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(f"asked {prompt!r} with no terminal"))
+    install.offer_import("en")
+    command = f"{sys.executable} {install.ROOT / 'install.py'} import"
+    jetbrains = (
+        f"Data sources of DataGrip or another JetBrains IDE found in {folders[0]}, {folders[1]}. "
+        f"To see what an import would bring into pg-explorer-mcp: {command} datagrip --lang en\n"
+    )
+    assert capsys.readouterr().out == jetbrains
+    folder = tmp_path / ".dbeaver"
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: folder)  # noqa: ARG005
+    install.offer_import("en")
+    assert capsys.readouterr().out == (
+        f"DBeaver connections found in {folder}. To see what an import would bring into pg-explorer-mcp: "
+        f"{command} dbeaver --lang en\n{jetbrains}"
+    )
+
+
+@pytest.mark.parametrize("language", i18n.LANGUAGES)
+def test_setup_knows_every_line_that_names_an_import_preview(
+    language: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Step 5 of /pg:setup offers /pg:import when the output has one of the phrases it quotes."""
+    step = (ROOT / "commands" / "pg" / "setup.md").read_text(encoding="utf-8").split("\n5. ")[1].split("\n6. ")[0]
+    phrases = [" ".join(quoted.split()) for quoted in re.findall(r'"([^"]+)"', step)]
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: tmp_path)  # noqa: ARG005
+    monkeypatch.setattr(imports, "datagrip_folders", lambda env, home, project=None: [tmp_path])  # noqa: ARG005
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    with i18n.speaking(language):
+        install.offer_import(language)
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 2
+    assert [line for line in lines if not any(phrase in line for phrase in phrases)] == []
 
 
 def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]) -> None:
