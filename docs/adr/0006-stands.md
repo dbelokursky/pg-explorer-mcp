@@ -67,6 +67,13 @@ the import does not read them: the preview marks those logins, and only a passwo
 which the IDE stores in plain text, is taken. A data source whose uuid is the one `install.py export` gives the
 section its name spells (stand / database / schema) is an export and is not brought back. A folder that cannot be
 read is named in the preview and skipped, and the others are read.
+A connection made through an SSH tunnel is left out, with the reason in the preview: DBeaver's `ssh_tunnel` network
+handler switched on, or `ssh-properties` with `enabled` true in `dataSources.local.xml`. Its host is the database's
+as the SSH server sees it, often `localhost`, and pg-explorer-mcp opens no tunnels. The preview names the SSH server
+when the files do: the tunnel's properties in DBeaver; in the IDEs the SSH configuration `ssh-config-id` names, from
+`sshConfigs.xml` of the project or of the folder read, or from the one each version of each IDE keeps in its options
+folder for every project; before SSH configurations, `proxy-host` in the data source itself. A tunnel switched off
+leaves the connection direct, and it is brought in as usual.
 Writing prepares both files in full, then puts them in place with a dated copy of the old ones; the password file
 is only added to and updated, and the registry is added to or, with `--prune`, replaced; on a failure nothing
 changes. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
@@ -90,6 +97,12 @@ can read also gets a warning.
 - **Reading the JetBrains passwords** from the keychain or KeePass: the keychain asks the user about every item, KeePass
   needs its master password, and each store is code of its own for every system, beyond the standard library
   (ADR 0001); a line in the password file is typed once.
+- **Bringing a connection that goes through an SSH tunnel in, marked in the preview**: its section would point at a
+  host only the SSH server reaches, at times the user's own `localhost`, and its password would go into the password
+  file under that host, offered to whatever answers there. A section for the local end of a tunnel the user opens is
+  one line to write, and only the user knows its port.
+- **Opening the SSH tunnel in the server**: an SSH client is code beyond the standard library (ADR 0001), with keys,
+  agents, known hosts and jump hosts to handle; the system's `ssh` does all that already.
 - **Every project of every JetBrains IDE**, found through the list of recent projects: the projects of code bring their
   local and test databases along with the stands; `--project` names the one that has stands. DataGrip's projects are
   all read: a DataGrip project is made for its data sources.

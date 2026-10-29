@@ -382,10 +382,11 @@ def _datagrip_connections(project: Path | None) -> list[imports.Connection] | No
         print(t("import.no_datagrip"))
         return None
     connections: list[imports.Connection] = []
+    ssh_configs = imports.jetbrains_ssh_configs(shell_env(), Path.home())  # those the IDEs share between projects
     for folder in folders:
         print(t("import.reading", source=folder))
         try:
-            connections.extend(imports.read_datagrip(folder))
+            connections.extend(imports.read_datagrip(folder, ssh_configs))
         except imports.ImportRefusedError as exc:
             print(exc)  # one broken project or IDE leaves the others to read
     return connections
