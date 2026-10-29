@@ -27,13 +27,14 @@ set of tools, about 5 thousand characters of descriptions in every request, and 
 | Structure across a stand | the system catalog through any login of the database, only for the schemas of the registry; for a database with one login, everything that login reads | the PostgreSQL catalog is visible to everyone; one query instead of a connection as each schema |
 | One login per database | a database of a stand whose sections all share one login (one DBeaver connection is one section, named after its login: `[ift-caldera.caldera_ift1.cldr_testers_user]`) is read as a whole through it: `schema` takes any schema, and the list of schemas and tables comes from the catalog by the login's privileges, as for an entry for one database; a database with several logins works only with the schemas of the registry | on IFT one login reads dozens of schemas, and the import does not know which; a registry stricter than the database would hide them all, while PostgreSQL checks the privileges anyway |
 | Comparing stands | `compare_schema` with `stand_a`, `stand_b` and `schema`: the structure of the schema on both stands from the catalog under its login, three queries per stand, only the differences in the answer: tables, columns, constraints, indexes; a schema missing from the database of one stand is an error | "how does orders on dev7 differ from dev12" is one call instead of describe_table for every table on two stands; no data is read |
-| One reference against many | `compare_schema` with `stands` instead of `stand_b`: the reference is read once, the stands one after another within a 25-second budget, no more than 10; up to three stands get the full differences, more get a line of counts per stand; an unavailable stand does not get in the way of the others | "which stands differ from dev7" is one call; details for ten stands would not fit the answer budget |
+| One reference against many | `compare_schema` with `stands` instead of `stand_b`: the reference is read once, then the stands all at the same time, a thread each, within a 25-second budget, no more than 100; up to three stands get the full differences, more get a line of counts per stand; an unavailable stand does not get in the way of the others | "which stands differ from dev7" is one call; details for dozens of stands would not fit the answer budget |
 | Data | only through the login of the right schema, with `search_path` set to that schema | the database checks privileges itself; without access to a neighbouring schema the answer is `permission denied` |
 | Connections | opened on demand, no more than 8 kept, the rest closed; connecting waits 10 seconds, an open socket no less than the query timeout plus 5 seconds | hundreds of connections do not hang around; a dropped VPN does not hold up the agent for 30 seconds; a long query is not cut off by the network and is not run again |
 | A host did not answer | within one call, a host that did not answer (no route, a timeout, the port refused) is not tried again under any login; a second login of the database is tried only when the server answered and rejected the first | the client waits 30 seconds for a tool's answer: a stand of three databases behind a dropped VPN would cost 60 seconds and a broken call instead of a hint |
 | Checking a stand | `status` with `stand` tries the stand's first login; if the server rejected it, the second | a broken login of one schema does not make the whole stand look unavailable |
 | What the answer shows | the first line of the answer is `stand / database / schema`; the same goes into the query log | it is always clear where the data comes from |
-| One query on several stands | `stands` in `run_select` and `search_schema`: comma-separated names or a pattern, no more than 10 per call; the stands are queried one after another, the answer has a section per stand, and a stand's failure is a line under its heading; rows and matches are shared between the stands | "which stand has the order" is one call, not ten; the client waits 30 seconds for an answer, an unavailable stand costs a network timeout, and the limit of 10 stands with 25 seconds per call keeps the answer within bounds; threads would complicate the pool and the log |
+| One query on several stands | `stands` in `run_select` and `search_schema`: comma-separated names or a pattern, no more than 100 per call; the stands are queried at the same time, a thread each, and after 25 seconds the call answers without the stands that are still at work, naming them; the answer has a section per stand, and a stand's failure is a line under its heading; rows and matches are shared between the stands | "which stand has the order" is one call, not fifty; the client waits 30 seconds for an answer, and stands asked one after another, each able to cost a network timeout, would not fit in it: at the same time the call takes as long as the slowest stand, and a hundred sections with the rows shared between them fit the answer budget |
+| A stand that answers late | the call answers without it, and the stand's thread finishes its statement on the stand's session. A session runs one transaction at a time: the next call that needs it waits for that statement, no longer than an open socket waits for an answer (the statement timeout plus 5 seconds) and not past the end of its own call, and a session busy for longer is named in the answer. Once its call has answered, the thread takes no connection and starts no statement, and its rows and outcome count for no call; the pool keeps its connection until the thread has ended, whoever has taken the connection since | the answer tells the agent to ask about such a stand in another call, and the agent does so at once: the next call used to take the same pg8000 connection while the late thread was still on it, so one thread's `ROLLBACK` ended the other's transaction (`DECLARE CURSOR can only be used in transaction blocks`, SQLSTATE 25P01) or a call read the rows of another, and the late rows and outcome went into the next call's line in the query log |
 
 ## Breaking nothing
 
@@ -76,6 +77,12 @@ can read also gets a warning.
 - **Our own registry format** (JSON, TOML): one more format where a standard one already exists.
 - **Reading DBeaver at every server start**: a failure to parse someone else's format would break the server; an import
   as a separate command is safer.
+- **A second connection for a login whose session is still busy** with a late stand's statement: the next call would not
+  wait, but a stand would get several sessions of one login, which a role's `CONNECTION LIMIT` or a pooler's limit per
+  user refuses, an already slow stand would get more load, and the pool would have to track which of a login's sessions
+  is free.
+- **Answering at once that a stand is still busy**: no waiting and the least code, but the agent asks about a late stand
+  right away, as the answer tells it to, and a model cannot wait: the advice would mostly end in a refusal.
 
 ## Consequences
 
@@ -87,11 +94,12 @@ can read also gets a warning.
 - A call over several stands (`stands`) queries them at the same time, a thread per stand, no more than 100 per
   call and within 25 seconds: the call takes as long as the slowest stand, and a stand that has not answered
   in that time is named at the end of the answer. The connection pool is shared between the threads: its bookkeeping runs under a
-  lock, and the connection of a stand that is still answering is not closed until its thread has finished. The rows
+  lock, a session runs one transaction at a time, and the connection of a stand that is still answering is not closed until
+  its thread has finished. The rows
   of `run_select` and the matches of `search_schema` are shared between the stands, no fewer than 10 per stand, so that the answer
   fits the budget; stands with no rows and no matches are folded into one line.
 - The query log writes one line for such a call, not a line per stand: the agent's call stays one
   line with its duration, as in ADR 0005. The `stands` field maps each stand to its result (`ok`,
-  `unavailable`, `error`, `skipped`), `rows` is the sum over the stands, and `role` and `database` are empty, because
+  `unavailable`, `error`, `skipped`), `rows` is the sum over the stands that answered in time, and `role` and `database` are empty, because
   each stand has its own login. A line per stand would turn one call into ten lines and lose
   its duration; the breakdown by stand is in `stands`.

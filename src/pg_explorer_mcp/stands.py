@@ -25,7 +25,16 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any
 
-from .db import DEFAULT_STATEMENT_TIMEOUT_MS, Counters, Database, Settings, split_hosts
+from .db import (
+    DEFAULT_STATEMENT_TIMEOUT_MS,
+    Counters,
+    Database,
+    OverdueError,
+    Settings,
+    deadline,
+    overdue,
+    split_hosts,
+)
 from .i18n import plural, t
 
 DEFAULT_MAX_CONNECTIONS = 8
@@ -176,7 +185,7 @@ class Registry:
         """The stands of names separated by commas or fnmatch patterns ("dev1,dev2", "dev*"), in stands() order.
 
         Names fold to lower case, as in stand(). More than MAX_STANDS_PER_CALL stands is an error
-        that shows what matched: a call asks them one after another, and the client waits only so long.
+        that shows what matched: a call asks them all at once, and its answer has a section per stand.
         """
         items = raw if isinstance(raw, list) else raw.split(",") if isinstance(raw, str) else []
         wanted = [item.strip().lower() for item in items if isinstance(item, str) and item.strip()]
@@ -396,6 +405,10 @@ class Pool:
 
     A call over several stands asks them from threads, one per stand, so the pool is shared: its
     bookkeeping runs under a lock, and a connection is never closed under a thread still using it.
+    A stand that has not answered in time keeps its thread after the call has answered. The thread
+    finishes its statement, and the next call that needs the session waits for it (Database), but
+    the thread takes no new connection and changes nothing the next call reports: the login, the
+    outcomes and the rows in the query log are that call's own.
     """
 
     def __init__(self, registry: Registry, env: Mapping[str, str], limit: int = DEFAULT_MAX_CONNECTIONS) -> None:
@@ -403,37 +416,42 @@ class Pool:
         self._env = env
         self._limit = max(1, limit)
         self._open: OrderedDict[str, Database] = OrderedDict()
-        self._users: dict[str, threading.Thread] = {}  # the thread that last took each connection
+        self._users: dict[str, set[threading.Thread]] = {}  # name -> the stands' threads that took the connection
         self._lock = threading.RLock()
         self._counters = Counters()
         self.current: Target | None = None
         self.outcomes: dict[str, str] = {}  # stand -> how a call over several stands ended there
 
     def database(self, target: Target) -> Database:
+        """The target's connection, opened on first use; the call's own thread makes it the login the log names."""
+        if overdue():
+            raise OverdueError
         with self._lock:
-            self.current = target
             database = self._open.pop(target.name, None) or Database(target.env(self._env), counters=self._counters)
             self._open[target.name] = database
-            self._users[target.name] = threading.current_thread()
-            self.trim()
+            if deadline() is None:  # the call's own thread
+                self.current = target
+                self.trim()
+            else:  # a thread of a call over several stands, which keeps the connection until it ends
+                self._users.setdefault(target.name, set()).add(threading.current_thread())
         return database
 
     def trim(self) -> None:
         """Close the oldest connections beyond the limit, except those a worker thread is still using.
 
-        During a call over many stands the pool holds a connection per stand; the next call closes
-        the surplus. A stand that has not answered when the call is over keeps its connection until
-        its thread ends, so that nothing is closed under a running statement.
+        During a call over many stands the pool holds a connection per stand; the end of the call
+        closes the surplus. A stand that has not answered when the call is over keeps its connection
+        until its thread ends, whoever has taken the connection since, so that nothing is closed
+        under a running statement. The newest connections stay whatever the older ones do: the one
+        database() is handing out is among them.
         """
         with self._lock:
-            for name in list(self._open):
-                if len(self._open) <= self._limit:
-                    return
-                user = self._users.get(name)
-                if user is not None and user is not threading.main_thread() and user.is_alive():
+            for name in list(self._open)[: -self._limit]:
+                users = {user for user in self._users.pop(name, ()) if user.is_alive()}
+                if users:
+                    self._users[name] = users
                     continue
                 self._open.pop(name).close()
-                self._users.pop(name, None)
 
     @property
     def limit(self) -> int:
@@ -489,10 +507,20 @@ class Pool:
             return {}
         return {"stand": self.current.stand, "schema": self.current.schema}
 
+    def note(self, stand: str, outcome: str) -> None:
+        """How a call over several stands ended on a stand, unless the call has answered without it.
+
+        By then the next call may have begun, and a stand it never asked would show up in its query log line.
+        """
+        with self._lock:
+            if not overdue():
+                self.outcomes[stand] = outcome
+
     def forget(self) -> None:
         """Forget the previous call, so that the query log describes this one only."""
-        self.current = None
-        self.outcomes = {}  # a new dict: a thread of the previous call that answers late writes into the old one
+        with self._lock:
+            self.current = None
+            self.outcomes = {}
 
     def connect_timeout(self, target: Target) -> int:
         """Seconds a connection to the target may wait for an answer: the section's, else the entry's."""

@@ -24,7 +24,7 @@ from typing import Any, Optional
 from . import __version__
 from .budget import DEFAULT_BUDGET
 from .compare import Structure, compare_schema, comparison, read_structure
-from .db import Database, DatabaseUnavailableError, QueryFailedError
+from .db import Database, DatabaseUnavailableError, QueryFailedError, answer_by, overdue
 from .i18n import current, plural, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
@@ -67,9 +67,9 @@ from .tools import (
 
 # The tools only a server with stands has, and the single-database tool each one follows.
 STAND_ONLY_TOOLS = {"list_schemas": "status", "compare_schema": "describe_table"}
-# A call over several stands asks them one after another and must answer within the client's
-# timeout (install.py registers the entry with "timeout": 30000): another stand is started only
-# while the call has time for that stand's connect timeout, and the rows are shared among the stands.
+# A call over several stands asks them all at once, a thread each, and must answer within the client's
+# timeout (install.py registers the entry with "timeout": 30000): after this many seconds it answers
+# without the stands still at work, and the rows are shared among the stands.
 CALL_TIME_BUDGET_S = 25
 DETAILED_COMPARE_STANDS = 3  # against more stands than this, compare_schema gives counts, not lines
 ROWS_PER_STAND_MIN = 10
@@ -429,7 +429,7 @@ def stand_search(pool: Pool, args: Arguments) -> list[str]:
 
 
 def _search_stands(pool: Pool, stands: Sequence[str], args: Arguments, text: str) -> list[str]:
-    """search_schema on each stand in turn: one schema with its login, or every schema from the catalog."""
+    """search_schema on every stand at once: one schema with its login, or every schema from the catalog."""
     limit = _share(SEARCH_LIMIT, len(stands))
     if args.get("schema") in (None, ""):
 
@@ -474,7 +474,7 @@ def stand_compare(pool: Pool, args: Arguments) -> list[str]:
 
 
 def _compare_many(pool: Pool, reference: Target, stands: Sequence[str], args: Arguments) -> list[str]:
-    """The reference read once, each stand in turn; detail for a few stands, counts for many."""
+    """The reference read once, then every stand at once; detail for a few stands, counts for many."""
     base = read_structure(pool, reference)  # the reference failing fails the call: nothing to compare with
     detailed = len(stands) <= DETAILED_COMPARE_STANDS
     totals = {"same": 0, "differ": 0, "skipped": 0}
@@ -485,21 +485,21 @@ def _compare_many(pool: Pool, reference: Target, stands: Sequence[str], args: Ar
             target = pool.registry.target(stand, args.get("schema"), args.get("database"))
             structure = read_structure(pool, target)
         except StandError as exc:
-            pool.outcomes[stand] = ERROR
+            pool.note(stand, ERROR)
             with counting:
                 totals["skipped"] += 1
             return [stand, f"  {exc}"]
         except DatabaseUnavailableError as exc:
-            pool.outcomes[stand] = UNAVAILABLE
+            pool.note(stand, UNAVAILABLE)
             with counting:
                 totals["skipped"] += 1
             return [target.label, f"  {exc}"]
         except (QueryFailedError, ToolError) as exc:
-            pool.outcomes[stand] = ERROR
+            pool.note(stand, ERROR)
             with counting:
                 totals["skipped"] += 1
             return [target.label, f"  {exc}"]
-        pool.outcomes[stand] = OK
+        pool.note(stand, OK)
         with counting:
             return _compared(base, structure, totals, detailed=detailed)
 
@@ -651,20 +651,25 @@ def _ask_stands(
     """run on every stand at the same time, one thread each, for as long as the call may take.
 
     The answers of the stands that made it, and the stands that did not: the client waits only so long
-    for the call, so the call does not wait for them. Their threads finish on their own, and the pool
-    keeps their connections until then. The time a call takes is that of its slowest stand, not the sum.
+    for the call, so the call does not wait for them. Their threads finish the statement they are running,
+    and the pool keeps their connections until then; whatever they do once the call has answered counts
+    for no call (answer_by). The time a call takes is that of its slowest stand, not the sum.
 
     Each thread runs in a copy of the call's context, so that t() speaks the server's language there:
     a thread of its own starts with the default language, English, whatever the server was told.
     """
     answers: dict[str, list[str]] = {}
+    deadline = time.monotonic() + CALL_TIME_BUDGET_S
 
     def ask(stand: str) -> None:
+        answer_by(deadline)
         try:
-            answers[stand] = run(stand)
+            lines = run(stand)
         except Exception as exc:  # whatever stops a thread is the stand's line, not a lost stand
-            pool.outcomes[stand] = ERROR
-            answers[stand] = [stand, f"  {exc}"]
+            pool.note(stand, ERROR)
+            lines = [stand, f"  {exc}"]
+        if not overdue():
+            answers[stand] = lines
 
     threads = [
         threading.Thread(
@@ -672,7 +677,6 @@ def _ask_stands(
         )
         for stand in stands
     ]
-    deadline = time.monotonic() + CALL_TIME_BUDGET_S
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -717,17 +721,17 @@ def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target],
     try:
         target = pool.registry.target(stand, args.get("schema"), args.get("database"))
     except StandError as exc:
-        pool.outcomes[stand] = ERROR
+        pool.note(stand, ERROR)
         return [stand, f"  {exc}"]
     try:
         answer = run(target)
     except DatabaseUnavailableError as exc:
-        pool.outcomes[stand] = UNAVAILABLE
+        pool.note(stand, UNAVAILABLE)
         return [target.label, f"  {exc}"]
     except (QueryFailedError, ToolError) as exc:
-        pool.outcomes[stand] = ERROR
+        pool.note(stand, ERROR)
         return [target.label, f"  {exc}"]
-    pool.outcomes[stand] = OK
+    pool.note(stand, OK)
     return [target.label, *answer]
 
 
@@ -750,9 +754,9 @@ def _whole_stand(pool: Pool, stand: str, database: Any, run: Catalog) -> list[st
     try:
         lines = _each_database(pool, stand, database, noted)
     except StandError as exc:
-        pool.outcomes[stand] = ERROR
+        pool.note(stand, ERROR)
         return [stand, f"  {exc}"]
-    pool.outcomes[stand] = next((outcome for outcome in (OK, ERROR, UNAVAILABLE) if outcome in seen), UNAVAILABLE)
+    pool.note(stand, next((outcome for outcome in (OK, ERROR, UNAVAILABLE) if outcome in seen), UNAVAILABLE))
     return lines
 
 

@@ -282,6 +282,7 @@ EN: dict[str, str] = {
     ),
     "db.every_host_failed": "None of the hosts let the login in. {failures}",
     "db.lost": "Lost the connection to {target}: {error}",
+    "db.busy": "{target} is still running a statement of an earlier call that ran out of time; ask again.",
     "db.session_setup": "Connected, but could not set up a read-only session: {error}",
     "db.password_unset": "the server asks for a password and none is set",
     "db.password": (
@@ -824,6 +825,7 @@ RU: dict[str, str] = {
     ),
     "db.every_host_failed": "Ни один из хостов не пустил. {failures}",
     "db.lost": "Соединение с {target} потеряно: {error}",
+    "db.busy": "{target} ещё выполняет запрос прошлого вызова, которому не хватило времени; спросите ещё раз.",
     "db.session_setup": "Подключение есть, но включить сессию только на чтение не удалось: {error}",
     "db.password_unset": "сервер просит пароль, а он не задан",
     "db.password": (
