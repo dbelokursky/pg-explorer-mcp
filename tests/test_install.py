@@ -12,7 +12,7 @@ import pytest
 import install
 from pg_explorer_mcp import clients, exports, imports
 from tests.helpers import ROOT
-from tests.test_imports import dbeaver_workspace, postgres
+from tests.test_imports import data_source, datagrip_files, dbeaver_workspace, postgres
 
 ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-explorer-mcp/run.py"]}
 
@@ -347,6 +347,33 @@ def test_import_pg_service_needs_a_file_and_dbeaver_a_workspace(
         == 1
     )
     assert "not a regular expression" in capsys.readouterr().out
+
+
+def test_import_datagrip_reads_the_ides_their_projects_and_the_project_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setattr(sys, "platform", "darwin")  # the settings of the IDEs: ~/Library/Application Support
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+    assert install.main(["import", "datagrip", "--lang", "en"]) == 2  # HOME is empty here
+    assert "pass --project with the folder of the project" in capsys.readouterr().out
+    options = tmp_path / "Library" / "Application Support" / "JetBrains" / "IntelliJIdea2026.2" / "options"
+    orders = data_source("orders on dev7", "jdbc:postgresql://dev7-db.example/orders", uuid="u1", user="billing")
+    datagrip_files(options, [orders], application=True)
+    shop = tmp_path / "IdeaProjects" / "shop"
+    datagrip_files(shop / ".idea", [data_source("IFT2", "jdbc:postgresql://ift2-db:6432/shop", uuid="u2", user="shop")])
+    broken = tmp_path / "DataGripProjects" / "old" / ".idea"
+    broken.mkdir(parents=True)
+    (broken / "dataSources.xml").write_text("<project", encoding="utf-8")
+    assert install.main(["import", "datagrip", "--project", str(shop), "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    assert f"reading {shop / '.idea'}\nreading {broken}\ncannot read {broken / 'dataSources.xml'}" in out
+    assert f"reading {options}\n2 connections go into" in out  # the broken project leaves the others to read
+    assert "  [ift2.shop.shop]  ift2-db:6432  no saved password: add a line to the password file" in out
+    assert "  [dev7.orders.billing]  dev7-db.example:5432  no saved password" in out
+    assert "This was a preview, nothing was written." in out
+    assert not (tmp_path / "stands.conf").exists()
 
 
 def test_a_terminal_user_is_offered_the_dbeaver_preview(

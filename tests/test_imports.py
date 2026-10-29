@@ -1,4 +1,4 @@
-"""Import of stand connections from DBeaver and pg_service.conf: reading, the plan, the preview, writing."""
+"""Import of stand connections from DBeaver, DataGrip and pg_service.conf: reading, the plan, the preview, writing."""
 
 from __future__ import annotations
 
@@ -8,18 +8,21 @@ import re
 import stat
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape, quoteattr
 
 import pytest
 
-from pg_explorer_mcp import imports
+from pg_explorer_mcp import exports, imports
 from pg_explorer_mcp.aes import encrypt_cbc
 from pg_explorer_mcp.db import read_pgpass
 from pg_explorer_mcp.imports import (
     Connection,
     ImportRefusedError,
     compile_pattern,
+    jdbc_address,
     plan,
     preview,
+    read_datagrip,
     read_dbeaver,
     read_pg_service,
     stand_from_name,
@@ -78,6 +81,51 @@ def postgres(
     if folder:
         entry["folder"] = folder
     return entry
+
+
+def data_source(
+    name: str, url: str, *, uuid: str, group: str = "", driver: str = "postgresql", user: str | None = None
+) -> tuple[str, str]:
+    """One data source the way a JetBrains IDE writes it: its part of dataSources.xml and of dataSources.local.xml.
+
+    The local part keeps the password in the IDE's store, as every data source does (secret-storage), and
+    has a user-name only when the data source has a user.
+    """
+    group_attribute = f" group={quoteattr(group)}" if group else ""
+    shared = (
+        f'    <data-source source="LOCAL" name={quoteattr(name)}{group_attribute} uuid={quoteattr(uuid)}>\n'
+        f"      <driver-ref>{driver}</driver-ref>\n"
+        "      <synchronize>true</synchronize>\n"
+        f"      <jdbc-url>{escape(url)}</jdbc-url>\n"
+        "      <working-dir>$ProjectFileDir$</working-dir>\n"
+        "    </data-source>\n"
+    )
+    user_name = f"      <user-name>{escape(user)}</user-name>\n" if user is not None else ""
+    local = (
+        f"    <data-source name={quoteattr(name)} uuid={quoteattr(uuid)}>\n"
+        '      <database-info product="PostgreSQL" version="16.4" dbms="POSTGRES" />\n'
+        "      <secret-storage>master_key</secret-storage>\n"
+        f"{user_name}"
+        "    </data-source>\n"
+    )
+    return shared, local
+
+
+def datagrip_files(folder: Path, sources: list[tuple[str, str]], *, application: bool = False) -> Path:
+    """dataSources.xml and dataSources.local.xml in a folder: a project's .idea, or an IDE's options folder.
+
+    An IDE keeps its global data sources (application) under another root and component than a project does.
+    """
+    root, component = ("application", "dataSourceStorage") if application else ("project", "DataSourceManagerImpl")
+    head = '<?xml version="1.0" encoding="UTF-8"?>\n' + ("<application>" if application else '<project version="4">')
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, opening, part in (
+        ("dataSources.xml", f'<component name="{component}" format="xml" multifile-model="true">', 0),
+        ("dataSources.local.xml", '<component name="dataSourceStorageLocal">', 1),
+    ):
+        body = "".join(source[part] for source in sources)
+        (folder / name).write_text(f"{head}\n  {opening}\n{body}  </component>\n</{root}>\n", encoding="utf-8")
+    return folder
 
 
 class TestStandOf:
@@ -204,6 +252,193 @@ class TestDBeaver:
         windows = tmp_path / "AppData" / "DBeaverData" / "workspace6" / "General" / ".dbeaver"
         dbeaver_workspace(windows, {}, {})
         assert imports.dbeaver_workspace({"APPDATA": str(tmp_path / "AppData")}, tmp_path) == windows
+
+
+class TestDataGrip:
+    def test_reads_postgres_data_sources_with_the_users_of_this_machine(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        datagrip_files(
+            project / ".idea",
+            [
+                data_source(
+                    "orders",
+                    "jdbc:postgresql://dev7-db.example:5432/orders",
+                    uuid="u1",
+                    group="Stands/dev7",
+                    user="billing",
+                ),
+                data_source("IFT2 shop", "jdbc:postgresql://ift2-db.example:6432/shop", uuid="u2", user="shop_ro"),
+                data_source(
+                    "legacy", "jdbc:oracle:thin:@ora.example:1521:XE", uuid="u3", driver="oracle.19", user="scott"
+                ),
+                data_source("nobody on dev8", "jdbc:postgresql://dev8-db.example:5432/orders", uuid="u4"),
+            ],
+        )
+        found = {c.name: c for c in read_datagrip(project)}
+        assert set(found) == {"orders", "IFT2 shop", "nobody on dev8"}  # Oracle is not PostgreSQL
+        orders = found["orders"]
+        assert (orders.source, orders.folder, orders.host, orders.port, orders.database, orders.user) == (
+            "DataGrip", "Stands/dev7", "dev7-db.example", "5432", "orders", "billing"
+        )  # fmt: skip
+        assert (found["IFT2 shop"].port, found["IFT2 shop"].user, found["IFT2 shop"].folder) == ("6432", "shop_ro", "")
+        assert found["nobody on dev8"].user == ""  # dataSources.local.xml names no user for it
+        assert all(c.password is None for c in found.values())  # the IDE keeps them in the keychain or KeePass
+        result = plan(found.values(), PATTERN)
+        assert [target.name for target in result.targets] == ["dev7.orders.billing", "ift2.shop.shop_ro"]
+        assert result.passwords == {}
+        assert [(c.name, reason) for c, reason in result.skipped] == [
+            ("nobody on dev8", "no user: pg-explorer-mcp reads a schema with the login of the same name")
+        ]
+        lines = preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")
+        assert (
+            lines[1]
+            == "  [dev7.orders.billing]  dev7-db.example:5432  no saved password: add a line to the password file"
+        )
+
+    def test_several_hosts_in_the_url_keep_their_ports(self, tmp_path: Path) -> None:
+        """pgjdbc takes h1:6544,h2:6545, and a host without a port of its own connects to 5432."""
+        datagrip_files(
+            tmp_path,
+            [
+                data_source("IFT-Caldera", "jdbc:postgresql://h1:6544,h2:6544/caldera_ift1", uuid="u1", user="testers"),
+                data_source(
+                    "mixed", "jdbc:postgresql://h5:6544,h6:6545/orders?targetServerType=primary", uuid="u2", user="bi"
+                ),
+                data_source("no port on dev9", "jdbc:postgresql://h7,h8:6544/orders", uuid="u3", user="bi"),
+                data_source("ipv6 on dev3", "jdbc:postgresql://[::1]:5433,[2001:db8::2]/orders", uuid="u4", user="bi"),
+            ],
+        )
+        found = {c.name: c for c in read_datagrip(tmp_path)}
+        assert (found["IFT-Caldera"].host, found["IFT-Caldera"].port) == ("h1,h2", "6544")
+        assert (found["mixed"].host, found["mixed"].port, found["mixed"].database) == ("h5,h6", "6544,6545", "orders")
+        assert (found["no port on dev9"].host, found["no port on dev9"].port) == ("h7,h8", "5432,6544")
+        assert (found["ipv6 on dev3"].host, found["ipv6 on dev3"].port) == ("::1,2001:db8::2", "5433,5432")
+        result = plan(found.values(), PATTERN)
+        assert [target.address for target in result.targets] == [
+            "h1:6544,h2:6544",
+            "h5:6544,h6:6545",
+            "h7:5432,h8:6544",
+            "::1:5433,2001:db8::2:5432",
+        ]
+        assert result.skipped == []
+
+    def test_the_url_may_hold_the_user_the_password_and_the_tls_settings(self, tmp_path: Path) -> None:
+        """A data source made by URL keeps the URL in plain text; pgjdbc lets its parameters override the fields."""
+        url = (
+            "jdbc:postgresql://dev3-db.example:5432/sales%5Fdb?user=reporter&password=p%3Aw+x"
+            "&sslmode=verify-full&sslrootcert=/etc/pg/ca.pem&currentSchema=sales"
+        )
+        datagrip_files(tmp_path, [data_source("by url", url, uuid="u1", user="field_user")])
+        (found,) = read_datagrip(tmp_path)
+        assert (found.database, found.user, found.password) == ("sales_db", "reporter", "p:w x")
+        assert found.options == {"sslmode": "verify-full", "sslrootcert": "/etc/pg/ca.pem"}
+        result = plan([found], PATTERN)
+        assert result.targets[0].options == {
+            "host": "dev3-db.example",
+            "sslmode": "verify-full",
+            "sslrootcert": "/etc/pg/ca.pem",
+        }
+        assert result.passwords == {("dev3-db.example", "5432", "sales_db", "reporter"): "p:w x"}
+        assert "p:w x" not in "\n".join(preview(result, tmp_path / "stands.conf", tmp_path / "pgpass"))
+
+    def test_a_url_without_a_host_or_a_database_is_left_out(self, tmp_path: Path) -> None:
+        datagrip_files(
+            tmp_path,
+            [
+                data_source("server on dev5", "jdbc:postgresql://dev5-db.example:5432/", uuid="u1", user="bi"),
+                data_source("bare on dev6", "jdbc:postgresql:orders", uuid="u2", user="bi"),
+            ],
+        )
+        result = plan(read_datagrip(tmp_path), PATTERN)
+        assert [(c.name, reason) for c, reason in result.skipped] == [
+            ("server on dev5", "no database"),
+            ("bare on dev6", "no host"),
+        ]
+
+    def test_the_data_sources_an_export_wrote_are_not_brought_back(self, tmp_path: Path) -> None:
+        item = exports.Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orders", "billing", None)
+        idea = tmp_path / ".idea"
+        idea.mkdir()
+        for name, text in zip(("dataSources.xml", "dataSources.local.xml"), exports.datagrip([item])):
+            (idea / name).write_text(text, encoding="utf-8")
+        assert read_datagrip(tmp_path) == []
+        own = datagrip_files(
+            tmp_path / "own",
+            [data_source("dev7 / orders / billing", "jdbc:postgresql://db/orders", uuid="u1", user="billing")],
+        )
+        for name in ("dataSources.xml", "dataSources.local.xml"):  # the user's own of the same name, next to ours
+            merged = exports.merge_xml(idea / name, (own / name).read_text(encoding="utf-8"))
+            (idea / name).write_text(merged, encoding="utf-8")
+        assert [(c.name, c.host) for c in read_datagrip(tmp_path)] == [("dev7 / orders / billing", "db")]
+
+    def test_the_global_data_sources_of_an_ide(self, tmp_path: Path) -> None:
+        options = datagrip_files(
+            tmp_path / "IntelliJIdea2026.2" / "options",
+            [data_source("ift1 orders", "jdbc:postgresql://ift1-db:5432/orders", uuid="u1", user="billing")],
+            application=True,
+        )
+        assert [(c.name, c.user) for c in read_datagrip(options)] == [("ift1 orders", "billing")]
+
+    def test_the_project_or_its_idea_folder_and_no_local_file(self, tmp_path: Path) -> None:
+        idea = datagrip_files(
+            tmp_path / ".idea", [data_source("orders", "jdbc:postgresql://db/orders", uuid="u1", user="billing")]
+        )
+        assert read_datagrip(tmp_path) == read_datagrip(idea)
+        (idea / "dataSources.local.xml").unlink()  # the users are this machine's: a fresh clone has none yet
+        assert [(c.name, c.user) for c in read_datagrip(tmp_path)] == [("orders", "")]
+
+    def test_the_folders_are_the_project_named_datagrips_projects_and_the_newest_global_ones(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")  # app_data: ~/.config, or XDG_CONFIG_HOME
+        env = {"XDG_CONFIG_HOME": str(tmp_path / "config")}
+        assert imports.datagrip_folders(env, tmp_path) == []
+        orders = [data_source("orders", "jdbc:postgresql://db/orders", uuid="u1", user="billing")]
+        jetbrains = tmp_path / "config" / "JetBrains"
+        for version in ("DataGrip2025.3", "DataGrip2026.2", "IntelliJIdea2026.1", "PyCharm2026.2"):
+            datagrip_files(jetbrains / version / "options", orders, application=True)
+        (jetbrains / "DataGrip2026.3" / "options").mkdir(parents=True)  # a new version without global data sources
+        (jetbrains / "PyCharm2026.2" / "options" / "dataSources.xml").unlink()
+        datagrip_files(tmp_path / "DataGripProjects" / "work" / ".idea", orders)
+        (tmp_path / "DataGripProjects" / "scratch").mkdir()  # no data sources of its own
+        assert imports.datagrip_folders(env, tmp_path) == [
+            tmp_path / "DataGripProjects" / "work" / ".idea",
+            jetbrains / "DataGrip2026.2" / "options",
+            jetbrains / "IntelliJIdea2026.1" / "options",
+        ]
+        code = tmp_path / "IdeaProjects" / "shop"
+        datagrip_files(code / ".idea", orders)
+        assert imports.datagrip_folders(env, tmp_path, code)[0] == code / ".idea"
+        named = imports.datagrip_folders(env, tmp_path, tmp_path / "DataGripProjects" / "work")
+        assert named[0] == tmp_path / "DataGripProjects" / "work" / ".idea"
+        assert len(named) == 3  # a project of DataGrip named again is read once
+        assert imports.datagrip_folders(env, tmp_path, tmp_path / "absent")[0] == tmp_path / "absent" / ".idea"
+
+    def test_a_folder_without_data_sources_or_a_broken_file_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ImportRefusedError, match=r"cannot read .*dataSources\.xml"):
+            read_datagrip(tmp_path)
+        idea = datagrip_files(tmp_path / ".idea", [])
+        (idea / "dataSources.local.xml").write_text("<project", encoding="utf-8")
+        with pytest.raises(ImportRefusedError, match=r"cannot read .*dataSources\.local\.xml"):
+            read_datagrip(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("url", "address"),
+    [
+        ("jdbc:postgresql://db:6432/orders", ("db", "6432", "orders", {})),
+        ("jdbc:postgresql://db/orders", ("db", "5432", "orders", {})),
+        ("jdbc:postgresql://db", ("db", "5432", "", {})),  # pgjdbc wants the slash; DataGrip always writes it
+        ("jdbc:postgresql://h1:6544,h2/orders", ("h1,h2", "6544,5432", "orders", {})),
+        ("jdbc:postgresql://[::1]:5433/orders", ("::1", "5433", "orders", {})),
+        ("jdbc:postgresql://db/orders?ApplicationName=a+b&ssl", ("db", "5432", "orders", {"ApplicationName": "a b"})),
+        ("jdbc:postgresql:///orders", ("", "5432", "orders", {})),  # no host: none is guessed
+        ("jdbc:postgresql:orders", ("", "5432", "", {})),
+        ("jdbc:mysql://db/orders", ("", "5432", "", {})),
+    ],
+)
+def test_jdbc_address(url: str, address: tuple[str, str, str, dict[str, str]]) -> None:
+    assert jdbc_address(url) == address
 
 
 class TestPgService:

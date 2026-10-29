@@ -48,15 +48,24 @@ set of tools, about 5 thousand characters of descriptions in every request, and 
 
 ## Import
 
-`install.py import dbeaver` and `install.py import pg-service <file>`: by default a preview of which
+`install.py import dbeaver`, `install.py import datagrip` and `install.py import pg-service <file>`: by default a preview of which
 `stand.database.schema` sections would go into the registry, how many passwords into the password file, what is left out and why;
-writing happens only with `--write`. The stand is recognised from the DBeaver folder, the connection name and the host with a regular
+writing happens only with `--write`. The stand is recognised from the folder (DBeaver's, or the group of a JetBrains data source), the connection name and the host with a regular
 expression (by default `(dev|ift)[-_ ]?\d+`, changed with `--stand-pattern`; a separator between the letters and the
 number is dropped, and a connection where the pattern found nothing takes its own name as the stand), the database comes from
 the connection, from its URL first, and in place of the schema goes its login: the import does not know which schemas that login reads, and the server
 reads such a database as a whole through it. DBeaver's saved passwords are taken from `credentials-config.json`: it is encrypted with AES-128-CBC
 under DBeaver's default key, and `src/pg_explorer_mcp/aes.py` implements this cipher in pure Python, without
 dependencies; with DBeaver's secure storage the passwords stay unknown and are added by hand.
+`import datagrip` reads the PostgreSQL data sources of DataGrip and the other JetBrains IDEs with database tools:
+the global ones of the newest version of each IDE (`JetBrains/<IDE><version>/options` in the settings folder of the
+system), DataGrip's projects in `~/DataGripProjects`, and the project `--project` names. `dataSources.xml` gives the
+name, the group and the pgjdbc URL, read as pgjdbc reads it: several hosts, a host without a port of its own at 5432;
+`dataSources.local.xml` gives the user. The IDEs keep the passwords in the keychain of the system or in KeePass, and
+the import does not read them: the preview marks those logins, and only a password written into the URL itself,
+which the IDE stores in plain text, is taken. A data source whose uuid is the one `install.py export` gives the
+section its name spells (stand / database / schema) is an export and is not brought back. A folder that cannot be
+read is named in the preview and skipped, and the others are read.
 Writing prepares both files in full, then puts them in place with a dated copy of the old ones; the password file
 is only added to and updated, and the registry is added to or, with `--prune`, replaced; on a failure nothing
 changes. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
@@ -77,6 +86,12 @@ can read also gets a warning.
 - **Our own registry format** (JSON, TOML): one more format where a standard one already exists.
 - **Reading DBeaver at every server start**: a failure to parse someone else's format would break the server; an import
   as a separate command is safer.
+- **Reading the JetBrains passwords** from the keychain or KeePass: the keychain asks the user about every item, KeePass
+  needs its master password, and each store is code of its own for every system, beyond the standard library
+  (ADR 0001); a line in the password file is typed once.
+- **Every project of every JetBrains IDE**, found through the list of recent projects: the projects of code bring their
+  local and test databases along with the stands; `--project` names the one that has stands. DataGrip's projects are
+  all read: a DataGrip project is made for its data sources.
 - **A second connection for a login whose session is still busy** with a late stand's statement: the next call would not
   wait, but a stand would get several sessions of one login, which a role's `CONNECTION LIMIT` or a pooler's limit per
   user refuses, an already slow stand would get more load, and the pool would have to track which of a login's sessions
