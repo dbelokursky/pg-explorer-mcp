@@ -452,7 +452,8 @@ EN: dict[str, str] = {
     "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
     "stands.bad_hosts": "stand connection {name} in {path}: {problem}, skipped",
     "stands.none_found": (
-        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings"
+        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings; "
+        "install.py import brings the stands in from DBeaver or a pg_service.conf file"
     ),
     "stands.more_warnings": "... and {count} more problems in the stands registry",
     # compare_schema: one schema on two stands.
@@ -533,6 +534,9 @@ EN: dict[str, str] = {
     "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
     "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-explorer-mcp? [y/N] ",
     "import.offer_hint": "To import them, run: {command}",
+    "import.found": (
+        "DBeaver connections found in {path}. To see what an import would bring into pg-explorer-mcp: {command}"
+    ),
     # install.py export
     "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
     "export.help.tool": (
@@ -1005,7 +1009,8 @@ RU: dict[str, str] = {
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
     "stands.bad_hosts": "у подключения {name} в {path}: {problem}, пропущено",
     "stands.none_found": (
-        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*"
+        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*; "
+        "стенды из DBeaver или файла pg_service.conf переносит install.py import"
     ),
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
@@ -1085,6 +1090,9 @@ RU: dict[str, str] = {
     "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
     "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
     "import.offer_hint": "Чтобы перенести их, выполните: {command}",
+    "import.found": (
+        "Найдены подключения DBeaver в {path}. Посмотреть, что импорт перенесёт в pg-explorer-mcp: {command}"
+    ),
     "export.help": (
         "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
     ),
