@@ -72,8 +72,9 @@ Qwen Code and ask the agent: "Check the database connection".
 There is a shorter way too: link the extension (`qwen extensions link`), restart Qwen Code and run
 `/pg:setup` in it. The agent finds Python, runs `install.py` and works through the hints itself.
 
-Already have the stand connections in DBeaver or in `pg_service.conf`? `python3 install.py import dbeaver`
-shows what it would bring in, and `/pg:import` does the same through the agent: [many stands](#many-stands).
+Already have the stand connections in DBeaver, DataGrip or `pg_service.conf`? `python3 install.py import dbeaver`
+(or `import datagrip`) shows what it would bring in, and `/pg:import` does the same through the agent:
+[many stands](#many-stands).
 
 ## Try it on the demo database
 
@@ -499,18 +500,21 @@ This registers `pg-stands` next to `pg`. `PG_EXPLORER_MCP_STANDS` switches stand
 patterns such as `dev*,ift2` take some. The check succeeds once the stands are found: a stand behind a
 VPN is reached only when a tool needs it.
 
-**Importing connections.** When the connections already live in DBeaver, or in a `pg_service.conf`
-file, let `install.py` bring them in:
+**Importing connections.** When the connections already live in DBeaver, in DataGrip or another
+JetBrains IDE with database tools, or in a `pg_service.conf` file, let `install.py` bring them in:
 
 ```bash
 python3 install.py import dbeaver            # a preview: what would go where; nothing is written
 python3 install.py import dbeaver --write    # write the registry and the password file, register pg-stands
+python3 install.py import datagrip           # DataGrip, IntelliJ IDEA, PyCharm and the other JetBrains IDEs
+python3 install.py import datagrip --project ~/IdeaProjects/shop   # and the data sources of a project
 python3 install.py import pg-service ~/.pg_service.conf --write
 ```
 
-The stand comes from the DBeaver folder, then the connection name, then the host, matched with the
-regular expression `(dev|ift)[-_ ]?\d+` (`--stand-pattern` changes it); a separator between the letters
-and the number is dropped, so `DEV-27` is the stand `dev27`. A connection the pattern matches nowhere
+The stand comes from the folder (DBeaver's folder, or the group of a JetBrains data source), then the
+connection name, then the host, matched with the regular expression `(dev|ift)[-_ ]?\d+`
+(`--stand-pattern` changes it); a separator between the letters and the number is dropped, so
+`DEV-27` is the stand `dev27`. A connection the pattern matches nowhere
 takes its own name as the stand, `IFT-Caldera` becoming `ift-caldera`, and the preview says so. The
 database is the connection's, from its URL first, and the section is named after its login: which
 schemas that login reads the import cannot know, so the server reads such a database as a whole through
@@ -527,6 +531,15 @@ a changed registry on its next call, so an import needs no restart; a registry f
 several hosts (`h1:6544,h2` with the port 6544, as DBeaver writes it, or a URL
 `jdbc:postgresql://h1:6544,h2:6544/db`) keeps them all, and the password file gets a line per host,
 since libpq matches a line against one host.
+
+`import datagrip` reads the global data sources of each JetBrains IDE, from its newest version, and
+DataGrip's projects in `~/DataGripProjects`; the other IDEs keep data sources in the projects of your
+code, and `--project <folder>` brings one of those in. A URL with several hosts
+(`jdbc:postgresql://h1:6544,h2:6545/db`) keeps them all, and a host without a port of its own gets 5432,
+as in the JDBC driver. The IDEs keep passwords in the system keychain or in KeePass, which the import
+never reads: the preview marks those logins, and their lines go into the password file by hand. A
+password, user or `sslmode` written in the URL itself is taken from there. Data sources that
+`install.py export datagrip` wrote are not brought back.
 
 **Exporting connections to database tools.** The other way round, `install.py export` puts the stands
 into the tools you query them with yourself: a folder or group per stand, every connection logging in

@@ -18,6 +18,7 @@ import re
 import stat
 import sys
 import threading
+import uuid
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -53,6 +54,9 @@ _PASSWORD_LINE = re.compile(r"^\s*password\s*=", re.MULTILINE)
 # that pg-mcp 0.7.0 exported carry the old line; they are ours too, and an export rewrites them (ADR 0007).
 EXPORTED = "# pg-explorer-mcp export"
 EXPORT_MARKS = (EXPORTED, "# pg-mcp export")
+# The ids install.py export gives the connections it puts into the tools, one per section: a re-export
+# updates a connection instead of adding another, and an import knows the connections it must not bring back.
+EXPORT_NAMESPACE = uuid.UUID("6f0f7a4e-2b43-4d0b-8a5e-3d1f2a9c7e10")
 
 
 class StandError(Exception):
@@ -398,6 +402,11 @@ def exported_sections(text: str) -> set[str]:
             found.add(line[1:-1].strip())
         previous = line
     return found
+
+
+def export_uuid(name: str) -> str:
+    """The id install.py export gives the connection of the section stand.database.schema in every tool."""
+    return str(uuid.uuid5(EXPORT_NAMESPACE, name))
 
 
 class Pool:

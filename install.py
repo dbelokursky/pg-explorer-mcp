@@ -9,6 +9,7 @@
     PGDATABASE=sales python3 install.py --name sales  another database, as pg-sales
     python3 install.py import dbeaver            show what DBeaver's connections would bring
     python3 install.py import dbeaver --write    write the stands registry, the password file, register pg-stands
+    python3 install.py import datagrip           show what DataGrip and the other JetBrains IDEs would bring
     python3 install.py import pg-service ~/.pg_service.conf --write
     python3 install.py export dbeaver            show which stand connections DBeaver would get
     python3 install.py export pgadmin --write    write servers.json for pgAdmin to import
@@ -198,9 +199,10 @@ def main(argv: list[str]) -> int:
     commands = parser.add_subparsers(dest="command")
     importer = commands.add_parser("import", help=t("install.help.import"), description=t("install.help.import"))
     _common_options(importer)
-    importer.add_argument("source", choices=("dbeaver", "pg-service"), help=t("install.help.source"))
+    importer.add_argument("source", choices=("dbeaver", "datagrip", "pg-service"), help=t("install.help.source"))
     importer.add_argument("file", nargs="?", help=t("install.help.file"))
     importer.add_argument("--workspace", help=t("install.help.workspace"))
+    importer.add_argument("--project", help=t("install.help.project"))
     importer.add_argument("--write", action="store_true", help=t("install.help.write"))
     importer.add_argument("--prune", action="store_true", help=t("install.help.prune"))
     importer.add_argument(
@@ -318,7 +320,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
 
 def import_command(args: argparse.Namespace, language: str) -> int:
-    """Preview, or with --write bring, the connections of DBeaver or a pg_service.conf file into pg-explorer-mcp."""
+    """Preview, or with --write bring, the connections of DBeaver, DataGrip or pg_service.conf into pg-explorer-mcp."""
     try:
         connections = _connections(args)
         pattern = imports.compile_pattern(args.stand_pattern)
@@ -363,12 +365,30 @@ def _connections(args: argparse.Namespace) -> list[imports.Connection] | None:
             return None
         print(t("import.reading", source=folder))
         return imports.read_dbeaver(folder)
+    if args.source == "datagrip":
+        return _datagrip_connections(_folder(args.project))
     if not args.file:
         print(t("import.need_file"))
         return None
     path = Path(args.file).expanduser()
     print(t("import.reading", source=path))
     return imports.read_pg_service(path)
+
+
+def _datagrip_connections(project: Path | None) -> list[imports.Connection] | None:
+    """The data sources of every JetBrains folder found; a folder that cannot be read is named and skipped."""
+    folders = imports.datagrip_folders(shell_env(), Path.home(), project)
+    if not folders:
+        print(t("import.no_datagrip"))
+        return None
+    connections: list[imports.Connection] = []
+    for folder in folders:
+        print(t("import.reading", source=folder))
+        try:
+            connections.extend(imports.read_datagrip(folder))
+        except imports.ImportRefusedError as exc:
+            print(exc)  # one broken project or IDE leaves the others to read
+    return connections
 
 
 def offer_import(language: str) -> None:

@@ -20,8 +20,8 @@ reaches dozens of stands through the same tools.
 - To show the data model, call `schema_diagram` (a schema, or a table with its neighbours by foreign keys)
   and put its answer into a ```mermaid block as it is: the user sees a picture. `/pg:diagram` does that and
   saves the file.
-- To bring the user's DBeaver or `pg_service.conf` connections into pg-explorer-mcp, run `/pg:import`: it previews
-  first and writes only after the user confirms.
+- To bring the user's DBeaver, DataGrip or `pg_service.conf` connections into pg-explorer-mcp, run `/pg:import`: it
+  previews first and writes only after the user confirms.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.
 - Never ask the user to paste a database password into the chat; it belongs in ~/.pgpass.
 - The server speaks English or Russian (`PG_EXPLORER_MCP_LANG`). Whichever it speaks, reply to the user
