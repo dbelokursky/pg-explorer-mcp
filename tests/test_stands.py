@@ -264,7 +264,8 @@ class TestLoadRegistry:
         assert registry.targets == []
         assert registry.warnings == [
             f"PG_EXPLORER_MCP_STANDS is set, but no stands were found in {tmp_path / 'a.conf'}, {tmp_path / 'b.conf'}; "
-            "working with the PG* settings"
+            "working with the PG* settings; "
+            "install.py import brings the stands in from DBeaver or a pg_service.conf file"
         ]
 
     def test_files_come_from_the_environment(self, tmp_path: Path) -> None:

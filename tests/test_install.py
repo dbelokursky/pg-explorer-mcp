@@ -371,7 +371,23 @@ def test_a_terminal_user_is_offered_the_dbeaver_preview(
     out = capsys.readouterr().out
     assert "2 connections go into" not in out
     assert "To import them, run:" in out
+
+
+def test_an_agent_is_told_the_command_that_shows_the_dbeaver_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """/pg:setup runs install.py with no terminal to answer the question; the output used to say nothing of DBeaver."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    folder = dbeaver_folder(tmp_path)
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: folder)  # noqa: ARG005
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail(f"asked {prompt!r} with no terminal"))
+    install.offer_import("en")
+    assert capsys.readouterr().out == (
+        f"DBeaver connections found in {folder}. To see what an import would bring into pg-explorer-mcp: "
+        f"{sys.executable} {install.ROOT / 'install.py'} import dbeaver --lang en\n"
+    )
+    monkeypatch.setattr(imports, "dbeaver_workspace", lambda env, home=None: None)  # noqa: ARG005
     install.offer_import("en")
     assert capsys.readouterr().out == ""
 
