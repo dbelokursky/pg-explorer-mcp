@@ -275,6 +275,9 @@ EN: dict[str, str] = {
     "db.settings_invalid": (
         "Connection settings are invalid: {error}. Fix the env block of the pg server entry in the agent settings."
     ),
+    "db.no_os_user": (
+        "PGUSER is not set and the OS user name is not available either: {error}. Set PGUSER to the role to log in as."
+    ),
     "db.bad_sslmode": "PGSSLMODE={value!r} is not one of {choices}",
     "db.not_a_number": "{name}={value!r} is not a number",
     "db.ports_mismatch": (
@@ -816,6 +819,9 @@ RU: dict[str, str] = {
     "db.not_configured": "не настроено: {error}",
     "db.settings_invalid": (
         "Неверные настройки подключения: {error}. Исправьте блок env у сервера pg в настройках агента."
+    ),
+    "db.no_os_user": (
+        "PGUSER не задан, а имя пользователя ОС узнать не удалось: {error}. Задайте PGUSER — роль для подключения."
     ),
     "db.bad_sslmode": "PGSSLMODE={value!r} — не один из вариантов: {choices}",
     "db.not_a_number": "{name}={value!r} — не число",

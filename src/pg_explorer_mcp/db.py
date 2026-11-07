@@ -108,7 +108,12 @@ class Settings:
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
         """Read libpq-style settings; ValueError explains a bad value."""
-        user = env.get("PGUSER") or getpass.getuser()
+        user = env.get("PGUSER")
+        if not user:
+            try:
+                user = getpass.getuser()  # the libpq default: the name the server runs as
+            except (OSError, KeyError) as exc:  # no login name in the environment and no passwd entry either
+                raise ValueError(t("db.no_os_user", error=exc)) from exc
         database = env.get("PGDATABASE") or user
         sslmode = (env.get("PGSSLMODE") or "prefer").lower()
         if sslmode not in SSL_MODES:
