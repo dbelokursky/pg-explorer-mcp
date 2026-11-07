@@ -8,6 +8,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from dataclasses import replace
@@ -498,6 +499,59 @@ class TestPool:
         assert pool.log_context() == {"stand": "dev1", "schema": "shipping"}
         assert pool.settings is not None
         assert (pool.settings.user, pool.settings.database) == ("shipping", "orders")
+
+    def test_a_connection_a_late_worker_may_still_use_is_not_handed_to_the_next_call(
+        self, registry: Registry, tmp_path: Path
+    ) -> None:
+        """A worker that outlived its call keeps its connection: the next call opens one of its own.
+
+        A stand that missed the call's deadline keeps its thread running a statement; a second user
+        of the same socket would interleave protocol messages and mix up the answers.
+        """
+        pool = Pool(registry, {"PGPASSFILE": str(tmp_path / "absent")})
+        target = registry.targets[0]
+        taken: list[Database] = []
+        release = threading.Event()
+
+        def late_worker() -> None:
+            taken.append(pool.database(target))
+            release.wait(5)
+
+        worker = threading.Thread(target=late_worker)
+        worker.start()
+        deadline = time.monotonic() + 5
+        while not taken and time.monotonic() < deadline:
+            time.sleep(0.01)
+        fresh = pool.database(target)  # the worker is still alive: this call gets its own connection
+        assert taken
+        assert fresh is not taken[0]
+        assert pool.database(target) is fresh  # the call's own connection is reused as ever
+        release.set()
+        worker.join(5)
+        pool.trim()  # the worker is over: the connection it held is closed
+        assert pool.open_count() == 1
+
+    def test_close_also_closes_a_connection_left_with_a_late_worker(self, registry: Registry, tmp_path: Path) -> None:
+        pool = Pool(registry, {"PGPASSFILE": str(tmp_path / "absent")})
+        target = registry.targets[0]
+        taken: list[Database] = []
+        release = threading.Event()
+
+        def late_worker() -> None:
+            taken.append(pool.database(target))
+            release.wait(5)
+
+        worker = threading.Thread(target=late_worker)
+        worker.start()
+        deadline = time.monotonic() + 5
+        while not taken and time.monotonic() < deadline:
+            time.sleep(0.01)
+        pool.database(target)  # retire the worker's connection
+        assert pool.open_count() == 2  # the live one plus the retired one
+        release.set()
+        worker.join(5)
+        pool.close()  # server shutdown: the retired connection is closed too
+        assert pool.open_count() == 0
 
     def test_the_connect_timeout_is_the_sections_else_the_entrys(self, registry: Registry) -> None:
         target = registry.targets[0]

@@ -395,7 +395,8 @@ class Pool:
     """Opens the registry's connections on demand and keeps only the most recently used ones.
 
     A call over several stands asks them from threads, one per stand, so the pool is shared: its
-    bookkeeping runs under a lock, and a connection is never closed under a thread still using it.
+    bookkeeping runs under a lock, and a connection is never closed under a thread still using it,
+    nor handed to a second thread while one may still be mid-statement on it.
     """
 
     def __init__(self, registry: Registry, env: Mapping[str, str], limit: int = DEFAULT_MAX_CONNECTIONS) -> None:
@@ -404,6 +405,7 @@ class Pool:
         self._limit = max(1, limit)
         self._open: OrderedDict[str, Database] = OrderedDict()
         self._users: dict[str, threading.Thread] = {}  # the thread that last took each connection
+        self._retired: list[tuple[threading.Thread, Database]] = []  # left with a worker still mid-statement
         self._lock = threading.RLock()
         self._counters = Counters()
         self.current: Target | None = None
@@ -412,11 +414,35 @@ class Pool:
     def database(self, target: Target) -> Database:
         with self._lock:
             self.current = target
-            database = self._open.pop(target.name, None) or Database(target.env(self._env), counters=self._counters)
+            database = self._open.get(target.name)
+            if database is not None and self._in_use(target.name):
+                # A worker of an earlier call outlived that call's deadline and may still be
+                # mid-statement: give this call a connection of its own, not a second user of one
+                # socket, and close the old one once the worker's thread is over.
+                self._retired.append((self._users[target.name], database))
+                self._open.pop(target.name)
+                self._users.pop(target.name, None)
+                database = None
+            if database is None:
+                database = Database(target.env(self._env), counters=self._counters)
             self._open[target.name] = database
             self._users[target.name] = threading.current_thread()
             self.trim()
         return database
+
+    def _in_use(self, name: str) -> bool:
+        """Whether another thread may still be running a statement on the connection of that name.
+
+        The main thread runs one call at a time, and a worker that took a connection in a row is
+        its own user; a *different* live worker is one that outlived its call's deadline.
+        """
+        user = self._users.get(name)
+        return (
+            user is not None
+            and user.is_alive()
+            and user is not threading.main_thread()
+            and user is not threading.current_thread()
+        )
 
     def trim(self) -> None:
         """Close the oldest connections beyond the limit, except those a worker thread is still using.
@@ -426,6 +452,7 @@ class Pool:
         its thread ends, so that nothing is closed under a running statement.
         """
         with self._lock:
+            self._reap()
             for name in list(self._open):
                 if len(self._open) <= self._limit:
                     return
@@ -435,12 +462,22 @@ class Pool:
                 self._open.pop(name).close()
                 self._users.pop(name, None)
 
+    def _reap(self) -> None:
+        """Close the connections a past call left with a worker, once that worker's thread is over."""
+        still: list[tuple[threading.Thread, Database]] = []
+        for user, database in self._retired:
+            if user.is_alive():
+                still.append((user, database))
+            else:
+                database.close()
+        self._retired = still
+
     @property
     def limit(self) -> int:
         return self._limit
 
     def open_count(self) -> int:
-        return len(self._open)
+        return len(self._open) + len(self._retired)  # a retired connection is held open too
 
     def close(self) -> None:
         with self._lock:
@@ -448,6 +485,9 @@ class Pool:
                 database.close()
             self._open.clear()
             self._users.clear()
+            for _, database in self._retired:
+                database.close()
+            self._retired.clear()
 
     def refresh(self) -> bool:
         """Re-read the registry when its files changed, so an import shows up without a restart.
