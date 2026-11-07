@@ -36,6 +36,13 @@ class TestSettings:
     def test_bad_sslmode_is_explained(self) -> None:
         assert "PGSSLMODE='sometimes'" in Database({"PGSSLMODE": "sometimes"}).describe_target()
 
+    def test_no_os_user_is_a_config_error_not_a_crash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def no_user() -> str:
+            raise OSError("no passwd entry")  # neither the variables nor /etc/passwd name a user
+
+        monkeypatch.setattr("getpass.getuser", no_user)
+        assert "PGUSER is not set" in Database({}).describe_target()
+
     @pytest.mark.parametrize(
         ("socket_s", "statement_ms", "expected"),
         [("10", "5000", 10), ("10", "60000", 65), ("0", "5000", 30), ("30", "0", 30)],

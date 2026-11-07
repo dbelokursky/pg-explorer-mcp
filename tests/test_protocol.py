@@ -169,6 +169,16 @@ class TestLegacyProtocol:
         replies = roundtrip(server, [rpc(1, "ping"), rpc(2, "tools/list")])
         assert [reply["id"] for reply in replies] == [1, 2]
 
+    def test_an_empty_batch_is_answered_with_one_invalid_request(self, server: Server) -> None:
+        # JSON-RPC 2.0: an empty batch is not a silence case, it is one Invalid Request object.
+        reply = server.handle_line(b"[]")
+        assert reply is not None
+        assert json.loads(reply) == {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": INVALID_REQUEST, "message": "Invalid request: the batch is empty"},
+        }
+
     def test_reply_is_one_ascii_line_whatever_the_tool_returns(self, server: Server) -> None:
         message = rpc(7, "tools/call", {"name": "echo", "arguments": {"text": "таблица\nзаказы"}})
         reply = server.handle_line(json.dumps(message).encode("utf-8"))
