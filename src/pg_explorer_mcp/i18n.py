@@ -285,6 +285,7 @@ EN: dict[str, str] = {
     ),
     "db.every_host_failed": "None of the hosts let the login in. {failures}",
     "db.lost": "Lost the connection to {target}: {error}",
+    "db.busy": "{target} is still running a statement of an earlier call that ran out of time; ask again.",
     "db.session_setup": "Connected, but could not set up a read-only session: {error}",
     "db.password_unset": "the server asks for a password and none is set",
     "db.password": (
@@ -454,7 +455,8 @@ EN: dict[str, str] = {
     "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
     "stands.bad_hosts": "stand connection {name} in {path}: {problem}, skipped",
     "stands.none_found": (
-        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings"
+        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings; "
+        "install.py import brings the stands in from DBeaver, DataGrip or a pg_service.conf file"
     ),
     "stands.more_warnings": "... and {count} more problems in the stands registry",
     # compare_schema: one schema on two stands.
@@ -497,10 +499,18 @@ EN: dict[str, str] = {
         "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
     ),
     # install.py import
-    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-explorer-mcp",
-    "install.help.source": "where the connections come from: dbeaver or pg-service",
+    "install.help.import": (
+        "bring stand connections from DBeaver, DataGrip or a pg_service.conf file into pg-explorer-mcp"
+    ),
+    "install.help.source": (
+        "where the connections come from: dbeaver, datagrip (and the other JetBrains IDEs) or pg-service"
+    ),
     "install.help.file": "the pg_service.conf file to read (for pg-service)",
     "install.help.workspace": "DBeaver's folder with data-sources.json (default: the usual place for this OS)",
+    "install.help.project": (
+        "for datagrip: a JetBrains project to read as well (always read: the global data sources of the IDEs "
+        "and DataGrip's projects in ~/DataGripProjects)"
+    ),
     "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
     "install.help.prune": "with --write: replace the registry instead of adding to it",
     "install.help.stand_pattern": (
@@ -515,6 +525,8 @@ EN: dict[str, str] = {
     "import.no_user": "no user: pg-explorer-mcp reads a schema with the login of the same name",
     "import.no_stand": "no stand: the pattern matched nothing, and the name has no Latin letters to be one",
     "import.bad_name": "{part!r} cannot be a part of a section name (letters, digits, _ $ - only)",
+    "import.ssh_tunnel": "through an SSH tunnel via {server}: pg-explorer-mcp opens no tunnels",
+    "import.ssh_tunnel_unnamed": "through an SSH tunnel: pg-explorer-mcp opens no tunnels",
     "import.reading": "reading {source}",
     "import.preview_header": "{count} connections go into {registry}:",
     "import.preview_named": "stand from the connection name",
@@ -533,8 +545,15 @@ EN: dict[str, str] = {
         "data-sources.json"
     ),
     "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-explorer-mcp? [y/N] ",
-    "import.offer_hint": "To import them, run: {command}",
+    "import.no_datagrip": (
+        "no data sources of DataGrip or another JetBrains IDE were found on this machine; pass --project with "
+        "the folder of the project that has them"
+    ),
+    "import.found_dbeaver": "DBeaver connections found in {path}.",
+    "import.found_datagrip": "Data sources of DataGrip or another JetBrains IDE found in {paths}.",
+    "import.offer": "{where} Show what an import would bring into pg-explorer-mcp? [y/N] ",
+    "import.offer_hint": "To import them, run:",
+    "import.found": "{where} To see what an import would bring into pg-explorer-mcp: {command}",
     # install.py export
     "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
     "export.help.tool": (
@@ -830,6 +849,7 @@ RU: dict[str, str] = {
     ),
     "db.every_host_failed": "Ни один из хостов не пустил. {failures}",
     "db.lost": "Соединение с {target} потеряно: {error}",
+    "db.busy": "{target} ещё выполняет запрос прошлого вызова, которому не хватило времени; спросите ещё раз.",
     "db.session_setup": "Подключение есть, но включить сессию только на чтение не удалось: {error}",
     "db.password_unset": "сервер просит пароль, а он не задан",
     "db.password": (
@@ -1009,7 +1029,8 @@ RU: dict[str, str] = {
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
     "stands.bad_hosts": "у подключения {name} в {path}: {problem}, пропущено",
     "stands.none_found": (
-        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*"
+        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*; "
+        "стенды из DBeaver, DataGrip или файла pg_service.conf переносит install.py import"
     ),
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
@@ -1052,10 +1073,16 @@ RU: dict[str, str] = {
         "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
         "раньше"
     ),
-    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-explorer-mcp",
-    "install.help.source": "откуда брать подключения: dbeaver или pg-service",
+    "install.help.import": (
+        "перенести подключения к стендам из DBeaver, DataGrip или файла pg_service.conf в pg-explorer-mcp"
+    ),
+    "install.help.source": "откуда брать подключения: dbeaver, datagrip (и другие IDE JetBrains) или pg-service",
     "install.help.file": "файл pg_service.conf, который читать (для pg-service)",
     "install.help.workspace": "папка DBeaver с data-sources.json (по умолчанию — обычное место для этой ОС)",
+    "install.help.project": (
+        "для datagrip: ещё и этот проект JetBrains (читаются всегда: глобальные источники данных IDE "
+        "и проекты DataGrip в ~/DataGripProjects)"
+    ),
     "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
     "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
     "install.help.stand_pattern": (
@@ -1070,6 +1097,8 @@ RU: dict[str, str] = {
     "import.no_user": "нет пользователя: pg-explorer-mcp читает схему под одноимённой учёткой",
     "import.no_stand": "нет стенда: шаблон ничего не нашёл, а в имени нет латинских букв, чтобы стать им",
     "import.bad_name": "{part!r} не годится в имя секции (только буквы, цифры, _ $ -)",
+    "import.ssh_tunnel": "через SSH-туннель на {server}: pg-explorer-mcp туннелей не поднимает",
+    "import.ssh_tunnel_unnamed": "через SSH-туннель: pg-explorer-mcp туннелей не поднимает",
     "import.reading": "читаю {source}",
     "import.preview_header": "в {registry} попадут подключения: {count}",
     "import.preview_named": "стенд из имени подключения",
@@ -1087,8 +1116,15 @@ RU: dict[str, str] = {
         "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
     ),
     "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
-    "import.offer_hint": "Чтобы перенести их, выполните: {command}",
+    "import.no_datagrip": (
+        "источники данных DataGrip и других IDE JetBrains на этой машине не найдены; передайте --project с папкой "
+        "проекта, где они есть"
+    ),
+    "import.found_dbeaver": "Найдены подключения DBeaver в {path}.",
+    "import.found_datagrip": "Найдены источники данных DataGrip и других IDE JetBrains в {paths}.",
+    "import.offer": "{where} Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
+    "import.offer_hint": "Чтобы перенести их, выполните:",
+    "import.found": "{where} Посмотреть, что импорт перенесёт в pg-explorer-mcp: {command}",
     "export.help": (
         "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
     ),
