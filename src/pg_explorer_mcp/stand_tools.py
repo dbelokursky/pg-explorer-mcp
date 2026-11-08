@@ -21,10 +21,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Optional
 
-from . import __version__
+from . import __version__, health
 from .budget import DEFAULT_BUDGET
 from .compare import Structure, compare_schema, comparison, read_structure
-from .db import Database, DatabaseUnavailableError, OverdueError, QueryFailedError, answer_by, overdue
+from .db import Database, DatabaseUnavailableError, OverdueError, QueryFailedError, answer_by, overdue, time_budget
 from .i18n import current, plural, t
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
@@ -53,6 +53,7 @@ from .tools import (
     Answer,
     Tool,
     ToolError,
+    db_health,
     describe_table,
     diagram_properties,
     explain_query,
@@ -202,6 +203,14 @@ def build_stand_tools(
             },
             required=("stand", "schema"),
             handler=lambda args: stand_diagram(pool, args, budget),
+        ),
+        Tool(
+            name="db_health",
+            title=t("tool.db_health.title"),
+            description=t("tool.db_health.description"),
+            properties={"stand": stand, "database": database, "schema": any_schema},
+            required=("stand",),
+            handler=lambda args: stand_health(pool, args),
         ),
         Tool(
             name="sample_rows",
@@ -532,6 +541,17 @@ def stand_diagram(pool: Pool, args: Arguments, budget: int) -> list[str]:
     room = budget - len(label) - 1
     lines = schema_diagram(db, target.schema, args.get("table"), args.get("depth"), args.get("columns"), budget=room)
     return [label, *lines]
+
+
+def stand_health(pool: Pool, args: Arguments) -> list[str]:
+    """Catalog diagnostics within the same database/schema scope as the structure tools."""
+    with time_budget(health.TIME_BUDGET_S):
+        target = _optional_target(pool, args)
+        if target is not None:
+            schemas = _database_schemas(pool, target)
+            return [target.label, *db_health(pool.database(target), target.schema, schemas)]
+        stand = pool.registry.stand(args.get("stand"))
+        return _each_database(pool, stand, args.get("database"), lambda db, schemas: db_health(db, None, schemas))
 
 
 def stand_sample(pool: Pool, args: Arguments) -> list[str]:

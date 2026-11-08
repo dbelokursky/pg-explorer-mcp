@@ -611,6 +611,7 @@ class TestOfflineTools:
             "describe_table": ["stand", "table"],
             "compare_schema": ["stand_a", "schema"],
             "schema_diagram": ["stand", "schema"],
+            "db_health": ["stand"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
             "run_select": ["schema", "query"],
@@ -1654,7 +1655,8 @@ class TestEntry:
 
 
 # Every request to the model carries tools/list, and local models run with small contexts.
-SIZE_LIMITS = {("en", "single"): 4700, ("ru", "single"): 5100, ("en", "stands"): 7800, ("ru", "stands"): 8000}
+# db_health adds one catalog tool, including stand/database/schema selectors.
+SIZE_LIMITS = {("en", "single"): 5100, ("ru", "single"): 5500, ("en", "stands"): 8400, ("ru", "stands"): 8700}
 
 
 @pytest.mark.parametrize(("language", "mode"), list(SIZE_LIMITS))
@@ -1741,3 +1743,30 @@ def test_a_long_list_of_schemas_is_cut_with_its_count() -> None:
     assert listed(names[:3]) == "s00, s01, s02"
     assert listed(names) == f"{', '.join(names[:15])} and more, 20 in all: list_schemas shows them"
     assert listed([]) == "none"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"stand": "dev1", "database": "orders"}, [(None, ["billing", "shipping"])]),
+        ({"stand": "dev1", "database": "orders", "schema": "shipping"}, [("shipping", ["billing", "shipping"])]),
+        ({"stand": "ift1"}, [(None, None)]),
+        ({"stand": "ift1", "schema": "other"}, [("other", None)]),
+        ({"stand": "dev1"}, [(None, None), (None, ["billing", "shipping"])]),
+    ],
+)
+def test_health_routes_catalog_scope(
+    tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch, arguments: dict[str, str], expected: list[Any]
+) -> None:
+    calls: list[Any] = []
+
+    def report(database: Database, schema: Any = None, schemas: Any = None) -> list[str]:  # noqa: ARG001
+        calls.append((schema, schemas))
+        return ["health evidence"]
+
+    monkeypatch.setattr(stand_tools, "db_health", report)
+    text = tools["db_health"].call(arguments)
+    assert "health evidence" in text
+    assert text.startswith(arguments["stand"] + " / ")
+    assert calls == expected
+    assert db.deadline() is None

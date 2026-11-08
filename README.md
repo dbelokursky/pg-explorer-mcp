@@ -48,6 +48,7 @@ English or Russian.
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
 | `schema_diagram` | the data model as a Mermaid diagram the agent shows as a picture: the tables of a schema with their keys and foreign keys, or one table with its neighbours | all |
 | `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, columns, constraints, indexes | all |
+| `db_health` | catalog diagnostics: buffers, maintenance, index candidates, sequence headroom and sizes; no monitoring roles | `explore`, `analyst` |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
 | `run_select` | one read-only statement: `SELECT`, `WITH … SELECT`, `VALUES`, `TABLE`, `EXPLAIN`, `SHOW` | `analyst` |
@@ -286,7 +287,7 @@ pg-explorer-mcp 0.8.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
-profile: analyst (status, list_tables, search_schema, describe_table, schema_diagram, sample_rows, explain_query, run_select)
+profile: analyst (status, list_tables, search_schema, describe_table, schema_diagram, db_health, sample_rows, explain_query, run_select)
 language: en
 query log: off
 database: connected to pg_mcp_demo as mcp_demo_agent, PostgreSQL 16.15
@@ -379,6 +380,37 @@ No readable table or view named 'salaries' in schema 'hr'. Call list_tables to s
 ```
 
 The last line is about the `hr` schema, which the role has no rights to: the tools show none of its tables.
+
+### Catalog diagnostics
+
+Ask "Check the database health" to call `db_health`. It takes an optional `schema`; with many stands,
+`stand` is required and `database` selects one database. Without it, the tool checks the stand's databases
+within one query budget. It is available in `explore` and `analyst`.
+
+The report includes collection time, server version, primary/replica, `track_counts` and the database
+statistics reset time; heap/index buffer counters and hit ratios; estimated live/dead rows, changes
+since analyze and vacuum/analyze timestamps; indexes with no observed scans and equivalent index
+candidates; sequence headroom; and table/index sizes. Physical partition leaves are listed separately,
+without parent totals. Sizes include TOAST in the table component, not the table's indexes.
+
+These are leads for investigation, not proof of the cause of a slowdown or instructions to drop indexes.
+Counters may cover an unknown period, can be reset per object and describe local replica activity;
+uptime is not their age. A buffer miss can still hit the OS cache. NULL means unknown, not zero.
+The report does not estimate bloat, read query texts, scan application rows or perform repairs.
+
+Only readable relations are included; with schema-specific stand logins, the registry determines the
+schema scope, as for the other catalog tools. Sequence checks also include sequences owned by visible
+table columns. `docs/role.sql` does not grant sequence access: missing privileges appear explicitly.
+A DBA can optionally grant `GRANT SELECT ON SEQUENCE app.orders_id_seq TO mcp_agent` for chosen sequences.
+Do not grant `pg_monitor` or `pg_read_all_stats`. Cached sequence values give a conservative headroom
+estimate; descending sequences and `CYCLE` are handled separately. Unused sequences have unknown values.
+
+Each section shows at most five objects and says when more exist. Sequence entries prioritize the
+least known headroom and report how many values are unknown in the selected scope. A compact status
+line precedes the details so truncation does not hide failed or unfinished checks. A denied or failed check leaves the
+other sections available. Queries share a 15-second budget (also capped by the configured per-statement
+timeout); connection and transport timeouts still apply. The normal response-size limit can further
+truncate a report. Narrow `schema` or `database` for detail. See [ADR 0009](docs/adr/0009-db-health.md).
 
 ### Data model diagrams
 
@@ -707,7 +739,7 @@ The profile decides which tools the agent sees:
 | Profile | Tools | For |
 |---|---|---|
 | `schema` | `status`, `list_tables`, `search_schema`, `describe_table` | people who need the structure only: the agent sees no data rows at all |
-| `explore` | plus `sample_rows`, `explain_query` | developers; the default |
+| `explore` | plus `db_health`, `sample_rows`, `explain_query` | developers; the default |
 | `analyst` | plus `run_select` and `explain_query` with `ANALYZE` | analysts who need their own SQL |
 
 Set it at registration (`python3 install.py --profile schema`) or with `PG_EXPLORER_MCP_PROFILE` in the server's

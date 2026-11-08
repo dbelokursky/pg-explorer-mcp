@@ -17,6 +17,9 @@ reaches dozens of stands through the same tools.
 - To learn how a schema differs between two stands (tables, columns, constraints, indexes), call
   `compare_schema` with `stand_a`, `stand_b` and `schema` instead of describing tables on each stand; with
   `stands` instead of `stand_b` it sets several stands against `stand_a` (at most 100) and says which differ.
+- For a slow database without a specific query, start with `db_health` (optional `schema`; on stands,
+  `stand` and optional `database`). Treat findings as evidence, not a diagnosis. Report unavailable checks;
+  zero scans do not justify dropping an index, and missing statistics do not establish health.
 - To show the data model, call `schema_diagram` (a schema, or a table with its neighbours by foreign keys)
   and put its answer into a ```mermaid block as it is: the user sees a picture. `/pg:diagram` does that and
   saves the file.
