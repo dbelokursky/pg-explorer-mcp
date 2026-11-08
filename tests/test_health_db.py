@@ -66,7 +66,9 @@ def reader(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Database]:
         passfile = tmp_path_factory.mktemp("health") / "pgpass"
         passfile.write_text(f"*:*:*:{ROLE}:health-test\n", encoding="utf-8")
         passfile.chmod(0o600)
-        database = Database(dict(os.environ, PGUSER=ROLE, PGPASSFILE=str(passfile)))
+        env = dict(os.environ, PGUSER=ROLE, PGPASSFILE=str(passfile))
+        env.pop("PGPASSWORD", None)  # CI's administrator password must not override the reader's passfile.
+        database = Database(env)
         yield database
     finally:
         if database is not None:
