@@ -98,6 +98,52 @@ def _plural_form(language: str, count: int) -> str:
 
 
 EN: dict[str, str] = {
+    "tool.db_health.title": "Database health",
+    "tool.db_health.description": (
+        "First-pass catalog diagnostics: sizes, maintenance, buffers, index candidates and sequence headroom. "
+        "No monitoring grants or extensions. Findings are evidence, not a diagnosis; unavailable checks are "
+        "reported."
+    ),
+    "health.intro": (
+        "Catalog diagnostics: evidence for investigation, not a complete diagnosis or a database health guarantee."
+    ),
+    "health.scope": (
+        "Scope: permitted relations, schema={schema}; physical partition leaves separately, no parent totals."
+    ),
+    "health.limits": (
+        "Cumulative counters: object reset dates and observation windows may be unknown; uptime is not their "
+        "age. track_counts=off makes usage conclusions unreliable. Replica activity is local. NULL means "
+        "unknown, not zero. No bloat estimate or automatic repair."
+    ),
+    "health.checks": (
+        "Checks (ok=collected, limited=more rows, unavailable=failed, not_completed=unfinished; "
+        "not a health verdict): {checks}"
+    ),
+    "health.context": "Collection context:",
+    "health.cache": (
+        "Buffer counters (heap/index separately; excludes OS cache and TOAST; no traffic gives NULL ratio):"
+    ),
+    "health.maintenance": (
+        "Maintenance (largest dead estimates first; old/NULL timestamps alone do not prove a problem):"
+    ),
+    "health.unused": (
+        "Index candidates with no observed scans (check workload, replicas and dependencies before considering "
+        "removal):"
+    ),
+    "health.duplicates": (
+        "Equivalent index candidates (protected indexes may enforce constraints or replica identity; sizes are "
+        "not reclaimable-space estimates):"
+    ),
+    "health.sequences": (
+        "Sequence headroom (least known headroom first; unknown values counted; "
+        "cached values are conservative; CYCLE is not exhaustion):"
+    ),
+    "health.sizes": "Largest physical relations (table includes TOAST; indexes reported separately):",
+    "health.empty": "  No matching objects in this scope; this does not establish database health.",
+    "health.more": "  Showing {limit} entries; more exist. Narrow the schema to inspect further.",
+    "health.unavailable": "  Check unavailable (SQLSTATE {code}); other checks continue.",
+    "health.budget": "  Query time budget exhausted; this and remaining checks were not completed.",
+    "health.disconnected": "  Database unavailable; this and remaining checks were not completed.",
     "server.instructions": (
         "Read-only access to one PostgreSQL database: nothing can be inserted, changed or deleted through it, "
         "so decline such requests instead of asking the user to confirm them. Call status first: it shows "
@@ -645,6 +691,50 @@ EN: dict[str, str] = {
 }
 
 RU: dict[str, str] = {
+    "tool.db_health.title": "Здоровье базы",
+    "tool.db_health.description": (
+        "Первичная диагностика по каталогу: размеры, обслуживание, буферы, кандидаты среди индексов и запас "
+        "sequences. Без мониторинговых ролей и расширений. Находки — факты для проверки, не диагноз; "
+        "недоступные проверки указаны."
+    ),
+    "health.intro": (
+        "Диагностика по каталогу: данные для расследования, не полный диагноз и не гарантия здоровья базы."
+    ),
+    "health.scope": (
+        "Область: разрешённые объекты, схема={schema}; физические партиции отдельно, без итогов по родителям."
+    ),
+    "health.limits": (
+        "Счётчики накопительные: даты сброса объектов и период наблюдения могут быть неизвестны; uptime не "
+        "равен их возрасту. При track_counts=off выводы об использовании ненадёжны. На реплике активность "
+        "локальная. NULL — неизвестно, не ноль. Без оценки bloat и автоматического исправления."
+    ),
+    "health.checks": (
+        "Сбор (ok=собрано, limited=есть ещё, unavailable=ошибка, not_completed=не завершено; "
+        "не оценка здоровья): {checks}"
+    ),
+    "health.context": "Контекст сбора:",
+    "health.cache": "Счётчики буферов (таблицы/индексы отдельно; без кеша ОС и TOAST; без обращений доля NULL):",
+    "health.maintenance": (
+        "Обслуживание (сначала наибольшие оценки dead tuples; старые/NULL даты сами по себе не доказывают проблему):"
+    ),
+    "health.unused": (
+        "Индексы без наблюдавшихся сканирований (перед рассмотрением удаления проверить нагрузку, реплики и "
+        "зависимости):"
+    ),
+    "health.duplicates": (
+        "Кандидаты с эквивалентными определениями (protected — ограничения или replica identity; размеры не "
+        "означают объём освобождаемого места):"
+    ),
+    "health.sequences": (
+        "Запас sequences (сначала наименьший известный запас; неизвестные посчитаны; "
+        "кеш даёт нижнюю оценку; CYCLE не означает исчерпание):"
+    ),
+    "health.sizes": "Крупнейшие физические объекты (таблица включает TOAST; индексы отдельно):",
+    "health.empty": "  Подходящих объектов в этой области нет; это не подтверждает здоровье базы.",
+    "health.more": "  Показано {limit} записей; есть другие. Уточните схему для дальнейшей проверки.",
+    "health.unavailable": "  Проверка недоступна (SQLSTATE {code}); остальные проверки продолжаются.",
+    "health.budget": "  Бюджет времени запросов исчерпан; эта и оставшиеся проверки не завершены.",
+    "health.disconnected": "  База недоступна; эта и оставшиеся проверки не завершены.",
     "server.instructions": (
         "Доступ только на чтение к одной базе PostgreSQL: добавить, изменить или удалить через него ничего "
         "нельзя, поэтому от таких просьб отказывайтесь, а не просите пользователя их подтвердить. Сначала "

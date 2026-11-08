@@ -33,3 +33,8 @@ FROM unnest(string_to_array(:'schemas', ',')) AS schema_name \gexec
 
 SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT ON TABLES TO %I', :'owner', schema_name, :'role')
 FROM unnest(string_to_array(:'schemas', ',')) AS schema_name \gexec
+
+-- Optional db_health sequence headroom: grant SELECT on explicitly approved sequences only.
+-- Without this grant, db_health reports unknown values for sequences owned by readable table columns.
+-- Example (adapt names): GRANT SELECT ON SEQUENCE app.orders_id_seq TO mcp_agent;
+-- USAGE is unnecessary for diagnostics; never add pg_monitor or pg_read_all_stats for db_health.

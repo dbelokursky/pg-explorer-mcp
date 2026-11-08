@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
-from . import __version__, diagram
+from . import __version__, diagram, health
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, number, plural, t
@@ -41,6 +41,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "search_schema",
         "describe_table",
         "schema_diagram",
+        "db_health",
         "sample_rows",
         "explain_query",
     ),
@@ -50,6 +51,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "search_schema",
         "describe_table",
         "schema_diagram",
+        "db_health",
         "sample_rows",
         "explain_query",
         "run_select",
@@ -387,6 +389,13 @@ def build_tools(
             ),
         ),
         Tool(
+            name="db_health",
+            title=t("tool.db_health.title"),
+            description=t("tool.db_health.description"),
+            properties={"schema": schema_argument},
+            handler=lambda args: db_health(db, args.get("schema")),
+        ),
+        Tool(
             name="sample_rows",
             title=t("tool.sample_rows.title"),
             description=t("tool.sample_rows.description", default=SAMPLE_ROWS_DEFAULT, limit=SAMPLE_ROWS_LIMIT),
@@ -645,6 +654,12 @@ def _detail(columns: Any) -> str:
 
 def _visible_schemas(db: Database) -> str:
     return ", ".join(str(row[0]) for row in db.query(SCHEMAS_SQL)) or t("error.none")
+
+
+def db_health(db: Database, schema: Any = None, schemas: Sequence[str] | None = None) -> list[str]:
+    if schema is not None and (not isinstance(schema, str) or not schema.strip()):
+        raise ToolError(t("error.schema"))
+    return health.report(db, schema.strip().strip('"') if schema else None, schemas)
 
 
 def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str] | None = None) -> list[str]:

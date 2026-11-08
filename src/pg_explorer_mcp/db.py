@@ -73,6 +73,9 @@ class OverdueError(Exception):
 # For a thread that asks one stand of a call over several, when that call answers (time.monotonic());
 # None in the call's own thread. The call answers then without the stands still at work (ADR 0006).
 _deadline: ContextVar[float | None] = ContextVar("pg_mcp_deadline", default=None)
+# Only explicitly budgeted diagnostics shorten running statements. Multi-stand response deadlines
+# retain their existing behavior: the worker may finish its current statement after the response.
+_query_deadline: ContextVar[float | None] = ContextVar("pg_mcp_query_deadline", default=None)
 
 
 def answer_by(deadline: float) -> None:
@@ -88,6 +91,21 @@ def answer_by(deadline: float) -> None:
 def deadline() -> float | None:
     """When the call this context works for answers; None in the call's own thread."""
     return _deadline.get()
+
+
+@contextlib.contextmanager
+def time_budget(seconds: float) -> Iterator[None]:
+    """Bound a series of queries, preserving any earlier caller's deadline."""
+    due = time.monotonic() + seconds
+    previous = deadline()
+    due = min(due, previous) if previous is not None else due
+    token = _deadline.set(due)
+    query_token = _query_deadline.set(due)
+    try:
+        yield
+    finally:
+        _query_deadline.reset(query_token)
+        _deadline.reset(token)
 
 
 def overdue() -> bool:
@@ -424,10 +442,17 @@ def transaction_start(settings: Settings | None) -> str:
     messages and carries its own limits.
     """
     statements = ["BEGIN TRANSACTION READ ONLY"]
-    if settings is not None:
-        statements.append(f"SET LOCAL statement_timeout = {int(settings.statement_timeout_ms)}")
-        if settings.search_path:
-            statements.append(f"SET LOCAL search_path = {_quote_ident(settings.search_path)}, public")
+    timeout = settings.statement_timeout_ms if settings is not None else 0
+    due = _query_deadline.get()
+    if due is not None:
+        remaining = int((due - time.monotonic()) * 1000)
+        if remaining <= 0:
+            raise OverdueError
+        timeout = min(timeout, remaining) if timeout > 0 else remaining
+    if settings is not None or due is not None:
+        statements.append(f"SET LOCAL statement_timeout = {timeout}")
+    if settings is not None and settings.search_path:
+        statements.append(f"SET LOCAL search_path = {_quote_ident(settings.search_path)}, public")
     return "; ".join(statements)
 
 
