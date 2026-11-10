@@ -25,6 +25,7 @@ English or Russian.
 - [Try it on the demo database](#try-it-on-the-demo-database)
 - [Installation step by step](#installation-step-by-step)
 - [Usage](#usage)
+- [Catalog diagnostics](#catalog-diagnostics)
 - [Many stands](#many-stands)
 - [Group profiles](#group-profiles)
 - [Language](#language)
@@ -387,6 +388,49 @@ Ask "Check the database health" to call `db_health`. It takes an optional `schem
 `stand` is required and `database` selects one database. Without it, the tool checks the stand's databases
 within one query budget. It is available in `explore` and `analyst`.
 
+**How to call it.** After updating, restart the MCP server (or the client that starts it). Ask the
+agent in plain language; it selects `db_health` and passes the arguments below. The stand, database
+and schema names are examples: substitute names from your configuration.
+
+| Request | Connection mode | `db_health` arguments |
+|---|---|---|
+| "Check the health of the connected database" | Single database | `{}` |
+| "Check the shop schema in the connected database" | Single database | `{"schema":"shop"}` |
+| "Check database health on dev1" | Many stands | `{"stand":"dev1"}` |
+| "Check the orders database on dev1" | Many stands | `{"stand":"dev1","database":"orders"}` |
+| "Check the billing schema in the orders database on dev1" | Many stands | `{"stand":"dev1","database":"orders","schema":"billing"}` |
+
+For an MCP client that lets you call tools directly, select `db_health` and supply the JSON arguments
+from the table. For example, the tool name and arguments of one call are:
+
+```json
+{
+  "name": "db_health",
+  "arguments": {"stand": "dev1", "database": "orders", "schema": "billing"}
+}
+```
+
+On a single-database connection, only `schema` is accepted. On a stand connection, `stand` is required;
+`database` and `schema` narrow the report. Use `status` and `list_schemas` to find configured stands and
+schemas. If the tool is missing, check the installed version (0.9.0 or newer) and profile in `status`:
+the `schema` profile does not offer it. Ask the administrator to select `explore` or `analyst` and restart
+the MCP server after changing its configuration.
+
+**How to read the result.** The first line records collection status for each check:
+
+| Status | Meaning |
+|---|---|
+| `ok` | The check ran; this does not mean the database is healthy. |
+| `limited` | More than five entries matched; the section shows only the first five. |
+| `unavailable[SQLSTATE]` | The check failed; the code identifies the database error, for example `42501` for insufficient privileges. |
+| `unavailable` | The database connection was unavailable. |
+| `not_completed` | The check did not finish, or was not started after the time budget or connection failure. |
+
+Sequence entries include `unknown_values_in_scope`: the count of sequences with unknown current values
+across the selected scope, including entries outside the first five. `state: no_sequence_privilege`
+means the current role cannot read the sequence value. If the report is truncated or a section says
+`limited`, repeat the call with a narrower `schema` or `database`.
+
 The report includes collection time, server version, primary/replica, `track_counts` and the database
 statistics reset time; heap/index buffer counters and hit ratios; estimated live/dead rows, changes
 since analyze and vacuum/analyze timestamps; indexes with no observed scans and equivalent index
@@ -401,14 +445,14 @@ The report does not estimate bloat, read query texts, scan application rows or p
 Only readable relations are included; with schema-specific stand logins, the registry determines the
 schema scope, as for the other catalog tools. Sequence checks also include sequences owned by visible
 table columns. `docs/role.sql` does not grant sequence access: missing privileges appear explicitly.
-A DBA can optionally grant `GRANT SELECT ON SEQUENCE app.orders_id_seq TO mcp_agent` for chosen sequences.
+A DBA can optionally run `GRANT SELECT ON SEQUENCE app.orders_id_seq TO mcp_agent` for chosen sequences.
 Do not grant `pg_monitor` or `pg_read_all_stats`. Cached sequence values give a conservative headroom
 estimate; descending sequences and `CYCLE` are handled separately. Unused sequences have unknown values.
 
 Each section shows at most five objects and says when more exist. Sequence entries prioritize the
 least known headroom and report how many values are unknown in the selected scope. A compact status
-line precedes the details so truncation does not hide failed or unfinished checks. A denied or failed check leaves the
-other sections available. Queries share a 15-second budget (also capped by the configured per-statement
+line precedes the details so truncation does not hide failed or unfinished checks. A denied or failed
+check leaves the other sections available. Queries share a 15-second budget (also capped by the configured per-statement
 timeout); connection and transport timeouts still apply. The normal response-size limit can further
 truncate a report. Narrow `schema` or `database` for detail. See [ADR 0009](docs/adr/0009-db-health.md).
 
