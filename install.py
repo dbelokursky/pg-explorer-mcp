@@ -9,6 +9,7 @@
     PGDATABASE=sales python3 install.py --name sales  another database, as pg-sales
     python3 install.py import dbeaver            show what DBeaver's connections would bring
     python3 install.py import dbeaver --write    write the stands registry, the password file, register pg-stands
+    python3 install.py import datagrip           show what DataGrip and the other JetBrains IDEs would bring
     python3 install.py import pg-service ~/.pg_service.conf --write
     python3 install.py export dbeaver            show which stand connections DBeaver would get
     python3 install.py export pgadmin --write    write servers.json for pgAdmin to import
@@ -198,9 +199,10 @@ def main(argv: list[str]) -> int:
     commands = parser.add_subparsers(dest="command")
     importer = commands.add_parser("import", help=t("install.help.import"), description=t("install.help.import"))
     _common_options(importer)
-    importer.add_argument("source", choices=("dbeaver", "pg-service"), help=t("install.help.source"))
+    importer.add_argument("source", choices=("dbeaver", "datagrip", "pg-service"), help=t("install.help.source"))
     importer.add_argument("file", nargs="?", help=t("install.help.file"))
     importer.add_argument("--workspace", help=t("install.help.workspace"))
+    importer.add_argument("--project", help=t("install.help.project"))
     importer.add_argument("--write", action="store_true", help=t("install.help.write"))
     importer.add_argument("--prune", action="store_true", help=t("install.help.prune"))
     importer.add_argument(
@@ -318,7 +320,7 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
 
 
 def import_command(args: argparse.Namespace, language: str) -> int:
-    """Preview, or with --write bring, the connections of DBeaver or a pg_service.conf file into pg-explorer-mcp."""
+    """Preview, or with --write bring, the connections of DBeaver, DataGrip or pg_service.conf into pg-explorer-mcp."""
     try:
         connections = _connections(args)
         pattern = imports.compile_pattern(args.stand_pattern)
@@ -363,6 +365,8 @@ def _connections(args: argparse.Namespace) -> list[imports.Connection] | None:
             return None
         print(t("import.reading", source=folder))
         return imports.read_dbeaver(folder)
+    if args.source == "datagrip":
+        return _datagrip_connections(_folder(args.project))
     if not args.file:
         print(t("import.need_file"))
         return None
@@ -371,22 +375,55 @@ def _connections(args: argparse.Namespace) -> list[imports.Connection] | None:
     return imports.read_pg_service(path)
 
 
+def _datagrip_connections(project: Path | None) -> list[imports.Connection] | None:
+    """The data sources of every JetBrains folder found; a folder that cannot be read is named and skipped."""
+    folders = imports.datagrip_folders(shell_env(), Path.home(), project)
+    if not folders:
+        print(t("import.no_datagrip"))
+        return None
+    connections: list[imports.Connection] = []
+    ssh_configs = imports.jetbrains_ssh_configs(shell_env(), Path.home())  # those the IDEs share between projects
+    for folder in folders:
+        print(t("import.reading", source=folder))
+        try:
+            connections.extend(imports.read_datagrip(folder, ssh_configs))
+        except imports.ImportRefusedError as exc:
+            print(exc)  # one broken project or IDE leaves the others to read
+    return connections
+
+
 def offer_import(language: str) -> None:
-    """At a terminal, when DBeaver is on this machine: offer to show what an import would do."""
-    folder = imports.dbeaver_workspace(shell_env())
-    if folder is None or not sys.stdin.isatty():
+    """When DBeaver or a JetBrains IDE has connections on this machine: at a terminal, offer to show what an import
+    would do; otherwise name the command that shows it, for the agent that runs install.py with no terminal to
+    answer (/pg:setup). Both found make one question, not two in a row."""
+    found: dict[str, str] = {}  # the source to import from, and where its connections were found
+    dbeaver = imports.dbeaver_workspace(shell_env())
+    if dbeaver is not None:
+        found["dbeaver"] = t("import.found_dbeaver", path=dbeaver)
+    jetbrains = imports.datagrip_folders(shell_env(), Path.home())
+    if jetbrains:
+        found["datagrip"] = t("import.found_datagrip", paths=", ".join(map(str, jetbrains)))
+    if not found:
+        return
+    command = f"{sys.executable} {ROOT / 'install.py'} import"
+    if not sys.stdin.isatty():
+        for source, where in found.items():
+            print(t("import.found", where=where, command=f"{command} {source} --lang {language}"))
         return
     try:
-        answer = input(t("import.offer", path=folder))
+        answer = input(t("import.offer", where=" ".join(found.values())))
     except EOFError:
         return
-    command = f"{sys.executable} {ROOT / 'install.py'} import dbeaver --write --lang {language}"
     if answer.strip().lower() in YES:
-        print()
-        import_command(argparse.Namespace(source="dbeaver", file=None, workspace=None, write=False, prune=False,
-                                          stand_pattern=imports.DEFAULT_STAND_PATTERN, client="gigacode",
-                                          profile=None, lang=language, print=False), language)  # fmt: skip
-    print(t("import.offer_hint", command=command))
+        for source in found:
+            print()
+            import_command(argparse.Namespace(source=source, file=None, workspace=None, project=None, write=False,
+                                              prune=False, stand_pattern=imports.DEFAULT_STAND_PATTERN,
+                                              client="gigacode", profile=None, lang=language, print=False),
+                           language)  # fmt: skip
+    print(t("import.offer_hint"))
+    for source in found:
+        print(f"  {command} {source} --write --lang {language}")
 
 
 def export_command(args: argparse.Namespace) -> int:

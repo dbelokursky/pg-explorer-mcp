@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+import contextvars
 import io
 import json
 import os
 import re
 import socket
 import sys
+import threading
 import time
 from collections.abc import Iterator
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import pg8000.exceptions
 import pytest
 
 from pg_explorer_mcp import __main__ as entry
-from pg_explorer_mcp import i18n, stand_tools
+from pg_explorer_mcp import db, i18n, stand_tools
 from pg_explorer_mcp.compare import (
     RELATIONS_SQL,
     SCHEMA_CONSTRAINTS_SQL,
@@ -260,7 +264,8 @@ class TestLoadRegistry:
         assert registry.targets == []
         assert registry.warnings == [
             f"PG_EXPLORER_MCP_STANDS is set, but no stands were found in {tmp_path / 'a.conf'}, {tmp_path / 'b.conf'}; "
-            "working with the PG* settings"
+            "working with the PG* settings; "
+            "install.py import brings the stands in from DBeaver, DataGrip or a pg_service.conf file"
         ]
 
     def test_files_come_from_the_environment(self, tmp_path: Path) -> None:
@@ -507,6 +512,55 @@ class TestPool:
         slow = replace(target, options={**target.options, "connect_timeout": "3"})
         assert Pool(registry, {"PG_EXPLORER_MCP_SOCKET_TIMEOUT_S": "20"}).connect_timeout(slow) == 3
 
+    def test_a_thread_of_a_call_over_several_stands_leaves_the_login_of_the_call_alone(
+        self, registry: Registry, tmp_path: Path
+    ) -> None:
+        pool = Pool(registry, {"PGPASSFILE": str(tmp_path / "absent")})
+        first, second = registry.targets[:2]
+        pool.database(first)
+        taken: list[object] = []
+
+        def take(due: float) -> None:
+            db.answer_by(due)
+            try:
+                taken.append(pool.database(second))
+            except db.OverdueError:
+                taken.append("overdue")
+
+        for due in (time.monotonic() + 60, time.monotonic() - 1):
+            thread = threading.Thread(target=contextvars.copy_context().run, args=(take, due))
+            thread.start()
+            thread.join()
+        assert pool.current == first  # the query log names the login of the call, whatever its threads took
+        assert isinstance(taken[0], Database)
+        assert taken[1] == "overdue"  # a thread whose call has answered takes no connection
+        assert pool.open_count() == 2
+
+    def test_a_connection_stays_while_a_thread_that_took_it_runs_whoever_took_it_since(
+        self, registry: Registry, tmp_path: Path
+    ) -> None:
+        """A late stand's thread took it, then the next call: closing it then would cut the late statement short."""
+        pool = Pool(registry, {"PGPASSFILE": str(tmp_path / "absent")}, limit=1)
+        first, second = registry.targets[:2]
+        took, done = threading.Event(), threading.Event()
+
+        def late() -> None:
+            db.answer_by(time.monotonic() + 60)
+            pool.database(first)
+            took.set()
+            done.wait(5)
+
+        thread = threading.Thread(target=contextvars.copy_context().run, args=(late,))
+        thread.start()
+        took.wait(5)
+        pool.database(first)  # the next call, on the same stand
+        pool.database(second)  # then another stand: the first is the oldest connection beyond the limit
+        assert pool.open_count() == 2
+        done.set()
+        thread.join()
+        pool.trim()
+        assert pool.open_count() == 1
+
 
 @pytest.fixture
 def pool(tmp_path: Path, unreachable_env: dict[str, str]) -> Pool:
@@ -557,6 +611,7 @@ class TestOfflineTools:
             "describe_table": ["stand", "table"],
             "compare_schema": ["stand_a", "schema"],
             "schema_diagram": ["stand", "schema"],
+            "db_health": ["stand"],
             "sample_rows": ["stand", "table"],
             "explain_query": ["stand", "schema", "query"],
             "run_select": ["schema", "query"],
@@ -1068,21 +1123,21 @@ class TestParallelStands:
     def test_stands_that_have_not_answered_in_time_are_named(
         self, monkeypatch: pytest.MonkeyPatch, pool: Pool, tools: dict[str, Tool]
     ) -> None:
-        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0)
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0.5)  # the hosts keep silent for the second after
         arguments = {"stands": "*", "schema": "billing", "query": "SELECT 1"}
         assert tools["run_select"].call(arguments).splitlines() == [
-            "dev1–dev2, ift1: no answer within the 0 seconds of the call; ask about them in another call."
+            "dev1–dev2, ift1: no answer within the 0.5 seconds of the call; ask about them in another call."
         ]
-        assert pool.outcomes == {"dev1": "skipped", "dev2": "skipped", "ift1": "skipped"}
-        deadline = time.monotonic() + 5
-        while pool.open_count() < 3 and time.monotonic() < deadline:
-            time.sleep(0.02)  # the threads register their connections on their own time
+        skipped = {"dev1": "skipped", "dev2": "skipped", "ift1": "skipped"}
+        assert pool.outcomes == skipped
         pool.trim()
         assert pool.open_count() == 3  # their threads are still waiting on the host: nothing is closed under them
+        deadline = time.monotonic() + 5
         while pool.open_count() > 1 and time.monotonic() < deadline:
             time.sleep(0.1)
             pool.trim()
         assert pool.open_count() == 1  # once the threads gave up, the next call's trim closed the surplus
+        assert pool.outcomes == skipped  # what the threads met after the call had answered is noted nowhere
 
     def test_a_failing_thread_is_the_line_of_its_stand(self, pool: Pool) -> None:
         def run(stand: str) -> list[str]:
@@ -1112,6 +1167,209 @@ class TestParallelStands:
         lines = tools["run_select"].call({"stands": "*", "schema": "billing", "query": "SELECT 1"}).splitlines()
         assert lines[::2] == ["dev1 / orders / billing", "dev2 / orders / billing", "ift1 / orders / billing"]
         assert all(re.search("[а-я]", line) for line in lines[1::2]), lines  # what stopped each stand, in Russian
+
+
+@dataclass
+class Sessions:
+    """The sessions the server opens in a test, and every message they are sent, with the thread that sent it."""
+
+    going: threading.Event  # lets the slow statements end
+    opened: int = 0
+    sent: list[tuple[str, str]] = field(default_factory=list)  # the thread's name and the message's first word
+
+    def open(self, **_kwargs: object) -> Session:
+        self.opened += 1
+        return Session(self)
+
+
+class Session:
+    """What db.py asks of a pg8000 connection, on a table whose name says how to behave.
+
+    A statement on "slow" waits until the test lets it go, as one still running when its call answers;
+    one on "bad" then fails as a guessed column does. The others return 42.
+    """
+
+    def __init__(self, sessions: Sessions) -> None:
+        self._sessions = sessions
+        self._usock = SimpleNamespace(settimeout=lambda _seconds: None)
+        self._rows: list[list[int]] = []
+
+    def _send(self, sql: str) -> None:
+        self._sessions.sent.append((threading.current_thread().name, sql.split(maxsplit=1)[0]))
+
+    def run(self, sql: str, **_params: object) -> list[object]:
+        self._send(sql)
+        return []
+
+    def execute_simple(self, sql: str) -> SimpleNamespace:
+        self._send(sql)
+        return SimpleNamespace(columns=[{"name": "n"}], rows=self._rows)
+
+    def execute_unnamed(self, sql: str) -> SimpleNamespace:
+        self._send(sql)
+        if "slow" in sql:
+            self._sessions.going.wait(10)
+        if "bad" in sql:
+            raise pg8000.exceptions.DatabaseError({"C": "42703", "M": 'column "x" does not exist'})
+        self._rows = [[1], [2], [3]] if "slow" in sql else [[42]]
+        return SimpleNamespace(columns=[{"name": "n"}], rows=self._rows)
+
+    def close(self) -> None:
+        pass
+
+
+def early(timeout: float) -> float:
+    """A timed wait as Windows may end it: on a tick of a timer that steps by 15.6 ms, while time.monotonic() has
+    not yet reached the end of the wait. Here a wait longer than 50 ms ends 50 ms early."""
+    return timeout - 0.05 if timeout > 0.05 else timeout
+
+
+class EarlyLock:
+    """The lock of a session, whose waits end early."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def acquire(self, *, timeout: float) -> bool:
+        return self._lock.acquire(timeout=early(timeout))
+
+    def release(self) -> None:
+        self._lock.release()
+
+
+class EarlyThread(threading.Thread):
+    """The thread of a stand, whose join() ends early."""
+
+    def join(self, timeout: float | None = None) -> None:
+        super().join(None if timeout is None else early(timeout))
+
+
+class TestLateStand:
+    """A stand still at work when its call answers: its thread finishes the statement on the stand's session,
+    the next call waits for that, and nothing the thread does afterwards reaches the next call."""
+
+    LATE = "pg-explorer-mcp dev1"  # the name of the stand's thread
+
+    @pytest.fixture(autouse=True, params=["precise", "early"])
+    def timers(self, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Every case runs with waits that end early too, as on Windows. There a thread's wait for the busy session
+        ended before the end of its call, and the stand answered the call that the session was busy; and the call's
+        wait for its threads ended early, so that a late thread went on to start a statement for the answered call."""
+        if request.param == "early":
+            monkeypatch.setattr(db, "threading", SimpleNamespace(Lock=EarlyLock))
+            monkeypatch.setattr(stand_tools, "threading", SimpleNamespace(Lock=threading.Lock, Thread=EarlyThread))
+
+    @pytest.fixture
+    def sessions(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[Sessions]:
+        opened = Sessions(threading.Event())
+        monkeypatch.setattr("pg8000.native.Connection", opened.open)
+        yield opened
+        opened.going.set()  # whatever a test left waiting ends with it
+        for thread in self.stand_threads():
+            thread.join(5)
+
+    def stand_threads(self) -> set[threading.Thread]:
+        return {thread for thread in threading.enumerate() if thread.name == self.LATE}
+
+    @pytest.fixture
+    def pool(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pool:
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0.2)
+        stands = write(tmp_path / "stands.conf", "[dev1.orders.billing]\nhost=db.example.com\nconnect_timeout=1\n")
+        env = {"PGPASSFILE": str(tmp_path / "absent"), "PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS": "100"}
+        return Pool(loaded(STANDS_ON, [stands]), env)
+
+    def late_call(self, tools: dict[str, Tool], query: str) -> None:
+        """A call over several stands that answers without dev1, still running the query."""
+        lines = tools["run_select"].call({"stands": "dev1", "schema": "billing", "query": query}).splitlines()
+        assert lines == ["dev1: no answer within the 0.2 seconds of the call; ask about them in another call."]
+
+    def test_the_next_call_waits_for_the_late_statement_and_logs_only_itself(
+        self, pool: Pool, sessions: Sessions, tmp_path: Path
+    ) -> None:
+        """The agent asks about a late stand right away, as the answer says. The call used to share the session
+        with the late thread, whose ROLLBACK ended its transaction (25P01), and the late rows and outcome went into
+        its query log line."""
+        log = tmp_path / "queries.jsonl"
+        tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst", query_log=QueryLog(str(log), pool)))
+        self.late_call(tools, "SELECT n FROM slow")
+        threading.Timer(0.3, sessions.going.set).start()  # the late statement ends while the next call waits
+        answer = tools["run_select"].call({"stand": "dev1", "schema": "billing", "query": "SELECT 42"})
+        assert answer.splitlines()[:3] == ["dev1 / orders / billing", "n", "42"]
+        call = threading.current_thread().name
+        assert [message for message in sessions.sent if message[1] != "SET"] == [
+            (self.LATE, "BEGIN"),
+            (self.LATE, "DECLARE"),
+            (self.LATE, "FETCH"),
+            (self.LATE, "ROLLBACK"),
+            (call, "BEGIN"),
+            (call, "DECLARE"),
+            (call, "FETCH"),
+            (call, "ROLLBACK"),
+        ]
+        assert sessions.opened == 1
+        first, second = (json.loads(line) for line in log.read_text(encoding="utf-8").splitlines())
+        assert first["stands"] == {"dev1": "skipped"}
+        assert (second["stand"], second["rows"], "stands" in second) == ("dev1", 1, False)
+
+    def test_a_session_busy_for_longer_than_a_statement_may_run_is_named(
+        self, monkeypatch: pytest.MonkeyPatch, pool: Pool, sessions: Sessions
+    ) -> None:
+        monkeypatch.setattr(db, "STATEMENT_GRACE_S", 0)  # the wait is then the section's connect timeout, a second
+        tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+        self.late_call(tools, "SELECT n FROM slow")
+        started = time.monotonic()
+        with pytest.raises(ToolError, match="still running a statement of an earlier call that ran out of time"):
+            tools["run_select"].call({"stand": "dev1", "schema": "billing", "query": "SELECT 42"})
+        assert 0.9 < time.monotonic() - started < 3
+        assert not sessions.going.is_set()  # the late statement was still running
+
+    def test_a_thread_whose_call_has_answered_starts_nothing_more(self, pool: Pool, sessions: Sessions) -> None:
+        """The late statement fails on a guessed column: the columns of the table, a courtesy, are not asked for."""
+        tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+        self.late_call(tools, "SELECT x FROM slow_bad")
+        (late,) = self.stand_threads()
+        sessions.going.set()
+        late.join(5)
+        assert [word for thread, word in sessions.sent if thread == self.LATE and word != "SET"] == [
+            "BEGIN",
+            "DECLARE",
+            "ROLLBACK",
+        ]
+        assert pool.outcomes == {"dev1": "skipped"}  # not the error the thread met afterwards
+
+    def test_a_thread_that_waits_for_the_session_gives_up_when_its_call_answers(
+        self, pool: Pool, sessions: Sessions
+    ) -> None:
+        """The stand is asked over several stands again while its session is busy: that call's thread waits no
+        longer than the call, then runs nothing, so stale statements do not queue up on a slow stand."""
+        tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst"))
+        self.late_call(tools, "SELECT n FROM slow")
+        (first,) = self.stand_threads()
+        self.late_call(tools, "SELECT 42")
+        for thread in self.stand_threads() - {first}:
+            thread.join(1)
+            assert not thread.is_alive()  # its wait for the session ended with its call, not seconds later
+        sessions.going.set()
+        first.join(5)
+        assert [word for _thread, word in sessions.sent if word != "SET"] == ["BEGIN", "DECLARE", "FETCH", "ROLLBACK"]
+
+    def test_two_threads_that_find_no_session_open_one(
+        self, monkeypatch: pytest.MonkeyPatch, sessions: Sessions
+    ) -> None:
+        """The session opens in the turn too: two threads that found none used to open one each, and lose one."""
+
+        def slowly(**kwargs: object) -> Session:
+            time.sleep(0.2)  # long enough for the other thread to find no session either
+            return sessions.open(**kwargs)
+
+        monkeypatch.setattr("pg8000.native.Connection", slowly)
+        database = Database({"PGUSER": "app", "PGPASSFILE": os.devnull})
+        threads = [threading.Thread(target=database.query, args=("SELECT 1",)) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert sessions.opened == 1
 
 
 class TestSilentHost:
@@ -1155,7 +1413,7 @@ class TestSilentHost:
 
 
 class TestManyStands:
-    """stands: the same request on several stands in turn, each answering under its own label."""
+    """stands: the same request on several stands at once, each answering under its own label."""
 
     @pytest.fixture
     def pool(self, tmp_path: Path, unreachable_env: dict[str, str]) -> Pool:
@@ -1397,7 +1655,8 @@ class TestEntry:
 
 
 # Every request to the model carries tools/list, and local models run with small contexts.
-SIZE_LIMITS = {("en", "single"): 4700, ("ru", "single"): 5100, ("en", "stands"): 7800, ("ru", "stands"): 8000}
+# db_health adds one catalog tool, including stand/database/schema selectors.
+SIZE_LIMITS = {("en", "single"): 5100, ("ru", "single"): 5500, ("en", "stands"): 8400, ("ru", "stands"): 8700}
 
 
 @pytest.mark.parametrize(("language", "mode"), list(SIZE_LIMITS))
@@ -1484,3 +1743,30 @@ def test_a_long_list_of_schemas_is_cut_with_its_count() -> None:
     assert listed(names[:3]) == "s00, s01, s02"
     assert listed(names) == f"{', '.join(names[:15])} and more, 20 in all: list_schemas shows them"
     assert listed([]) == "none"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"stand": "dev1", "database": "orders"}, [(None, ["billing", "shipping"])]),
+        ({"stand": "dev1", "database": "orders", "schema": "shipping"}, [("shipping", ["billing", "shipping"])]),
+        ({"stand": "ift1"}, [(None, None)]),
+        ({"stand": "ift1", "schema": "other"}, [("other", None)]),
+        ({"stand": "dev1"}, [(None, None), (None, ["billing", "shipping"])]),
+    ],
+)
+def test_health_routes_catalog_scope(
+    tools: dict[str, Tool], monkeypatch: pytest.MonkeyPatch, arguments: dict[str, str], expected: list[Any]
+) -> None:
+    calls: list[Any] = []
+
+    def report(database: Database, schema: Any = None, schemas: Any = None) -> list[str]:  # noqa: ARG001
+        calls.append((schema, schemas))
+        return ["health evidence"]
+
+    monkeypatch.setattr(stand_tools, "db_health", report)
+    text = tools["db_health"].call(arguments)
+    assert "health evidence" in text
+    assert text.startswith(arguments["stand"] + " / ")
+    assert calls == expected
+    assert db.deadline() is None

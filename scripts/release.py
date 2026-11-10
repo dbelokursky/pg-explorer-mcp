@@ -43,6 +43,8 @@ REQUIRED = (
     "qwen-extension.json",
     "pg-explorer-mcp-context.md",
     "commands/pg/setup.md",
+    "commands/pg/diagram.md",
+    "commands/pg/import.md",
     "README.md",
     "README.ru.md",
     "docs/role.sql",

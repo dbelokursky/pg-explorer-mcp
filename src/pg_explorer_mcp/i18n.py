@@ -98,6 +98,52 @@ def _plural_form(language: str, count: int) -> str:
 
 
 EN: dict[str, str] = {
+    "tool.db_health.title": "Database health",
+    "tool.db_health.description": (
+        "First-pass catalog diagnostics: sizes, maintenance, buffers, index candidates and sequence headroom. "
+        "No monitoring grants or extensions. Findings are evidence, not a diagnosis; unavailable checks are "
+        "reported."
+    ),
+    "health.intro": (
+        "Catalog diagnostics: evidence for investigation, not a complete diagnosis or a database health guarantee."
+    ),
+    "health.scope": (
+        "Scope: permitted relations, schema={schema}; physical partition leaves separately, no parent totals."
+    ),
+    "health.limits": (
+        "Cumulative counters: object reset dates and observation windows may be unknown; uptime is not their "
+        "age. track_counts=off makes usage conclusions unreliable. Replica activity is local. NULL means "
+        "unknown, not zero. No bloat estimate or automatic repair."
+    ),
+    "health.checks": (
+        "Checks (ok=collected, limited=more rows, unavailable=failed, not_completed=unfinished; "
+        "not a health verdict): {checks}"
+    ),
+    "health.context": "Collection context:",
+    "health.cache": (
+        "Buffer counters (heap/index separately; excludes OS cache and TOAST; no traffic gives NULL ratio):"
+    ),
+    "health.maintenance": (
+        "Maintenance (largest dead estimates first; old/NULL timestamps alone do not prove a problem):"
+    ),
+    "health.unused": (
+        "Index candidates with no observed scans (check workload, replicas and dependencies before considering "
+        "removal):"
+    ),
+    "health.duplicates": (
+        "Equivalent index candidates (protected indexes may enforce constraints or replica identity; sizes are "
+        "not reclaimable-space estimates):"
+    ),
+    "health.sequences": (
+        "Sequence headroom (least known headroom first; unknown values counted; "
+        "cached values are conservative; CYCLE is not exhaustion):"
+    ),
+    "health.sizes": "Largest physical relations (table includes TOAST; indexes reported separately):",
+    "health.empty": "  No matching objects in this scope; this does not establish database health.",
+    "health.more": "  Showing {limit} entries; more exist. Narrow the schema to inspect further.",
+    "health.unavailable": "  Check unavailable (SQLSTATE {code}); other checks continue.",
+    "health.budget": "  Query time budget exhausted; this and remaining checks were not completed.",
+    "health.disconnected": "  Database unavailable; this and remaining checks were not completed.",
     "server.instructions": (
         "Read-only access to one PostgreSQL database: nothing can be inserted, changed or deleted through it, "
         "so decline such requests instead of asking the user to confirm them. Call status first: it shows "
@@ -275,6 +321,9 @@ EN: dict[str, str] = {
     "db.settings_invalid": (
         "Connection settings are invalid: {error}. Fix the env block of the pg server entry in the agent settings."
     ),
+    "db.no_os_user": (
+        "PGUSER is not set and the OS user name is not available either: {error}. Set PGUSER to the role to log in as."
+    ),
     "db.bad_sslmode": "PGSSLMODE={value!r} is not one of {choices}",
     "db.not_a_number": "{name}={value!r} is not a number",
     "db.ports_mismatch": (
@@ -282,6 +331,7 @@ EN: dict[str, str] = {
     ),
     "db.every_host_failed": "None of the hosts let the login in. {failures}",
     "db.lost": "Lost the connection to {target}: {error}",
+    "db.busy": "{target} is still running a statement of an earlier call that ran out of time; ask again.",
     "db.session_setup": "Connected, but could not set up a read-only session: {error}",
     "db.password_unset": "the server asks for a password and none is set",
     "db.password": (
@@ -451,7 +501,8 @@ EN: dict[str, str] = {
     "stands.bad_number": "stand connection {name} in {path} has {option}={value!r}, not a number, skipped",
     "stands.bad_hosts": "stand connection {name} in {path}: {problem}, skipped",
     "stands.none_found": (
-        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings"
+        "PG_EXPLORER_MCP_STANDS is set, but no stands were found in {files}; working with the PG* settings; "
+        "install.py import brings the stands in from DBeaver, DataGrip or a pg_service.conf file"
     ),
     "stands.more_warnings": "... and {count} more problems in the stands registry",
     # compare_schema: one schema on two stands.
@@ -494,10 +545,18 @@ EN: dict[str, str] = {
         "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
     ),
     # install.py import
-    "install.help.import": "bring stand connections from DBeaver or a pg_service.conf file into pg-explorer-mcp",
-    "install.help.source": "where the connections come from: dbeaver or pg-service",
+    "install.help.import": (
+        "bring stand connections from DBeaver, DataGrip or a pg_service.conf file into pg-explorer-mcp"
+    ),
+    "install.help.source": (
+        "where the connections come from: dbeaver, datagrip (and the other JetBrains IDEs) or pg-service"
+    ),
     "install.help.file": "the pg_service.conf file to read (for pg-service)",
     "install.help.workspace": "DBeaver's folder with data-sources.json (default: the usual place for this OS)",
+    "install.help.project": (
+        "for datagrip: a JetBrains project to read as well (always read: the global data sources of the IDEs "
+        "and DataGrip's projects in ~/DataGripProjects)"
+    ),
     "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
     "install.help.prune": "with --write: replace the registry instead of adding to it",
     "install.help.stand_pattern": (
@@ -512,6 +571,8 @@ EN: dict[str, str] = {
     "import.no_user": "no user: pg-explorer-mcp reads a schema with the login of the same name",
     "import.no_stand": "no stand: the pattern matched nothing, and the name has no Latin letters to be one",
     "import.bad_name": "{part!r} cannot be a part of a section name (letters, digits, _ $ - only)",
+    "import.ssh_tunnel": "through an SSH tunnel via {server}: pg-explorer-mcp opens no tunnels",
+    "import.ssh_tunnel_unnamed": "through an SSH tunnel: pg-explorer-mcp opens no tunnels",
     "import.reading": "reading {source}",
     "import.preview_header": "{count} connections go into {registry}:",
     "import.preview_named": "stand from the connection name",
@@ -530,8 +591,15 @@ EN: dict[str, str] = {
         "data-sources.json"
     ),
     "import.need_file": "pg-service needs the file to read: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "DBeaver connections found in {path}. Show what an import would bring into pg-explorer-mcp? [y/N] ",
-    "import.offer_hint": "To import them, run: {command}",
+    "import.no_datagrip": (
+        "no data sources of DataGrip or another JetBrains IDE were found on this machine; pass --project with "
+        "the folder of the project that has them"
+    ),
+    "import.found_dbeaver": "DBeaver connections found in {path}.",
+    "import.found_datagrip": "Data sources of DataGrip or another JetBrains IDE found in {paths}.",
+    "import.offer": "{where} Show what an import would bring into pg-explorer-mcp? [y/N] ",
+    "import.offer_hint": "To import them, run:",
+    "import.found": "{where} To see what an import would bring into pg-explorer-mcp: {command}",
     # install.py export
     "export.help": "add the stand connections to a database tool: DBeaver, DataGrip, pgAdmin, psql, VS Code",
     "export.help.tool": (
@@ -623,6 +691,50 @@ EN: dict[str, str] = {
 }
 
 RU: dict[str, str] = {
+    "tool.db_health.title": "Здоровье базы",
+    "tool.db_health.description": (
+        "Первичная диагностика по каталогу: размеры, обслуживание, буферы, кандидаты среди индексов и запас "
+        "sequences. Без мониторинговых ролей и расширений. Находки — факты для проверки, не диагноз; "
+        "недоступные проверки указаны."
+    ),
+    "health.intro": (
+        "Диагностика по каталогу: данные для расследования, не полный диагноз и не гарантия здоровья базы."
+    ),
+    "health.scope": (
+        "Область: разрешённые объекты, схема={schema}; физические партиции отдельно, без итогов по родителям."
+    ),
+    "health.limits": (
+        "Счётчики накопительные: даты сброса объектов и период наблюдения могут быть неизвестны; uptime не "
+        "равен их возрасту. При track_counts=off выводы об использовании ненадёжны. На реплике активность "
+        "локальная. NULL — неизвестно, не ноль. Без оценки bloat и автоматического исправления."
+    ),
+    "health.checks": (
+        "Сбор (ok=собрано, limited=есть ещё, unavailable=ошибка, not_completed=не завершено; "
+        "не оценка здоровья): {checks}"
+    ),
+    "health.context": "Контекст сбора:",
+    "health.cache": "Счётчики буферов (таблицы/индексы отдельно; без кеша ОС и TOAST; без обращений доля NULL):",
+    "health.maintenance": (
+        "Обслуживание (сначала наибольшие оценки dead tuples; старые/NULL даты сами по себе не доказывают проблему):"
+    ),
+    "health.unused": (
+        "Индексы без наблюдавшихся сканирований (перед рассмотрением удаления проверить нагрузку, реплики и "
+        "зависимости):"
+    ),
+    "health.duplicates": (
+        "Кандидаты с эквивалентными определениями (protected — ограничения или replica identity; размеры не "
+        "означают объём освобождаемого места):"
+    ),
+    "health.sequences": (
+        "Запас sequences (сначала наименьший известный запас; неизвестные посчитаны; "
+        "кеш даёт нижнюю оценку; CYCLE не означает исчерпание):"
+    ),
+    "health.sizes": "Крупнейшие физические объекты (таблица включает TOAST; индексы отдельно):",
+    "health.empty": "  Подходящих объектов в этой области нет; это не подтверждает здоровье базы.",
+    "health.more": "  Показано {limit} записей; есть другие. Уточните схему для дальнейшей проверки.",
+    "health.unavailable": "  Проверка недоступна (SQLSTATE {code}); остальные проверки продолжаются.",
+    "health.budget": "  Бюджет времени запросов исчерпан; эта и оставшиеся проверки не завершены.",
+    "health.disconnected": "  База недоступна; эта и оставшиеся проверки не завершены.",
     "server.instructions": (
         "Доступ только на чтение к одной базе PostgreSQL: добавить, изменить или удалить через него ничего "
         "нельзя, поэтому от таких просьб отказывайтесь, а не просите пользователя их подтвердить. Сначала "
@@ -817,6 +929,9 @@ RU: dict[str, str] = {
     "db.settings_invalid": (
         "Неверные настройки подключения: {error}. Исправьте блок env у сервера pg в настройках агента."
     ),
+    "db.no_os_user": (
+        "PGUSER не задан, а имя пользователя ОС узнать не удалось: {error}. Задайте PGUSER — роль для подключения."
+    ),
     "db.bad_sslmode": "PGSSLMODE={value!r} — не один из вариантов: {choices}",
     "db.not_a_number": "{name}={value!r} — не число",
     "db.ports_mismatch": (
@@ -824,6 +939,7 @@ RU: dict[str, str] = {
     ),
     "db.every_host_failed": "Ни один из хостов не пустил. {failures}",
     "db.lost": "Соединение с {target} потеряно: {error}",
+    "db.busy": "{target} ещё выполняет запрос прошлого вызова, которому не хватило времени; спросите ещё раз.",
     "db.session_setup": "Подключение есть, но включить сессию только на чтение не удалось: {error}",
     "db.password_unset": "сервер просит пароль, а он не задан",
     "db.password": (
@@ -1003,7 +1119,8 @@ RU: dict[str, str] = {
     "stands.bad_number": "у подключения {name} в {path} {option}={value!r} — не число, пропущено",
     "stands.bad_hosts": "у подключения {name} в {path}: {problem}, пропущено",
     "stands.none_found": (
-        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*"
+        "PG_EXPLORER_MCP_STANDS задана, но в {files} не нашлось ни одного стенда; работаю по переменным PG*; "
+        "стенды из DBeaver, DataGrip или файла pg_service.conf переносит install.py import"
     ),
     "stands.more_warnings": "... и ещё проблем в реестре стендов: {count}",
     "tool.compare_schema.title": "Сравнить схему",
@@ -1046,10 +1163,16 @@ RU: dict[str, str] = {
         "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
         "раньше"
     ),
-    "install.help.import": "перенести подключения к стендам из DBeaver или файла pg_service.conf в pg-explorer-mcp",
-    "install.help.source": "откуда брать подключения: dbeaver или pg-service",
+    "install.help.import": (
+        "перенести подключения к стендам из DBeaver, DataGrip или файла pg_service.conf в pg-explorer-mcp"
+    ),
+    "install.help.source": "откуда брать подключения: dbeaver, datagrip (и другие IDE JetBrains) или pg-service",
     "install.help.file": "файл pg_service.conf, который читать (для pg-service)",
     "install.help.workspace": "папка DBeaver с data-sources.json (по умолчанию — обычное место для этой ОС)",
+    "install.help.project": (
+        "для datagrip: ещё и этот проект JetBrains (читаются всегда: глобальные источники данных IDE "
+        "и проекты DataGrip в ~/DataGripProjects)"
+    ),
     "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
     "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
     "install.help.stand_pattern": (
@@ -1064,6 +1187,8 @@ RU: dict[str, str] = {
     "import.no_user": "нет пользователя: pg-explorer-mcp читает схему под одноимённой учёткой",
     "import.no_stand": "нет стенда: шаблон ничего не нашёл, а в имени нет латинских букв, чтобы стать им",
     "import.bad_name": "{part!r} не годится в имя секции (только буквы, цифры, _ $ -)",
+    "import.ssh_tunnel": "через SSH-туннель на {server}: pg-explorer-mcp туннелей не поднимает",
+    "import.ssh_tunnel_unnamed": "через SSH-туннель: pg-explorer-mcp туннелей не поднимает",
     "import.reading": "читаю {source}",
     "import.preview_header": "в {registry} попадут подключения: {count}",
     "import.preview_named": "стенд из имени подключения",
@@ -1081,8 +1206,15 @@ RU: dict[str, str] = {
         "подключения DBeaver на этой машине не найдены; передайте --workspace с папкой, где лежит data-sources.json"
     ),
     "import.need_file": "pg-service нужен файл: install.py import pg-service ~/.pg_service.conf",
-    "import.offer": "Найдены подключения DBeaver в {path}. Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
-    "import.offer_hint": "Чтобы перенести их, выполните: {command}",
+    "import.no_datagrip": (
+        "источники данных DataGrip и других IDE JetBrains на этой машине не найдены; передайте --project с папкой "
+        "проекта, где они есть"
+    ),
+    "import.found_dbeaver": "Найдены подключения DBeaver в {path}.",
+    "import.found_datagrip": "Найдены источники данных DataGrip и других IDE JetBrains в {paths}.",
+    "import.offer": "{where} Показать, что импорт перенесёт в pg-explorer-mcp? [y/N] ",
+    "import.offer_hint": "Чтобы перенести их, выполните:",
+    "import.found": "{where} Посмотреть, что импорт перенесёт в pg-explorer-mcp: {command}",
     "export.help": (
         "добавить подключения к стендам в инструмент работы с БД: DBeaver, DataGrip, pgAdmin, psql, VS Code"
     ),

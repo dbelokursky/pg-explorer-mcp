@@ -1,4 +1,4 @@
-"""Import of stand connections from DBeaver and pg_service.conf: reading, the plan, the preview, writing."""
+"""Import of stand connections from DBeaver, DataGrip and pg_service.conf: reading, the plan, the preview, writing."""
 
 from __future__ import annotations
 
@@ -8,18 +8,21 @@ import re
 import stat
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape, quoteattr
 
 import pytest
 
-from pg_explorer_mcp import imports
+from pg_explorer_mcp import exports, imports
 from pg_explorer_mcp.aes import encrypt_cbc
 from pg_explorer_mcp.db import read_pgpass
 from pg_explorer_mcp.imports import (
     Connection,
     ImportRefusedError,
     compile_pattern,
+    jdbc_address,
     plan,
     preview,
+    read_datagrip,
     read_dbeaver,
     read_pg_service,
     stand_from_name,
@@ -59,7 +62,14 @@ def dbeaver_workspace(
 
 
 def postgres(
-    name: str, host: str, database: str, *, folder: str = "", user: str | None = None, port: str = "5432"
+    name: str,
+    host: str,
+    database: str,
+    *,
+    folder: str = "",
+    user: str | None = None,
+    port: str = "5432",
+    handlers: dict[str, object] | None = None,
 ) -> dict[str, object]:
     configuration: dict[str, object] = {
         "host": host,
@@ -69,6 +79,8 @@ def postgres(
     }
     if user:
         configuration["user"] = user
+    if handlers:
+        configuration["handlers"] = handlers
     entry: dict[str, object] = {
         "provider": "postgresql",
         "driver": "postgres-jdbc",
@@ -78,6 +90,131 @@ def postgres(
     if folder:
         entry["folder"] = folder
     return entry
+
+
+def ssh_tunnel(host: str = "bastion.example", port: object = 22, **changes: object) -> dict[str, object]:
+    """DBeaver's SSH tunnel among the network handlers of a connection, as DBeaver writes it with the sshj client."""
+    handler: dict[str, object] = {
+        "type": "TUNNEL",
+        "enabled": True,
+        "save-password": True,
+        "properties": {
+            "host": host,
+            "port": port,
+            "authType": "PUBLIC_KEY",
+            "keyPath": "~/.ssh/id_ed25519",
+            "implementation": "sshj",
+            "bypassHostVerification": False,
+            "localHost": "",
+            "remoteHost": "",
+        },
+    }
+    handler.update(changes)
+    return handler
+
+
+def ssh_properties(config: str, *, enabled: bool = True, local_port: str = "") -> str:
+    """ssh-properties of a data source in dataSources.local.xml the way the IDEs write it now, PyCharm 2021.2 and
+    DataGrip 2025.3 alike: the SSH configuration by its id, and the local port of the tunnel when one is fixed."""
+    port = f"        <local-port>{local_port}</local-port>\n" if local_port else ""
+    return (
+        "      <ssh-properties>\n"
+        f"        <enabled>{str(enabled).lower()}</enabled>\n"
+        f"        <ssh-config-id>{config}</ssh-config-id>\n"
+        f"{port}"
+        "      </ssh-properties>\n"
+    )
+
+
+OLD_SSH_PROPERTIES = (  # an IDE before SSH configurations wrote the server in place
+    "      <ssh-properties>\n"
+    "        <enabled>true</enabled>\n"
+    "        <proxy-host>old-bastion.example</proxy-host>\n"
+    "        <proxy-port>2222</proxy-port>\n"
+    "        <local-port>5432</local-port>\n"
+    "        <secret-storage>session</secret-storage>\n"
+    "        <user>deploy</user>\n"
+    "        <use-password>true</use-password>\n"
+    "        <auth-type>PASSWORD</auth-type>\n"
+    "      </ssh-properties>\n"
+)
+
+
+def ssh_configs(folder: Path, configs: dict[str, str], *, application: bool = False) -> Path:
+    """sshConfigs.xml with an SSH configuration per id and its server, host:port or a host without a port.
+
+    A project keeps there the configurations only it sees, an IDE in its options folder those it shares
+    between projects (application), under another root.
+    """
+    entries = ""
+    for identifier, server in configs.items():
+        host, _, port = server.partition(":")
+        port_attribute = f' port="{port}"' if port else ""
+        entries += (
+            f'      <sshConfig authType="OPEN_SSH" host="{host}" id="{identifier}"{port_attribute} '
+            'nameFormat="DESCRIPTIVE" username="deploy" useOpenSSHConfig="true" />\n'
+        )
+    head, root = ("<application>", "application") if application else ('<project version="4">', "project")
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "sshConfigs.xml").write_text(
+        f'<?xml version="1.0" encoding="UTF-8"?>\n{head}\n  <component name="SshConfigs">\n    <configs>\n'
+        f"{entries}    </configs>\n  </component>\n</{root}>\n",
+        encoding="utf-8",
+    )
+    return folder / "sshConfigs.xml"
+
+
+def data_source(
+    name: str,
+    url: str,
+    *,
+    uuid: str,
+    group: str = "",
+    driver: str = "postgresql",
+    user: str | None = None,
+    ssh: str = "",
+) -> tuple[str, str]:
+    """One data source the way a JetBrains IDE writes it: its part of dataSources.xml and of dataSources.local.xml.
+
+    The local part keeps the password in the IDE's store, as every data source does (secret-storage), and
+    has a user-name only when the data source has a user, and the ssh-properties given, as the IDE puts them last.
+    """
+    group_attribute = f" group={quoteattr(group)}" if group else ""
+    shared = (
+        f'    <data-source source="LOCAL" name={quoteattr(name)}{group_attribute} uuid={quoteattr(uuid)}>\n'
+        f"      <driver-ref>{driver}</driver-ref>\n"
+        "      <synchronize>true</synchronize>\n"
+        f"      <jdbc-url>{escape(url)}</jdbc-url>\n"
+        "      <working-dir>$ProjectFileDir$</working-dir>\n"
+        "    </data-source>\n"
+    )
+    user_name = f"      <user-name>{escape(user)}</user-name>\n" if user is not None else ""
+    local = (
+        f"    <data-source name={quoteattr(name)} uuid={quoteattr(uuid)}>\n"
+        '      <database-info product="PostgreSQL" version="16.4" dbms="POSTGRES" />\n'
+        "      <secret-storage>master_key</secret-storage>\n"
+        f"{user_name}"
+        f"{ssh}"
+        "    </data-source>\n"
+    )
+    return shared, local
+
+
+def datagrip_files(folder: Path, sources: list[tuple[str, str]], *, application: bool = False) -> Path:
+    """dataSources.xml and dataSources.local.xml in a folder: a project's .idea, or an IDE's options folder.
+
+    An IDE keeps its global data sources (application) under another root and component than a project does.
+    """
+    root, component = ("application", "dataSourceStorage") if application else ("project", "DataSourceManagerImpl")
+    head = '<?xml version="1.0" encoding="UTF-8"?>\n' + ("<application>" if application else '<project version="4">')
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, opening, part in (
+        ("dataSources.xml", f'<component name="{component}" format="xml" multifile-model="true">', 0),
+        ("dataSources.local.xml", '<component name="dataSourceStorageLocal">', 1),
+    ):
+        body = "".join(source[part] for source in sources)
+        (folder / name).write_text(f"{head}\n  {opening}\n{body}  </component>\n</{root}>\n", encoding="utf-8")
+    return folder
 
 
 class TestStandOf:
@@ -182,6 +319,31 @@ class TestDBeaver:
         assert (found["mixed"].host, found["mixed"].port) == ("h5,h6", "6544,6545")
         assert (found["shared port"].host, found["shared port"].port) == ("h7,h8", "6544")
 
+    def test_a_connection_through_an_ssh_tunnel_is_left_out_naming_its_ssh_server(self, tmp_path: Path) -> None:
+        """Its host is the database's as the SSH server sees it, here the server's own localhost."""
+        tls = {"type": "CONFIG", "enabled": True, "save-password": False, "properties": {"sslMode": "require"}}
+        folder = dbeaver_workspace(
+            tmp_path / ".dbeaver",
+            {
+                "pg-1": postgres("orders on dev7", "localhost", "orders", handlers={"ssh_tunnel": ssh_tunnel()}),
+                "pg-2": postgres(
+                    "crm on dev8",
+                    "dev8-db.example",
+                    "crm",
+                    handlers={"ssh_tunnel": ssh_tunnel(enabled=False), "postgre_ssl": tls},
+                ),
+            },
+            {"pg-1": {"user": "billing", "password": "s3cret"}, "pg-2": {"user": "crm", "password": "pw"}},
+        )
+        found = {c.name: c for c in read_dbeaver(folder)}
+        assert (found["orders on dev7"].tunnel, found["crm on dev8"].tunnel) == ("bastion.example:22", None)
+        result = plan(found.values(), PATTERN)
+        assert [target.name for target in result.targets] == ["dev8.crm.crm"]
+        assert result.passwords == {("dev8-db.example", "5432", "crm", "crm"): "pw"}  # none under localhost
+        assert [(c.name, reason) for c, reason in result.skipped] == [
+            ("orders on dev7", "through an SSH tunnel via bastion.example:22: pg-explorer-mcp opens no tunnels")
+        ]
+
     def test_credentials_in_secure_storage_or_absent_leave_the_logins_empty(self, tmp_path: Path) -> None:
         folder = dbeaver_workspace(tmp_path / ".dbeaver", {"pg-1": postgres("orders", "db", "orders")}, {})
         (folder / "credentials-config.json").write_bytes(os.urandom(48))  # not our key
@@ -204,6 +366,295 @@ class TestDBeaver:
         windows = tmp_path / "AppData" / "DBeaverData" / "workspace6" / "General" / ".dbeaver"
         dbeaver_workspace(windows, {}, {})
         assert imports.dbeaver_workspace({"APPDATA": str(tmp_path / "AppData")}, tmp_path) == windows
+
+
+class TestDataGrip:
+    def test_reads_postgres_data_sources_with_the_users_of_this_machine(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        datagrip_files(
+            project / ".idea",
+            [
+                data_source(
+                    "orders",
+                    "jdbc:postgresql://dev7-db.example:5432/orders",
+                    uuid="u1",
+                    group="Stands/dev7",
+                    user="billing",
+                ),
+                data_source("IFT2 shop", "jdbc:postgresql://ift2-db.example:6432/shop", uuid="u2", user="shop_ro"),
+                data_source(
+                    "legacy", "jdbc:oracle:thin:@ora.example:1521:XE", uuid="u3", driver="oracle.19", user="scott"
+                ),
+                data_source("nobody on dev8", "jdbc:postgresql://dev8-db.example:5432/orders", uuid="u4"),
+            ],
+        )
+        found = {c.name: c for c in read_datagrip(project)}
+        assert set(found) == {"orders", "IFT2 shop", "nobody on dev8"}  # Oracle is not PostgreSQL
+        orders = found["orders"]
+        assert (orders.source, orders.folder, orders.host, orders.port, orders.database, orders.user) == (
+            "DataGrip", "Stands/dev7", "dev7-db.example", "5432", "orders", "billing"
+        )  # fmt: skip
+        assert (found["IFT2 shop"].port, found["IFT2 shop"].user, found["IFT2 shop"].folder) == ("6432", "shop_ro", "")
+        assert found["nobody on dev8"].user == ""  # dataSources.local.xml names no user for it
+        assert all(c.password is None for c in found.values())  # the IDE keeps them in the keychain or KeePass
+        result = plan(found.values(), PATTERN)
+        assert [target.name for target in result.targets] == ["dev7.orders.billing", "ift2.shop.shop_ro"]
+        assert result.passwords == {}
+        assert [(c.name, reason) for c, reason in result.skipped] == [
+            ("nobody on dev8", "no user: pg-explorer-mcp reads a schema with the login of the same name")
+        ]
+        lines = preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")
+        assert (
+            lines[1]
+            == "  [dev7.orders.billing]  dev7-db.example:5432  no saved password: add a line to the password file"
+        )
+
+    def test_several_hosts_in_the_url_keep_their_ports(self, tmp_path: Path) -> None:
+        """pgjdbc takes h1:6544,h2:6545, and a host without a port of its own connects to 5432."""
+        datagrip_files(
+            tmp_path,
+            [
+                data_source("IFT-Caldera", "jdbc:postgresql://h1:6544,h2:6544/caldera_ift1", uuid="u1", user="testers"),
+                data_source(
+                    "mixed", "jdbc:postgresql://h5:6544,h6:6545/orders?targetServerType=primary", uuid="u2", user="bi"
+                ),
+                data_source("no port on dev9", "jdbc:postgresql://h7,h8:6544/orders", uuid="u3", user="bi"),
+                data_source("ipv6 on dev3", "jdbc:postgresql://[::1]:5433,[2001:db8::2]/orders", uuid="u4", user="bi"),
+            ],
+        )
+        found = {c.name: c for c in read_datagrip(tmp_path)}
+        assert (found["IFT-Caldera"].host, found["IFT-Caldera"].port) == ("h1,h2", "6544")
+        assert (found["mixed"].host, found["mixed"].port, found["mixed"].database) == ("h5,h6", "6544,6545", "orders")
+        assert (found["no port on dev9"].host, found["no port on dev9"].port) == ("h7,h8", "5432,6544")
+        assert (found["ipv6 on dev3"].host, found["ipv6 on dev3"].port) == ("::1,2001:db8::2", "5433,5432")
+        result = plan(found.values(), PATTERN)
+        assert [target.address for target in result.targets] == [
+            "h1:6544,h2:6544",
+            "h5:6544,h6:6545",
+            "h7:5432,h8:6544",
+            "::1:5433,2001:db8::2:5432",
+        ]
+        assert result.skipped == []
+
+    def test_the_url_may_hold_the_user_the_password_and_the_tls_settings(self, tmp_path: Path) -> None:
+        """A data source made by URL keeps the URL in plain text; pgjdbc lets its parameters override the fields."""
+        url = (
+            "jdbc:postgresql://dev3-db.example:5432/sales%5Fdb?user=reporter&password=p%3Aw+x"
+            "&sslmode=verify-full&sslrootcert=/etc/pg/ca.pem&currentSchema=sales"
+        )
+        datagrip_files(tmp_path, [data_source("by url", url, uuid="u1", user="field_user")])
+        (found,) = read_datagrip(tmp_path)
+        assert (found.database, found.user, found.password) == ("sales_db", "reporter", "p:w x")
+        assert found.options == {"sslmode": "verify-full", "sslrootcert": "/etc/pg/ca.pem"}
+        result = plan([found], PATTERN)
+        assert result.targets[0].options == {
+            "host": "dev3-db.example",
+            "sslmode": "verify-full",
+            "sslrootcert": "/etc/pg/ca.pem",
+        }
+        assert result.passwords == {("dev3-db.example", "5432", "sales_db", "reporter"): "p:w x"}
+        assert "p:w x" not in "\n".join(preview(result, tmp_path / "stands.conf", tmp_path / "pgpass"))
+
+    def test_a_url_without_a_host_or_a_database_is_left_out(self, tmp_path: Path) -> None:
+        datagrip_files(
+            tmp_path,
+            [
+                data_source("server on dev5", "jdbc:postgresql://dev5-db.example:5432/", uuid="u1", user="bi"),
+                data_source("bare on dev6", "jdbc:postgresql:orders", uuid="u2", user="bi"),
+            ],
+        )
+        result = plan(read_datagrip(tmp_path), PATTERN)
+        assert [(c.name, reason) for c, reason in result.skipped] == [
+            ("server on dev5", "no database"),
+            ("bare on dev6", "no host"),
+        ]
+
+    def test_the_data_sources_an_export_wrote_are_not_brought_back(self, tmp_path: Path) -> None:
+        item = exports.Connection("dev7", "orders", "billing", "dev7-db.example", 5432, "orders", "billing", None)
+        idea = tmp_path / ".idea"
+        idea.mkdir()
+        for name, text in zip(("dataSources.xml", "dataSources.local.xml"), exports.datagrip([item])):
+            (idea / name).write_text(text, encoding="utf-8")
+        assert read_datagrip(tmp_path) == []
+        own = datagrip_files(
+            tmp_path / "own",
+            [data_source("dev7 / orders / billing", "jdbc:postgresql://db/orders", uuid="u1", user="billing")],
+        )
+        for name in ("dataSources.xml", "dataSources.local.xml"):  # the user's own of the same name, next to ours
+            merged = exports.merge_xml(idea / name, (own / name).read_text(encoding="utf-8"))
+            (idea / name).write_text(merged, encoding="utf-8")
+        assert [(c.name, c.host) for c in read_datagrip(tmp_path)] == [("dev7 / orders / billing", "db")]
+
+    def test_a_data_source_through_an_ssh_tunnel_is_left_out_naming_its_ssh_server(self, tmp_path: Path) -> None:
+        """A newer IDE names an SSH configuration: one only the project sees, in its .idea/sshConfigs.xml, or one
+        the IDE shares between projects; an older IDE wrote the server in place. A tunnel switched off counts
+        for nothing."""
+        idea = datagrip_files(
+            tmp_path / "project" / ".idea",
+            [
+                data_source(
+                    "orders on dev7", "jdbc:postgresql://localhost:5432/orders", uuid="u1", user="billing",
+                    ssh=ssh_properties("c1"),
+                ),
+                data_source(
+                    "shop on dev7", "jdbc:postgresql://10.0.0.5:5432/shop", uuid="u2", user="shop",
+                    ssh=ssh_properties("c2", local_port="15432"),
+                ),
+                data_source(
+                    "crm on dev7", "jdbc:postgresql://10.0.0.6/crm", uuid="u3", user="crm", ssh=ssh_properties("c3")
+                ),
+                data_source(
+                    "billing on dev8", "jdbc:postgresql://localhost/billing", uuid="u4", user="billing",
+                    ssh=OLD_SSH_PROPERTIES,
+                ),
+                data_source(
+                    "reports on dev9", "jdbc:postgresql://dev9-db.example/reports", uuid="u5", user="bi",
+                    ssh=ssh_properties("c1", enabled=False),
+                ),
+            ],
+        )  # fmt: skip
+        ssh_configs(idea, {"c1": "bastion.example:22"})
+        found = {c.name: c for c in read_datagrip(idea.parent, {"c2": "jump.example:2222"})}
+        assert {name: c.tunnel for name, c in found.items()} == {
+            "orders on dev7": "bastion.example:22",
+            "shop on dev7": "jump.example:2222",
+            "crm on dev7": "",  # a configuration neither has: the tunnel is known, its server is not
+            "billing on dev8": "old-bastion.example:2222",
+            "reports on dev9": None,
+        }
+        result = plan(found.values(), PATTERN)
+        assert [target.name for target in result.targets] == ["dev9.reports.bi"]
+        assert [(c.name, reason) for c, reason in result.skipped] == [
+            ("orders on dev7", "through an SSH tunnel via bastion.example:22: pg-explorer-mcp opens no tunnels"),
+            ("shop on dev7", "through an SSH tunnel via jump.example:2222: pg-explorer-mcp opens no tunnels"),
+            ("crm on dev7", "through an SSH tunnel: pg-explorer-mcp opens no tunnels"),
+            ("billing on dev8", "through an SSH tunnel via old-bastion.example:2222: pg-explorer-mcp opens no tunnels"),
+        ]
+        (idea / "sshConfigs.xml").write_text("<project", encoding="utf-8")  # a broken file costs a name, not the import
+        assert [c.tunnel for c in read_datagrip(idea)][:2] == ["", ""]
+
+    def test_the_global_data_sources_of_an_ide(self, tmp_path: Path) -> None:
+        options = datagrip_files(
+            tmp_path / "IntelliJIdea2026.2" / "options",
+            [
+                data_source("ift1 orders", "jdbc:postgresql://ift1-db:5432/orders", uuid="u1", user="billing"),
+                data_source(
+                    "ift2 orders", "jdbc:postgresql://localhost/orders", uuid="u2", user="billing",
+                    ssh=ssh_properties("c1"),
+                ),
+            ],
+            application=True,
+        )  # fmt: skip
+        ssh_configs(options, {"c1": "bastion.example:22"}, application=True)  # the IDE's own, next to its data sources
+        assert [(c.name, c.user, c.tunnel) for c in read_datagrip(options)] == [
+            ("ift1 orders", "billing", None),
+            ("ift2 orders", "billing", "bastion.example:22"),
+        ]
+
+    def test_the_ssh_configurations_the_ides_share_between_projects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")  # app_data: ~/.config, or XDG_CONFIG_HOME
+        env = {"XDG_CONFIG_HOME": str(tmp_path / "config")}
+        assert imports.jetbrains_ssh_configs(env, tmp_path) == {}
+        jetbrains = tmp_path / "config" / "JetBrains"
+        ssh_configs(
+            jetbrains / "DataGrip2025.3" / "options",
+            {"c1": "old.example:22", "c2": "jump.example:22"},
+            application=True,
+        )
+        ssh_configs(jetbrains / "DataGrip2026.2" / "options", {"c1": "bastion.example:2222"}, application=True)
+        ssh_configs(jetbrains / "PyCharm2026.2" / "options", {"c3": "pycharm.example"}, application=True)
+        broken = jetbrains / "IntelliJIdea2026.2" / "options"
+        broken.mkdir(parents=True)
+        (broken / "sshConfigs.xml").write_text("<application", encoding="utf-8")
+        ssh_configs(jetbrains / "Toolbox" / "options", {"c4": "toolbox.example:22"}, application=True)  # not an IDE
+        assert imports.jetbrains_ssh_configs(env, tmp_path) == {
+            "c1": "bastion.example:2222",  # the newest version's
+            "c2": "jump.example:22",  # kept by an older version only, it still names the server
+            "c3": "pycharm.example",  # no port written
+        }
+
+    def test_the_project_or_its_idea_folder_and_no_local_file(self, tmp_path: Path) -> None:
+        idea = datagrip_files(
+            tmp_path / ".idea", [data_source("orders", "jdbc:postgresql://db/orders", uuid="u1", user="billing")]
+        )
+        assert read_datagrip(tmp_path) == read_datagrip(idea)
+        (idea / "dataSources.local.xml").unlink()  # the users are this machine's: a fresh clone has none yet
+        assert [(c.name, c.user) for c in read_datagrip(tmp_path)] == [("orders", "")]
+
+    def test_the_folders_are_the_project_named_datagrips_projects_and_the_newest_global_ones(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")  # app_data: ~/.config, or XDG_CONFIG_HOME
+        env = {"XDG_CONFIG_HOME": str(tmp_path / "config")}
+        assert imports.datagrip_folders(env, tmp_path) == []
+        orders = [data_source("orders", "jdbc:postgresql://db/orders", uuid="u1", user="billing")]
+        jetbrains = tmp_path / "config" / "JetBrains"
+        for version in ("DataGrip2025.3", "DataGrip2026.2", "IntelliJIdea2026.1", "PyCharm2026.2"):
+            datagrip_files(jetbrains / version / "options", orders, application=True)
+        (jetbrains / "DataGrip2026.3" / "options").mkdir(parents=True)  # a new version without global data sources
+        (jetbrains / "PyCharm2026.2" / "options" / "dataSources.xml").unlink()
+        datagrip_files(tmp_path / "DataGripProjects" / "work" / ".idea", orders)
+        (tmp_path / "DataGripProjects" / "scratch").mkdir()  # no data sources of its own
+        assert imports.datagrip_folders(env, tmp_path) == [
+            tmp_path / "DataGripProjects" / "work" / ".idea",
+            jetbrains / "DataGrip2026.2" / "options",
+            jetbrains / "IntelliJIdea2026.1" / "options",
+        ]
+        code = tmp_path / "IdeaProjects" / "shop"
+        datagrip_files(code / ".idea", orders)
+        assert imports.datagrip_folders(env, tmp_path, code)[0] == code / ".idea"
+        named = imports.datagrip_folders(env, tmp_path, tmp_path / "DataGripProjects" / "work")
+        assert named[0] == tmp_path / "DataGripProjects" / "work" / ".idea"
+        assert len(named) == 3  # a project of DataGrip named again is read once
+        assert imports.datagrip_folders(env, tmp_path, tmp_path / "absent")[0] == tmp_path / "absent" / ".idea"
+
+    def test_a_folder_without_data_sources_or_a_broken_file_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ImportRefusedError, match=r"cannot read .*dataSources\.xml"):
+            read_datagrip(tmp_path)
+        idea = datagrip_files(tmp_path / ".idea", [])
+        (idea / "dataSources.local.xml").write_text("<project", encoding="utf-8")
+        with pytest.raises(ImportRefusedError, match=r"cannot read .*dataSources\.local\.xml"):
+            read_datagrip(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("url", "address"),
+    [
+        ("jdbc:postgresql://db:6432/orders", ("db", "6432", "orders", {})),
+        ("jdbc:postgresql://db/orders", ("db", "5432", "orders", {})),
+        ("jdbc:postgresql://db", ("db", "5432", "", {})),  # pgjdbc wants the slash; DataGrip always writes it
+        ("jdbc:postgresql://h1:6544,h2/orders", ("h1,h2", "6544,5432", "orders", {})),
+        ("jdbc:postgresql://[::1]:5433/orders", ("::1", "5433", "orders", {})),
+        ("jdbc:postgresql://db/orders?ApplicationName=a+b&ssl", ("db", "5432", "orders", {"ApplicationName": "a b"})),
+        ("jdbc:postgresql:///orders", ("", "5432", "orders", {})),  # no host: none is guessed
+        ("jdbc:postgresql:orders", ("", "5432", "", {})),
+        ("jdbc:mysql://db/orders", ("", "5432", "", {})),
+    ],
+)
+def test_jdbc_address(url: str, address: tuple[str, str, str, dict[str, str]]) -> None:
+    assert jdbc_address(url) == address
+
+
+@pytest.mark.parametrize(
+    ("handlers", "server"),
+    [
+        ({"ssh_tunnel": ssh_tunnel(port=22)}, "bastion.example:22"),
+        ({"ssh_tunnel": ssh_tunnel(port=22.0)}, "bastion.example:22"),  # once DBeaver has read the file and saved it
+        ({"ssh_tunnel": ssh_tunnel(port="2222")}, "bastion.example:2222"),
+        ({"ssh_tunnel": ssh_tunnel(port=None)}, "bastion.example"),
+        ({"ssh_tunnel": {"type": "TUNNEL", "enabled": True}}, ""),  # a tunnel that names no server
+        ({"ssh_tunnel": ssh_tunnel(enabled=False)}, None),
+        ({"postgre_ssl": {"type": "CONFIG", "enabled": True}}, None),  # TLS settings are a network handler too
+        (None, None),
+    ],
+)
+def test_dbeaver_tunnel(handlers: dict[str, object] | None, server: str | None) -> None:
+    configuration: dict[str, object] = {"host": "localhost", "port": "5432", "database": "orders"}
+    if handlers is not None:
+        configuration["handlers"] = handlers
+    assert imports.dbeaver_tunnel(configuration) == server
 
 
 class TestPgService:
@@ -287,6 +738,26 @@ class TestPlan:
         assert preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")[1] == (
             "  [dev7.orders.billing]  h1:6544,h2:6544"
         )
+
+    def test_a_connection_through_an_ssh_tunnel_is_left_out_and_takes_no_section(self, tmp_path: Path) -> None:
+        """Its host is the database's as the SSH server sees it, often the server's own localhost: its section would
+        point at the user's localhost, and its password would go into the password file under it."""
+        result = plan(
+            [
+                connection(name="orders via bastion on dev7", host="localhost", tunnel="bastion.example:22"),
+                connection(),  # the same stand, database and user, reached directly
+                connection(name="shop on dev7", host="", database="shop", tunnel=""),  # the tunnel is told first
+            ],
+            PATTERN,
+        )
+        assert [target.name for target in result.targets] == ["dev7.orders.billing"]
+        assert result.passwords == {("db.example", "5432", "orders", "billing"): "s3cret"}
+        assert preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")[-3:] == [
+            "left out: 2",
+            "  test: orders via bastion on dev7  through an SSH tunnel via bastion.example:22: "
+            "pg-explorer-mcp opens no tunnels",
+            "  test: shop on dev7  through an SSH tunnel: pg-explorer-mcp opens no tunnels",
+        ]
 
     def test_the_preview_never_shows_a_password(self, tmp_path: Path) -> None:
         result = plan(

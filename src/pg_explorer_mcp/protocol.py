@@ -96,7 +96,10 @@ class Server:
         except ValueError:
             return _encode(_error(None, PARSE_ERROR, "Parse error: the line is not valid JSON"))
         if isinstance(message, list):
-            # Batches exist only in revision 2025-03-26; answering them costs nothing.
+            # Batches exist only in revision 2025-03-26; answering them costs nothing. An empty
+            # batch is answered with one Invalid Request object, as JSON-RPC 2.0 prescribes.
+            if not message:
+                return _encode(_error(None, INVALID_REQUEST, "Invalid request: the batch is empty"))
             replies = [reply for reply in map(self.handle, message) if reply is not None]
             return _encode(replies) if replies else None
         reply = self.handle(message)

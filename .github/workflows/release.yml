@@ -87,6 +87,15 @@ jobs:
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.archive.outputs.version }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # the whole history, so merge-base can tell whether the tag sits on main
+      - name: the tag sits on main, so the release is of code merged there
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::The tag $GITHUB_REF_NAME is not on main: cut release tags from the merge commit in main."
+            exit 1
+          fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: pg-explorer-mcp-${{ needs.archive.outputs.version }}

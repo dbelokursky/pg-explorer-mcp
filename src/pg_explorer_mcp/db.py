@@ -13,13 +13,16 @@ from __future__ import annotations
 import contextlib
 import errno
 import getpass
+import math
 import os
 import socket
 import ssl
 import stat
 import sys
 import threading
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -61,6 +64,54 @@ class QueryFailedError(Exception):
         super().__init__(text)
         self.code = code
         self.server_message = server_message
+
+
+class OverdueError(Exception):
+    """The call this thread works for has answered without it, so nothing more is done for that call."""
+
+
+# For a thread that asks one stand of a call over several, when that call answers (time.monotonic());
+# None in the call's own thread. The call answers then without the stands still at work (ADR 0006).
+_deadline: ContextVar[float | None] = ContextVar("pg_mcp_deadline", default=None)
+# Only explicitly budgeted diagnostics shorten running statements. Multi-stand response deadlines
+# retain their existing behavior: the worker may finish its current statement after the response.
+_query_deadline: ContextVar[float | None] = ContextVar("pg_mcp_query_deadline", default=None)
+
+
+def answer_by(deadline: float) -> None:
+    """Work for a call that answers by this time (time.monotonic()), from now on in the current context.
+
+    Past it the call has answered without this thread, which may still be running a statement: the thread
+    takes no connection and starts no statement, a wait for a busy session ends, and rows that arrive
+    later count for no call.
+    """
+    _deadline.set(deadline)
+
+
+def deadline() -> float | None:
+    """When the call this context works for answers; None in the call's own thread."""
+    return _deadline.get()
+
+
+@contextlib.contextmanager
+def time_budget(seconds: float) -> Iterator[None]:
+    """Bound a series of queries, preserving any earlier caller's deadline."""
+    due = time.monotonic() + seconds
+    previous = deadline()
+    due = min(due, previous) if previous is not None else due
+    token = _deadline.set(due)
+    query_token = _query_deadline.set(due)
+    try:
+        yield
+    finally:
+        _query_deadline.reset(query_token)
+        _deadline.reset(token)
+
+
+def overdue() -> bool:
+    """Whether the call this context works for has answered already, without this thread."""
+    due = _deadline.get()
+    return due is not None and time.monotonic() >= due
 
 
 @dataclass
@@ -108,7 +159,12 @@ class Settings:
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Settings:
         """Read libpq-style settings; ValueError explains a bad value."""
-        user = env.get("PGUSER") or getpass.getuser()
+        user = env.get("PGUSER")
+        if not user:
+            try:
+                user = getpass.getuser()  # the libpq default: the name the server runs as
+            except (OSError, KeyError) as exc:  # no login name in the environment and no passwd entry either
+                raise ValueError(t("db.no_os_user", error=exc)) from exc
         database = env.get("PGDATABASE") or user
         sslmode = (env.get("PGSSLMODE") or "prefer").lower()
         if sslmode not in SSL_MODES:
@@ -157,13 +213,19 @@ class Settings:
 
 
 class Database:
-    """One lazily opened, read-only session that reconnects once if it drops."""
+    """One lazily opened, read-only session that reconnects once if it drops.
+
+    The session runs one transaction at a time. A call over several stands answers without a stand
+    that is slow, and that stand's thread goes on with its statement: the next call that needs the
+    session waits for the statement to end (ADR 0006).
+    """
 
     def __init__(self, env: Mapping[str, str] | None = None, counters: Counters | None = None) -> None:
         self._conn: pg8000.native.Connection | None = None
         self.settings: Settings | None = None
         self._config_error: str | None = None
         self._counters = counters or Counters()  # shared by all connections of a stands pool
+        self._lock = threading.Lock()  # held for a transaction, and for opening the session it runs in
         try:
             self.settings = Settings.from_env(environment.with_legacy_names(os.environ) if env is None else env)
         except ValueError as exc:
@@ -184,20 +246,21 @@ class Database:
 
     def query(self, sql: str, **params: Any) -> list[Sequence[Any]]:
         """Run exactly one statement in a transaction of its own; :name placeholders take values from params."""
-        for attempt in (1, 2):
-            conn = self._connection()
-            try:
-                conn.execute_simple(transaction_start(self.settings))
+        with self._turn():
+            for attempt in (1, 2):
+                conn = self._connection()
                 try:
-                    return _run_one_statement(conn, sql, params)
-                finally:
-                    conn.execute_simple("ROLLBACK")
-            except pg8000.exceptions.DatabaseError as exc:
-                raise _query_failed(exc) from exc
-            except (pg8000.exceptions.InterfaceError, OSError) as exc:
-                self.close()
-                if attempt == 2:
-                    raise DatabaseUnavailableError(self._lost(exc), host_down=True) from exc
+                    conn.execute_simple(transaction_start(self.settings))
+                    try:
+                        return _run_one_statement(conn, sql, params)
+                    finally:
+                        conn.execute_simple("ROLLBACK")
+                except pg8000.exceptions.DatabaseError as exc:
+                    raise _query_failed(exc) from exc
+                except (pg8000.exceptions.InterfaceError, OSError) as exc:
+                    self.close()
+                    if attempt == 2:
+                        raise DatabaseUnavailableError(self._lost(exc), host_down=True) from exc
         raise AssertionError("unreachable")
 
     def read_only(self, sql: str, max_rows: int, *, cursor: bool) -> tuple[list[str], list[Sequence[Any]], bool]:
@@ -208,30 +271,32 @@ class Database:
         With cursor=True the rows come through a cursor, never more than max_rows + 1,
         to learn whether more exist. Returns column names, rows and that flag.
         """
-        for attempt in (1, 2):
-            conn = self._connection()
-            try:
-                conn.execute_simple(transaction_start(self.settings))
+        with self._turn():
+            for attempt in (1, 2):
+                conn = self._connection()
                 try:
-                    if cursor:
-                        conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
-                        context = conn.execute_simple(f"FETCH FORWARD {int(max_rows) + 1} FROM {CURSOR_NAME}")
-                    else:
-                        context = conn.execute_unnamed(sql)
-                finally:
-                    conn.execute_simple("ROLLBACK")
-            except pg8000.exceptions.DatabaseError as exc:
-                raise _query_failed(exc) from exc
-            except (pg8000.exceptions.InterfaceError, OSError) as exc:
-                self.close()
-                if attempt == 2:
-                    raise DatabaseUnavailableError(self._lost(exc), host_down=True) from exc
-                continue
-            columns = [str(column["name"]) for column in context.columns or []]
-            rows = list(context.rows or [])
-            returned = rows[:max_rows]
-            self._counters.count(len(returned))
-            return columns, returned, len(rows) > max_rows
+                    conn.execute_simple(transaction_start(self.settings))
+                    try:
+                        if cursor:
+                            conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
+                            context = conn.execute_simple(f"FETCH FORWARD {int(max_rows) + 1} FROM {CURSOR_NAME}")
+                        else:
+                            context = conn.execute_unnamed(sql)
+                    finally:
+                        conn.execute_simple("ROLLBACK")
+                except pg8000.exceptions.DatabaseError as exc:
+                    raise _query_failed(exc) from exc
+                except (pg8000.exceptions.InterfaceError, OSError) as exc:
+                    self.close()
+                    if attempt == 2:
+                        raise DatabaseUnavailableError(self._lost(exc), host_down=True) from exc
+                    continue
+                columns = [str(column["name"]) for column in context.columns or []]
+                rows = list(context.rows or [])
+                returned = rows[:max_rows]
+                if not overdue():  # rows that arrive after the call has answered count for no call
+                    self._counters.count(len(returned))
+                return columns, returned, len(rows) > max_rows
         raise AssertionError("unreachable")
 
     def server_info(self) -> dict[str, str]:
@@ -250,6 +315,32 @@ class Database:
 
     def _lost(self, exc: Exception) -> str:
         return t("db.lost", target=self.describe_target(), error=exc)
+
+    @contextlib.contextmanager
+    def _turn(self) -> Iterator[None]:
+        """The session for one transaction, once the transaction another thread runs on it has ended.
+
+        That thread can only be a stand's that did not answer in time: its call answered without it, and
+        it is finishing its statement. The wait is no longer than an open socket waits for an answer, past
+        the statement timeout, and not past the end of the waiting thread's own call; a session busy for
+        longer than the socket waits is reported as such. A wait that the end of the call cuts short ends
+        with the call, though on Windows it may end a few milliseconds before time.monotonic() gets there:
+        the thread gives up, and the call names the stand among those that did not answer in time. The
+        session is opened in the turn too, so two threads never open two.
+        """
+        if overdue():
+            raise OverdueError
+        wait: float = socket_timeout(self.settings) if self.settings else SOCKET_TIMEOUT_S
+        due = deadline()
+        left = math.inf if due is None else due - time.monotonic()  # until the call answers
+        if not self._lock.acquire(timeout=max(0.0, min(wait, left))):
+            if left <= wait or overdue():
+                raise OverdueError
+            raise DatabaseUnavailableError(t("db.busy", target=self.describe_target()))
+        try:
+            yield
+        finally:
+            self._lock.release()
 
     def _connection(self) -> pg8000.native.Connection:
         if self._conn is None:
@@ -351,10 +442,17 @@ def transaction_start(settings: Settings | None) -> str:
     messages and carries its own limits.
     """
     statements = ["BEGIN TRANSACTION READ ONLY"]
-    if settings is not None:
-        statements.append(f"SET LOCAL statement_timeout = {int(settings.statement_timeout_ms)}")
-        if settings.search_path:
-            statements.append(f"SET LOCAL search_path = {_quote_ident(settings.search_path)}, public")
+    timeout = settings.statement_timeout_ms if settings is not None else 0
+    due = _query_deadline.get()
+    if due is not None:
+        remaining = int((due - time.monotonic()) * 1000)
+        if remaining <= 0:
+            raise OverdueError
+        timeout = min(timeout, remaining) if timeout > 0 else remaining
+    if settings is not None or due is not None:
+        statements.append(f"SET LOCAL statement_timeout = {timeout}")
+    if settings is not None and settings.search_path:
+        statements.append(f"SET LOCAL search_path = {_quote_ident(settings.search_path)}, public")
     return "; ".join(statements)
 
 

@@ -15,7 +15,6 @@ import datetime
 import json
 import os
 import shutil
-import uuid
 import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -29,9 +28,8 @@ from .clients import app_data
 from .db import pgpass_path
 from .i18n import plural, t
 from .imports import ImportRefusedError, dbeaver_workspace, read_dbeaver
-from .stands import EXPORT_MARKS, EXPORTED, Target, load_registry, registry_files, summarize
+from .stands import EXPORT_MARKS, EXPORTED, Target, export_uuid, load_registry, registry_files, summarize
 
-NAMESPACE = uuid.UUID("6f0f7a4e-2b43-4d0b-8a5e-3d1f2a9c7e10")  # stable ids: a re-export updates, never duplicates
 # This file and the ids of the connections keep the name pg-mcp: DBeaver and VS Code tie a user's own
 # settings of a connection to them, and a new name would make the next export start over (ADR 0007).
 DBEAVER_FILE = "data-sources-pg-mcp.json"  # DBeaver loads every data-sources*.json of a project
@@ -71,7 +69,7 @@ class Connection:
         return f"{self.stand}.{self.database}.{self.schema}"
 
     def uid(self) -> str:
-        return str(uuid.uuid5(NAMESPACE, self.key))
+        return export_uuid(self.key)
 
 
 def connections(env: Mapping[str, str], patterns: Sequence[str] = ("*",)) -> tuple[list[Connection], list[str]]:

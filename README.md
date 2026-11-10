@@ -14,7 +14,7 @@ An MCP server that gives an agent **read-only** access to a PostgreSQL database,
 query plans, and analysts can run their own `SELECT`s.
 Nothing can change data, structure or settings through this server.
 
-Built for GigaCode CLI and Qwen Code, and works with any MCP client that starts servers over stdio.
+Works with any MCP client that starts servers over stdio, such as Claude Code or Qwen Code.
 Runs on Python 3.9+ with nothing to install: the pg8000 driver ships inside the repository. Speaks
 English or Russian.
 
@@ -25,6 +25,7 @@ English or Russian.
 - [Try it on the demo database](#try-it-on-the-demo-database)
 - [Installation step by step](#installation-step-by-step)
 - [Usage](#usage)
+- [Catalog diagnostics](#catalog-diagnostics)
 - [Many stands](#many-stands)
 - [Group profiles](#group-profiles)
 - [Language](#language)
@@ -48,6 +49,7 @@ English or Russian.
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
 | `schema_diagram` | the data model as a Mermaid diagram the agent shows as a picture: the tables of a schema with their keys and foreign keys, or one table with its neighbours | all |
 | `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, columns, constraints, indexes | all |
+| `db_health` | catalog diagnostics: buffers, maintenance, index candidates, sequence headroom and sizes; no monitoring roles | `explore`, `analyst` |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
 | `run_select` | one read-only statement: `SELECT`, `WITH … SELECT`, `VALUES`, `TABLE`, `EXPLAIN`, `SHOW` | `analyst` |
@@ -56,21 +58,25 @@ The group's administrator picks the profile at installation: [details](#group-pr
 
 ## Quick start
 
-You need Python 3.9+, GigaCode CLI (or Qwen Code) and a database role from your DBA.
+You need Python 3.9+, Qwen Code (or another MCP client) and a database role from your DBA.
 
 ```bash
 git clone https://github.com/dbelokursky/pg-explorer-mcp.git
 cd pg-explorer-mcp
 export PGHOST=db.example.com PGDATABASE=app PGUSER=mcp_agent   # where the database is, which role
-python3 install.py --lang en                                     # register and check
-gigacode extensions link "$(pwd)"                                # context and the /pg:setup command
+python3 install.py --client qwen --lang en                       # register and check
+qwen extensions link "$(pwd)"                                    # context and the /pg:setup command
 ```
 
 Put the password into `~/.pgpass` ([how](#4-the-password-goes-into-the-password-file)), restart
-GigaCode and ask the agent: "Check the database connection".
+Qwen Code and ask the agent: "Check the database connection".
 
-There is a shorter way too: link the extension (`gigacode extensions link`), restart GigaCode and run
+There is a shorter way too: link the extension (`qwen extensions link`), restart Qwen Code and run
 `/pg:setup` in it. The agent finds Python, runs `install.py` and works through the hints itself.
+
+Already have the stand connections in DBeaver, DataGrip or `pg_service.conf`? `python3 install.py import dbeaver`
+(or `import datagrip`) shows what it would bring in, and `/pg:import` does the same through the agent:
+[many stands](#many-stands).
 
 ## Try it on the demo database
 
@@ -163,15 +169,14 @@ db.example.com:5432:app:mcp_agent:password-from-the-DBA
 ### 5. Register the server with the agent
 
 ```bash
-python3 install.py                              # GigaCode, profile explore, language from the system locale
-python3 install.py --profile analyst --lang en  # profile and language spelled out
-python3 install.py --client qwen                # Qwen Code instead of GigaCode
-py -3 install.py                                # Windows
+python3 install.py --client qwen                                  # Qwen Code, profile explore, language from the system locale
+python3 install.py --client qwen --profile analyst --lang en      # profile and language spelled out
+py -3 install.py --client qwen                                    # Windows
 ```
 
 What the script does:
 
-1. backs up the agent settings (`~/.gigacode/settings.json.bak-<date>`);
+1. backs up the agent settings (`~/.qwen/settings.json.bak-<date>`);
 2. adds the server `pg` to `mcpServers`: the Python that runs the script, the path to `run.py`, the
    `PG*` variables from the terminal (except `PGPASSWORD`), the profile and the language;
 3. starts the server the way the agent will, calls `status` and prints the answer. Exit code 0 means
@@ -179,7 +184,7 @@ What the script does:
 
 `python3 install.py --check` only starts the server and calls `status`; it changes nothing.
 
-This is the entry in `~/.gigacode/settings.json` after `install.py --profile analyst --lang en`:
+This is the entry in `~/.qwen/settings.json` after `install.py --client qwen --profile analyst --lang en`:
 
 ```json
 {
@@ -220,7 +225,7 @@ The agent then gets the tools of every entry, and the `status` of each names its
 
 | `--client` | Where the entry goes |
 |---|---|
-| `gigacode` (the default), `qwen` | `~/.gigacode/settings.json`, `~/.qwen/settings.json` |
+| `qwen` | `~/.qwen/settings.json` |
 | `vscode` | the user `mcp.json` of VS Code (GitHub Copilot agent mode), under `servers` |
 | `cursor` | `~/.cursor/mcp.json` |
 | `windsurf` | Windsurf, now Devin Desktop: `~/.config/devin/mcp_config.json`, or the older file where one is in use |
@@ -240,12 +245,12 @@ python3 install.py --client vscode --print    # only show the entry and where it
 `--print` suits a client this list lacks, or a file you would rather edit yourself. A file with comments
 is never rewritten: `install.py` prints what to add instead. Run at a terminal, `install.py` notices the
 other clients installed on this machine once it has registered the server and offers to add it there
-too. The extension (the context and the `/pg:` commands) exists for GigaCode CLI and Qwen Code only.
+too. The extension (the context and the `/pg:` commands) exists for Qwen Code only.
 
 ### 6. The extension
 
 ```bash
-gigacode extensions link /path/to/pg-explorer-mcp     # Qwen Code: qwen extensions link …
+qwen extensions link /path/to/pg-explorer-mcp
 ```
 
 The extension gives the agent a short context (where to start, never to ask for passwords in the chat,
@@ -255,7 +260,7 @@ drawing a data model and saving it next to the project.
 
 ### 7. Check
 
-Restart GigaCode so it starts the server with the new settings, and ask: "Check the database
+Restart the agent so it starts the server with the new settings, and ask: "Check the database
 connection". The agent calls `status` and tells you what it says.
 
 ## Usage
@@ -283,7 +288,7 @@ pg-explorer-mcp 0.8.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
-profile: analyst (status, list_tables, search_schema, describe_table, schema_diagram, sample_rows, explain_query, run_select)
+profile: analyst (status, list_tables, search_schema, describe_table, schema_diagram, db_health, sample_rows, explain_query, run_select)
 language: en
 query log: off
 database: connected to pg_mcp_demo as mcp_demo_agent, PostgreSQL 16.15
@@ -377,6 +382,131 @@ No readable table or view named 'salaries' in schema 'hr'. Call list_tables to s
 
 The last line is about the `hr` schema, which the role has no rights to: the tools show none of its tables.
 
+### Catalog diagnostics
+
+Ask "Check the database health" to call `db_health`. It takes an optional `schema`; with many stands,
+`stand` is required and `database` selects one database. Without it, the tool checks the stand's databases
+within one query budget. It is available in `explore` and `analyst`.
+
+**How to call it.** After updating, restart the MCP server (or the client that starts it). Ask the
+agent in plain language; it selects `db_health` and passes the arguments below. The stand, database
+and schema names are examples: substitute names from your configuration.
+
+| Request | Connection mode | `db_health` arguments |
+|---|---|---|
+| "Check the health of the connected database" | Single database | `{}` |
+| "Check the shop schema in the connected database" | Single database | `{"schema":"shop"}` |
+| "Check database health on dev1" | Many stands | `{"stand":"dev1"}` |
+| "Check the orders database on dev1" | Many stands | `{"stand":"dev1","database":"orders"}` |
+| "Check the billing schema in the orders database on dev1" | Many stands | `{"stand":"dev1","database":"orders","schema":"billing"}` |
+
+For an MCP client that lets you call tools directly, select `db_health` and supply the JSON arguments
+from the table. For example, the tool name and arguments of one call are:
+
+```json
+{
+  "name": "db_health",
+  "arguments": {"stand": "dev1", "database": "orders", "schema": "billing"}
+}
+```
+
+On a single-database connection, only `schema` is accepted. On a stand connection, `stand` is required;
+`database` and `schema` narrow the report. Use `status` and `list_schemas` to find configured stands and
+schemas. If the tool is missing, check the installed version (0.9.0 or newer) and profile in `status`:
+the `schema` profile does not offer it. Ask the administrator to select `explore` or `analyst` and restart
+the MCP server after changing its configuration.
+
+**How to read the result.** The first line records collection status for each check:
+
+| Status | Meaning |
+|---|---|
+| `ok` | The check ran; this does not mean the database is healthy. |
+| `limited` | More than five entries matched; the section shows only the first five. |
+| `unavailable[SQLSTATE]` | The check failed; the code identifies the database error, for example `42501` for insufficient privileges. |
+| `unavailable` | The database connection was unavailable. |
+| `not_completed` | The check did not finish, or was not started after the time budget or connection failure. |
+
+Sequence entries include `unknown_values_in_scope`: the count of sequences with unknown current values
+across the selected scope, including entries outside the first five. `state: no_sequence_privilege`
+means the current role cannot read the sequence value. If the report is truncated or a section says
+`limited`, repeat the call with a narrower `schema` or `database`.
+
+The report includes collection time, server version, primary/replica, `track_counts` and the database
+statistics reset time; heap/index buffer counters and hit ratios; estimated live/dead rows, changes
+since analyze and vacuum/analyze timestamps; indexes with no observed scans and equivalent index
+candidates; sequence headroom; and table/index sizes. Physical partition leaves are listed separately,
+without parent totals. Sizes include TOAST in the table component, not the table's indexes.
+
+These are leads for investigation, not proof of the cause of a slowdown or instructions to drop indexes.
+Counters may cover an unknown period, can be reset per object and describe local replica activity;
+uptime is not their age. A buffer miss can still hit the OS cache. NULL means unknown, not zero.
+The report does not estimate bloat, read query texts, scan application rows or perform repairs.
+
+Only readable relations are included; with schema-specific stand logins, the registry determines the
+schema scope, as for the other catalog tools. Sequence checks also include sequences owned by visible
+table columns. `docs/role.sql` does not grant sequence access: missing privileges appear explicitly.
+A DBA can optionally run `GRANT SELECT ON SEQUENCE app.orders_id_seq TO mcp_agent` for chosen sequences.
+Do not grant `pg_monitor` or `pg_read_all_stats`. Cached sequence values give a conservative headroom
+estimate; descending sequences and `CYCLE` are handled separately. Unused sequences have unknown values.
+
+Each section shows at most five objects and says when more exist. Sequence entries prioritize the
+least known headroom and report how many values are unknown in the selected scope. A compact status
+line precedes the details so truncation does not hide failed or unfinished checks. A denied or failed
+check leaves the other sections available. Queries share a 15-second budget (also capped by the configured per-statement
+timeout); connection and transport timeouts still apply. The normal response-size limit can further
+truncate a report. Narrow `schema` or `database` for detail. See [ADR 0009](docs/adr/0009-db-health.md).
+
+### Data model diagrams
+
+`schema_diagram` (and the `/pg:diagram` command of the extension) draws the structure of the database as a
+Mermaid `erDiagram`. The answer is text, and GitHub, GitLab, Obsidian, VS Code and agent chats show it as a
+picture.
+
+**What it can draw:**
+
+- **A whole schema** (`schema`): its tables, partitioned and foreign tables, the foreign keys among them, and
+  the tables of other schemas that this schema refers to. Tables of other schemas that refer to this one are
+  left out, so a table everybody refers to does not pull in the whole database.
+- **One table with its neighbours** (`table` and `depth` from 0 to 3, 1 by default): the tables within
+  that many foreign keys of it, in either direction.
+- **The same on a stand**: with [many stands](#many-stands) pass `stand` and `schema`; the first line of
+  the diagram is a `%%` comment saying stand / database / schema.
+
+**How much of each table:**
+
+| `columns` | What a table shows |
+|---|---|
+| `keys` (the default) | the key columns: `PK`, `FK`, `UK` |
+| `all` | every column, with its comment cut to 60 characters |
+| `none` | only the table name; the relationships stay |
+
+**What a relationship line means:**
+
+| Line | Foreign key |
+|---|---|
+| `}o--\|\|` | many to one, the key columns are `NOT NULL` |
+| `}o--o\|` | many to one, the key may be empty |
+| `\|o--\|\|`, `\|o--o\|` | one to one: the key is on the primary key or on unique columns |
+
+The relationship is labelled with the key columns.
+
+**When it does not fit.** An answer has a budget of 8000 characters (`PG_EXPLORER_MCP_MAX_RESPONSE_CHARS`).
+A diagram either fits whole or is not sent: first the columns are left out, then the keys, and a
+`%%` comment at the top says so. If even the tables and relationships do not fit, the answer says to draw a
+part of it with `table` and `depth`.
+
+**Names.** A table name with a dot, Cyrillic or a leading digit is put in quotes (`"hr.employees"`,
+`"заказы"`). A column name keeps letters, digits, `_` and `-`, and gets a `_` before a leading digit. A
+type is one word: `varchar(50)`, `timestamptz`, `numeric` without `(10,2)`. Cyrillic column names need
+Mermaid 11 or newer.
+
+**What it does not draw:** views (they have no keys), data (no row is read), defaults and indexes. For a
+column's exact type and the indexes of a table, ask for `describe_table`.
+
+To keep the picture, ask the agent to save it: `/pg:diagram` writes the block into `<schema>.md` (or the
+bare source into `<schema>.mmd`) next to the project, and `mmdc -i <schema>.mmd -o <schema>.svg` from
+mermaid-cli turns it into an SVG. The reasoning is in [ADR 0008](docs/adr/0008-schema-diagram.md).
+
 ### Limits
 
 | What | How much |
@@ -446,18 +576,21 @@ This registers `pg-stands` next to `pg`. `PG_EXPLORER_MCP_STANDS` switches stand
 patterns such as `dev*,ift2` take some. The check succeeds once the stands are found: a stand behind a
 VPN is reached only when a tool needs it.
 
-**Importing connections.** When the connections already live in DBeaver, or in a `pg_service.conf`
-file, let `install.py` bring them in:
+**Importing connections.** When the connections already live in DBeaver, in DataGrip or another
+JetBrains IDE with database tools, or in a `pg_service.conf` file, let `install.py` bring them in:
 
 ```bash
 python3 install.py import dbeaver            # a preview: what would go where; nothing is written
 python3 install.py import dbeaver --write    # write the registry and the password file, register pg-stands
+python3 install.py import datagrip           # DataGrip, IntelliJ IDEA, PyCharm and the other JetBrains IDEs
+python3 install.py import datagrip --project ~/IdeaProjects/shop   # and the data sources of a project
 python3 install.py import pg-service ~/.pg_service.conf --write
 ```
 
-The stand comes from the DBeaver folder, then the connection name, then the host, matched with the
-regular expression `(dev|ift)[-_ ]?\d+` (`--stand-pattern` changes it); a separator between the letters
-and the number is dropped, so `DEV-27` is the stand `dev27`. A connection the pattern matches nowhere
+The stand comes from the folder (DBeaver's folder, or the group of a JetBrains data source), then the
+connection name, then the host, matched with the regular expression `(dev|ift)[-_ ]?\d+`
+(`--stand-pattern` changes it); a separator between the letters and the number is dropped, so
+`DEV-27` is the stand `dev27`. A connection the pattern matches nowhere
 takes its own name as the stand, `IFT-Caldera` becoming `ift-caldera`, and the preview says so. The
 database is the connection's, from its URL first, and the section is named after its login: which
 schemas that login reads the import cannot know, so the server reads such a database as a whole through
@@ -474,6 +607,23 @@ a changed registry on its next call, so an import needs no restart; a registry f
 several hosts (`h1:6544,h2` with the port 6544, as DBeaver writes it, or a URL
 `jdbc:postgresql://h1:6544,h2:6544/db`) keeps them all, and the password file gets a line per host,
 since libpq matches a line against one host.
+
+`import datagrip` reads the global data sources of each JetBrains IDE, from its newest version, and
+DataGrip's projects in `~/DataGripProjects`; the other IDEs keep data sources in the projects of your
+code, and `--project <folder>` brings one of those in. A URL with several hosts
+(`jdbc:postgresql://h1:6544,h2:6545/db`) keeps them all, and a host without a port of its own gets 5432,
+as in the JDBC driver. The IDEs keep passwords in the system keychain or in KeePass, which the import
+never reads: the preview marks those logins, and their lines go into the password file by hand. A
+password, user or `sslmode` written in the URL itself is taken from there. Data sources that
+`install.py export datagrip` wrote are not brought back.
+
+A connection that DBeaver or a JetBrains IDE makes through an SSH tunnel is left out, and the preview
+says so, naming the SSH server when the tool's files do (for the IDEs, the SSH configuration in the
+project's `.idea/sshConfigs.xml` or in the IDE's settings): its host is the database's as the SSH server
+sees it, often `localhost`, and pg-explorer-mcp opens no tunnels. To query such a stand, open the tunnel
+yourself, say `ssh -N -L 15432:<database host>:5432 <SSH server>`, then add its section by hand with
+`host=localhost` and `port=15432`, and its line to the password file with the same host and port. A
+connection whose tunnel is switched off in the tool is brought in as usual.
 
 **Exporting connections to database tools.** The other way round, `install.py export` puts the stands
 into the tools you query them with yourself: a folder or group per stand, every connection logging in
@@ -600,7 +750,8 @@ saying so under its header, and the other stands still answer. Stands that answe
 matches, are folded into one line naming them, so the stand that has what was asked for stands out. The
 200 rows of `run_select` and the 100 matches of `search_schema` are shared among the stands, at least 10
 per stand, so the whole answer fits the budget. The call keeps to 25 of the client's 30 seconds: a stand
-that has not answered by then is named as such, and the agent asks about it in another call.
+that has not answered by then is named as such, and the agent asks about it in another call. If the stand is
+still running the query then, that call waits for it to end, no longer than the query timeout plus 5 seconds.
 
 `run_select` with `stands: dev*`, `schema: shop` and `SELECT count(*) FROM orders WHERE id = 123`:
 
@@ -623,7 +774,7 @@ and `status` with `stand` tries a second login when the server turned the first 
 `status` says why. At most 8 connections stay open (`PG_EXPLORER_MCP_MAX_CONNECTIONS`). A host that does not
 answer is given up after 10 seconds and not tried again for the rest of that call, whatever else the
 stand has on it; a second login of a database is tried only when the server answered and turned the
-first one down. The reasoning is in [ADR 0006](docs/adr/0006-stands.md) (in Russian).
+first one down. The reasoning is in [ADR 0006](docs/adr/0006-stands.md).
 
 ## Group profiles
 
@@ -632,7 +783,7 @@ The profile decides which tools the agent sees:
 | Profile | Tools | For |
 |---|---|---|
 | `schema` | `status`, `list_tables`, `search_schema`, `describe_table` | people who need the structure only: the agent sees no data rows at all |
-| `explore` | plus `sample_rows`, `explain_query` | developers; the default |
+| `explore` | plus `db_health`, `sample_rows`, `explain_query` | developers; the default |
 | `analyst` | plus `run_select` and `explain_query` with `ANALYZE` | analysts who need their own SQL |
 
 Set it at registration (`python3 install.py --profile schema`) or with `PG_EXPLORER_MCP_PROFILE` in the server's
@@ -658,7 +809,7 @@ translated; the language of the latter is set by the database's `lc_messages`.
 
 Either way, the model is asked to answer in the user's language. If your group's model picks tools less
 reliably from Russian descriptions, set `PG_EXPLORER_MCP_LANG=en`: it will still answer in Russian. The reasons
-behind this design are in [ADR 0004](docs/adr/0004-languages.md) (in Russian).
+behind this design are in [ADR 0004](docs/adr/0004-languages.md).
 
 ## Security
 
@@ -675,7 +826,7 @@ layers of defence, and each one holds even if the others miss something:
    `DELETE`, `MERGE`, `SELECT … INTO`, row locks and functions with side effects (`pg_terminate_backend`,
    `set_config`, `dblink`, `pg_sleep` and others), telling the model why.
 
-The full policy is in [ADR 0002](docs/adr/0002-read-only-sql-policy.md) (in Russian).
+The full policy is in [ADR 0002](docs/adr/0002-read-only-sql-policy.md).
 
 Everything the tools return goes into the model's context. With a local model inside your organisation
 the data stays there, but pick the profile by the task: `schema` shows no data at all.
@@ -769,7 +920,7 @@ Refused by the SQL check (2)
 
 The file lives on the user's machine, so it is a journal, not a tamper-proof audit. To audit data access,
 log on the PostgreSQL server (`pgaudit` or `log_statement`); the server's connections carry
-`application_name = 'pg-explorer-mcp'`. The reasoning is in [ADR 0005](docs/adr/0005-query-log.md) (in Russian).
+`application_name = 'pg-explorer-mcp'`. The reasoning is in [ADR 0005](docs/adr/0005-query-log.md).
 
 ## Settings
 
@@ -874,15 +1025,14 @@ you changed Python, the profile or the language.
   `~/.pg-mcp/` and earlier exports keep working.
 - An archive now unpacks into `pg-explorer-mcp/` rather than `pg-mcp/`. Run `install.py` from the new
   folder once: it rewrites the paths in the agent settings. Then link the extension again.
-- GigaCode keeps an extension linked before 0.8.0 in `~/.gigacode/extensions/pg-mcp` (Qwen Code in
-  `~/.qwen/extensions/pg-mcp`) and refuses a new link while that folder is there. Delete it first;
+- Qwen Code keeps an extension linked before 0.8.0 in `~/.qwen/extensions/pg-mcp` and refuses a new link while that folder is there. Delete it first;
   `install.py` names it when it finds it.
 - The server's connections now carry `application_name = 'pg-explorer-mcp'`: a DBA's filter on
   `pg-mcp` needs the new name.
 
 To remove, delete `pg` (and any `pg-<name>` entries) from `mcpServers` in the agent settings (backups of earlier settings sit next to
-the file), run `gigacode extensions uninstall pg-explorer-mcp` and delete the folder. An extension linked
-before 0.8.0 is removed by deleting `~/.gigacode/extensions/pg-mcp`.
+the file), run `qwen extensions uninstall pg-explorer-mcp` and delete the folder. An extension linked
+before 0.8.0 is removed by deleting `~/.qwen/extensions/pg-mcp`.
 
 ## FAQ
 
@@ -903,9 +1053,8 @@ a table PostgreSQL has never analyzed looks exactly like an empty one, so `list_
 **Which MCP protocol versions does it speak?** Revisions 2024-11-05 to 2025-11-25 (with the
 `initialize` handshake) and 2026-07-28 (without it).
 
-**Which clients is it checked with?** CI starts Qwen Code, the open-source base of GigaCode CLI, with the
-server registered by `install.py`: the client must connect to the server and see the extension. GigaCode
-CLI itself is not available outside companies, so it is checked by hand before a release.
+**Which clients is it checked with?** CI starts Qwen Code with the server registered by `install.py`: the
+client must connect to the server and see the extension.
 
 **Will another MCP client do?** Yes, any client that starts servers over stdio. `install.py --client`
 writes the entry for VS Code, Cursor, Windsurf, Cline, Roo Code, Continue, LM Studio, Claude Desktop and
@@ -919,7 +1068,7 @@ the server asks it to use the user's language. `PG_EXPLORER_MCP_LANG` sets the l
 
 Environment, checks, code layout and rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Decisions and
 their reasons are in [docs/adr/](docs/adr/), the version history is in [CHANGELOG.md](CHANGELOG.md).
-These documents are in Russian. How to report a vulnerability is in [SECURITY.md](SECURITY.md).
+The decisions are in English; CONTRIBUTING.md and the changelog are in Russian. How to report a vulnerability is in [SECURITY.md](SECURITY.md).
 
 ## License
 

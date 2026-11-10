@@ -121,8 +121,8 @@ class TestStructure:
         assert "database: connected" in text
         assert "read only = on" in text
         assert (
-            "profile: explore (status, list_tables, search_schema, describe_table, schema_diagram, sample_rows, "
-            "explain_query)"
+            "profile: explore (status, list_tables, search_schema, describe_table, schema_diagram, "
+            "db_health, sample_rows, explain_query)"
         ) in text
 
     def test_list_tables_shows_tables_views_estimates_and_comments(self, tools: dict[str, Tool]) -> None:

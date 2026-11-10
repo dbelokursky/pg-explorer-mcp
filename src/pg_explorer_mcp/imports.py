@@ -1,4 +1,4 @@
-"""Import of stand connections from DBeaver or pg_service.conf into the stands registry (ADR 0006).
+"""Import of stand connections from DBeaver, DataGrip or pg_service.conf into the stands registry (ADR 0006).
 
 The import never runs inside the server: install.py calls it, previews by default and writes
 only on request. Writing is all or nothing as far as two files allow: both are prepared in
@@ -14,18 +14,24 @@ import os
 import re
 import stat
 import sys
+import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import parse_qsl, unquote_plus
 
 from .aes import decrypt_cbc
+from .clients import app_data
 from .db import pgpass_path, split_hosts
 from .i18n import t
-from .stands import Target, exported_sections, parse_service_file, registry_files
+from .stands import Target, export_uuid, exported_sections, parse_service_file, registry_files
 
 # DBeaver encrypts credentials-config.json with this key unless the user turned on its secure storage.
 DBEAVER_KEY = bytes.fromhex("babb4a9f774ab853c96c2d653dfe544a")
 DBEAVER_PROVIDER = "postgresql"
+DATAGRIP_DRIVER = "postgresql"  # the driver-ref of a PostgreSQL data source in the IDEs of JetBrains
+JDBC_URL = re.compile(r"jdbc:postgresql://([^/?]*)/?([^?]*)\??(.*)", re.DOTALL)  # hosts, database, parameters
+_IDE_FOLDER = re.compile(r"([A-Za-z]+)(\d{4})\.(\d+)")  # the settings of one version of an IDE: DataGrip2026.2
 DEFAULT_STAND_PATTERN = r"(dev|ift)[-_ ]?\d+"  # letters, then a number, with or without a separator between
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")  # what a part of a stand.database.schema section may hold
 _SEPARATORS = re.compile(r"[-_ ]+")  # what a stand the pattern found loses: DEV-27 is the stand dev27
@@ -50,6 +56,7 @@ class Connection:
     user: str
     password: str | None
     options: Mapping[str, str] = field(default_factory=dict)  # sslmode and the like
+    tunnel: str | None = None  # through an SSH tunnel: the SSH server, or "" when the source does not name it
 
     @property
     def endpoints(self) -> list[tuple[str, str]]:
@@ -114,6 +121,7 @@ def read_dbeaver(folder: Path) -> list[Connection]:
                 database=database,
                 user=str(saved.get("user") or configuration.get("user") or ""),
                 password=saved.get("password") or None,
+                tunnel=dbeaver_tunnel(configuration),
             )
         )
     return connections
@@ -150,12 +158,14 @@ def dbeaver_address(configuration: Mapping[str, object]) -> tuple[str, str, str]
     database = (match.group(2) if match else "") or database
     if not pairs:
         return "", port or "5432", database
-    numbers = [number for _, number in pairs]
-    return ",".join(name for name, _ in pairs), numbers[0] if len(set(numbers)) == 1 else ",".join(numbers), database
+    return (*_hosts_and_ports(pairs), database)
 
 
 def _endpoints(text: str, default_port: str) -> list[tuple[str, str]]:
-    """The host:port pairs of a list such as "h1:6544,h2": a host without a port of its own takes the default."""
+    """The host:port pairs of a list such as "h1:6544,h2": a host without a port of its own takes the default.
+
+    An IPv6 address loses its brackets, [::1]:5432 being ::1 with the port 5432: libpq takes it bare.
+    """
     pairs = []
     for raw in text.split(","):
         item = raw.strip()
@@ -166,7 +176,176 @@ def _endpoints(text: str, default_port: str) -> list[tuple[str, str]]:
             pairs.append((name, number))
         else:
             pairs.append((item, default_port))
-    return pairs
+    return [(name[1:-1] if name.startswith("[") and name.endswith("]") else name, number) for name, number in pairs]
+
+
+def _hosts_and_ports(pairs: Sequence[tuple[str, str]]) -> tuple[str, str]:
+    """The hosts as a libpq list, with one port for all of them or, when they differ, a port for each."""
+    numbers = [number for _, number in pairs]
+    return ",".join(name for name, _ in pairs), numbers[0] if len(set(numbers)) == 1 else ",".join(numbers)
+
+
+def dbeaver_tunnel(configuration: Mapping[str, object]) -> str | None:
+    """The SSH server of a connection DBeaver makes through an SSH tunnel, "" when unnamed; None for a direct one.
+
+    The tunnel is one of the connection's network handlers, next to its TLS settings (postgre_ssl) and its
+    SOCKS proxy (socks_proxy). DBeaver writes only the handlers that are switched on, and a network profile
+    copies its own into each connection that takes it.
+    """
+    handlers = configuration.get("handlers")
+    tunnel = handlers.get("ssh_tunnel") if isinstance(handlers, dict) else None
+    if not isinstance(tunnel, dict) or not _switched_on(tunnel.get("enabled")):
+        return None
+    properties = tunnel.get("properties")
+    return _ssh_address(properties.get("host"), properties.get("port")) if isinstance(properties, dict) else ""
+
+
+def _switched_on(value: object) -> bool:
+    return str(value).strip().lower() == "true"  # true in JSON, or the text of an XML element
+
+
+def _ssh_address(host: object, port: object) -> str:
+    """host:port of an SSH server, the host alone when no port is written; DBeaver may write the port 22 as 22.0."""
+    name, number = str(host or "").strip(), str(port or "").strip().removesuffix(".0")
+    return f"{name}:{number}" if name and number else name
+
+
+def datagrip_folders(env: Mapping[str, str], home: Path, project: Path | None = None) -> list[Path]:
+    """The folders with JetBrains data sources to read: the project named, DataGrip's projects, the global ones.
+
+    DataGrip keeps its data sources in its projects, in ~/DataGripProjects since 2021.2; the other IDEs
+    keep theirs in the projects of code, which only the project named brings in. The global data sources
+    are those of the newest version of each IDE that has any: a new version copies the settings of the
+    one before, so an older folder holds only what was there then.
+    """
+    folders = [] if project is None else [project if (project / "dataSources.xml").is_file() else project / ".idea"]
+    folders.extend(path.parent for path in sorted((home / "DataGripProjects").glob("*/.idea/dataSources.xml")))
+    versions = [version for version in _ide_versions(env, home) if (version[3] / "dataSources.xml").is_file()]
+    newest = {ide: options for ide, _, _, options in versions}  # each IDE's newest version comes last
+    folders.extend(newest.values())
+    unique: dict[Path, Path] = {}
+    for folder in folders:  # a project named that is one of DataGrip's is read once
+        unique.setdefault(folder.resolve(), folder)
+    return list(unique.values())
+
+
+def _ide_versions(env: Mapping[str, str], home: Path) -> list[tuple[str, int, int, Path]]:
+    """The options folder of each version of each JetBrains IDE on this machine, by IDE, the oldest version first."""
+    jetbrains = app_data(env, home) / "JetBrains"
+    versions = []
+    for child in jetbrains.iterdir() if jetbrains.is_dir() else []:
+        match = _IDE_FOLDER.fullmatch(child.name)
+        if match:
+            versions.append((match.group(1), int(match.group(2)), int(match.group(3)), child / "options"))
+    return sorted(versions)
+
+
+def jetbrains_ssh_configs(env: Mapping[str, str], home: Path) -> dict[str, str]:
+    """The SSH configurations the JetBrains IDEs on this machine share between projects: the server of each, by id.
+
+    Each version of an IDE keeps them in sshConfigs.xml of its options folder and copies those of the
+    version before; the newest version's are read last and win.
+    """
+    configs: dict[str, str] = {}
+    for *_, options in _ide_versions(env, home):
+        configs.update(_ssh_configs(options / "sshConfigs.xml"))
+    return configs
+
+
+def read_datagrip(folder: Path, ssh_configs: Mapping[str, str] | None = None) -> list[Connection]:
+    """PostgreSQL data sources of a JetBrains project, or the global ones of an IDE, with their users.
+
+    folder is a project or the folder that holds dataSources.xml: the .idea of a project, or the options
+    folder of an IDE for its global data sources. That file has the names, groups and URLs; the user of
+    each data source is in dataSources.local.xml next to it, and so is its SSH tunnel. The tunnel names
+    an SSH configuration, kept in sshConfigs.xml next to them or among ssh_configs, those an IDE shares
+    between its projects (jetbrains_ssh_configs). The passwords stay where the IDE keeps them, in the
+    keychain of the system or in KeePass, and go into the password file by hand. The data sources
+    install.py export wrote are not brought back: their uuid is the one export gives the section their
+    name spells, stand / database / schema.
+    """
+    if not (folder / "dataSources.xml").is_file():
+        folder = folder / ".idea"
+    local = folder / "dataSources.local.xml"
+    local_sources = list(_xml(local).iter("data-source")) if local.is_file() else []
+    users = {source.get("uuid"): (source.findtext("user-name") or "").strip() for source in local_sources}
+    servers = {**(ssh_configs or {}), **_ssh_configs(folder / "sshConfigs.xml")}
+    tunnels = {source.get("uuid"): datagrip_tunnel(source.find("ssh-properties"), servers) for source in local_sources}
+    connections = []
+    for source in _xml(folder / "dataSources.xml").iter("data-source"):
+        name, identifier = source.get("name", ""), source.get("uuid", "")
+        exported = identifier == export_uuid(name.replace(" / ", "."))
+        if exported or (source.findtext("driver-ref") or "").strip() != DATAGRIP_DRIVER:
+            continue
+        host, port, database, parameters = jdbc_address(source.findtext("jdbc-url") or "")
+        connections.append(
+            Connection(
+                source="DataGrip",
+                name=name or identifier,
+                folder=source.get("group", ""),
+                host=host,
+                port=port,
+                database=database,
+                user=parameters.get("user") or users.get(identifier, ""),  # pgjdbc lets the URL override the user
+                password=parameters.get("password") or None,  # a URL keeps it in plain text; the IDE never does
+                options={key: parameters[key] for key in ("sslmode", "sslrootcert") if parameters.get(key)},
+                tunnel=tunnels.get(identifier),
+            )
+        )
+    return connections
+
+
+def datagrip_tunnel(ssh: ET.Element | None, ssh_configs: Mapping[str, str]) -> str | None:
+    """The SSH server of a data source an IDE reaches through an SSH tunnel, "" when unnamed; None for a direct one.
+
+    ssh is the data source's ssh-properties in dataSources.local.xml. A newer IDE names the SSH configuration
+    there by its id (ssh-config-id), which ssh_configs maps to its server; an older one wrote the server in
+    place (proxy-host, proxy-port). A tunnel switched off leaves the data source direct.
+    """
+    if ssh is None or not _switched_on(ssh.findtext("enabled")):
+        return None
+    config = (ssh.findtext("ssh-config-id") or "").strip()
+    if config:
+        return ssh_configs.get(config, "")
+    return _ssh_address(ssh.findtext("proxy-host"), ssh.findtext("proxy-port"))
+
+
+def _ssh_configs(path: Path) -> dict[str, str]:
+    """The SSH servers of a JetBrains sshConfigs.xml by the id of their configuration; nothing when it is unreadable.
+
+    They only name the server in the preview, so a missing or broken file costs that name, not the import.
+    """
+    try:
+        root = _xml(path)
+    except ImportRefusedError:
+        return {}
+    return {
+        config.get("id", ""): _ssh_address(config.get("host"), config.get("port")) for config in root.iter("sshConfig")
+    }
+
+
+def _xml(path: Path) -> ET.Element:
+    try:
+        # The user's own IDE file. Expat in the standard library expands no external entities and,
+        # since 2.4.1, refuses entity bombs; defusedxml would be a dependency.
+        return ET.parse(path).getroot()  # noqa: S314
+    except (OSError, ET.ParseError) as exc:
+        raise ImportRefusedError(t("import.unreadable", path=path, error=exc)) from exc
+
+
+def jdbc_address(url: str) -> tuple[str, str, str, dict[str, str]]:
+    """Hosts, port, database and parameters of a pgjdbc URL, the hosts as a libpq list when there are several.
+
+    jdbc:postgresql://h1:6544,h2:6545/orders?sslmode=require: a host without a port of its own takes 5432,
+    as in pgjdbc, and the database and the parameters are decoded as pgjdbc decodes them. A URL that names
+    no host gives none: the import does not guess one.
+    """
+    match = JDBC_URL.fullmatch(url.strip())
+    if match is None:
+        return "", "5432", "", {}
+    pairs = _endpoints(match.group(1), "5432")
+    host, port = _hosts_and_ports(pairs) if pairs else ("", "5432")
+    return host, port, unquote_plus(match.group(2)), dict(parse_qsl(match.group(3)))
 
 
 def read_pg_service(path: Path) -> list[Connection]:
@@ -258,6 +437,8 @@ def plan(connections: Iterable[Connection], pattern: re.Pattern[str]) -> Plan:
 
 
 def _problem(connection: Connection, stand: str | None) -> str | None:
+    if connection.tunnel is not None:  # its host is the database's as the SSH server sees it, often localhost
+        return t("import.ssh_tunnel", server=connection.tunnel) if connection.tunnel else t("import.ssh_tunnel_unnamed")
     if not connection.host:
         return t("import.no_host")
     try:

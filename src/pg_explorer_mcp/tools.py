@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
-from . import __version__, diagram
+from . import __version__, diagram, health
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import current, number, plural, t
@@ -41,6 +41,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "search_schema",
         "describe_table",
         "schema_diagram",
+        "db_health",
         "sample_rows",
         "explain_query",
     ),
@@ -50,6 +51,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "search_schema",
         "describe_table",
         "schema_diagram",
+        "db_health",
         "sample_rows",
         "explain_query",
         "run_select",
@@ -80,14 +82,20 @@ _QUOTED_NAME = re.compile(r'["«»„“]\s*([^"«»„“”]+?)\s*["«»“”
 # pg_class.relkind values the tools show; each is named by the text kind.<relkind>.
 RELATION_KINDS = ("r", "p", "v", "m", "f")
 
-_READABLE_RELATIONS = """
+
+def _readable_relations(readable_by: str) -> str:
+    """The catalog scan the listing queries share, narrowed to the relations `readable_by` admits."""
+    return f"""
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
   AND n.nspname <> 'information_schema'
   AND n.nspname NOT LIKE 'pg\\_%'
-  AND has_table_privilege(c.oid, 'SELECT')
+  AND {readable_by}
 """
+
+
+_READABLE_RELATIONS = _readable_relations("has_table_privilege(c.oid, 'SELECT')")
 
 # Estimated rows. PostgreSQL 14+ keeps -1 until a table is first analyzed; before 14 such a
 # table shows 0 rows in 0 pages, exactly like an empty one, so that case becomes NULL.
@@ -177,8 +185,7 @@ SEARCH_SQL = (
 # On a stand the catalog is read through any login of the database, so instead of that
 # login's privileges the queries keep to the schemas the registry has logins for. A database
 # one login reads as a whole is read with the queries above instead: its privileges decide.
-_PRIVILEGE = "  AND has_table_privilege(c.oid, 'SELECT')\n"
-_REGISTRY_RELATIONS = _READABLE_RELATIONS.replace(_PRIVILEGE, "  AND n.nspname = ANY (CAST(:schemas AS text[]))\n")
+_REGISTRY_RELATIONS = _readable_relations("n.nspname = ANY (CAST(:schemas AS text[]))")
 LIST_TABLES_IN_SCHEMAS_SQL = LIST_TABLES_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
 FIND_RELATION_IN_SCHEMAS_SQL = FIND_RELATION_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
 SEARCH_IN_SCHEMAS_SQL = SEARCH_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATIONS)
@@ -380,6 +387,13 @@ def build_tools(
             handler=lambda args: schema_diagram(
                 db, args.get("schema"), args.get("table"), args.get("depth"), args.get("columns"), budget=budget
             ),
+        ),
+        Tool(
+            name="db_health",
+            title=t("tool.db_health.title"),
+            description=t("tool.db_health.description"),
+            properties={"schema": schema_argument},
+            handler=lambda args: db_health(db, args.get("schema")),
         ),
         Tool(
             name="sample_rows",
@@ -640,6 +654,12 @@ def _detail(columns: Any) -> str:
 
 def _visible_schemas(db: Database) -> str:
     return ", ".join(str(row[0]) for row in db.query(SCHEMAS_SQL)) or t("error.none")
+
+
+def db_health(db: Database, schema: Any = None, schemas: Sequence[str] | None = None) -> list[str]:
+    if schema is not None and (not isinstance(schema, str) or not schema.strip()):
+        raise ToolError(t("error.schema"))
+    return health.report(db, schema.strip().strip('"') if schema else None, schemas)
 
 
 def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str] | None = None) -> list[str]:

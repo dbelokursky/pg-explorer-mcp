@@ -21,7 +21,7 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
-from pg_explorer_mcp import sqlguard
+from pg_explorer_mcp import sqlguard, stand_tools
 from pg_explorer_mcp.db import Settings
 from pg_explorer_mcp.querylog import QueryLog
 from pg_explorer_mcp.stand_tools import build_stand_tools
@@ -138,6 +138,20 @@ def pool(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Pool]:
 
 def by_name(tools: list[Tool]) -> dict[str, Tool]:
     return {tool.name: tool for tool in tools}
+
+
+def billing_stands(folder: Path, count: int) -> Pool:
+    """A pool of stands dev1 to dev<count>, each the billing schema of the first database under its own login."""
+    settings = Settings.from_env(os.environ)
+    live = f"host={settings.host}\nport={settings.port}\ndbname={settings.database}\n"
+    stands_file = folder / "billing.conf"
+    stands_file.write_text("".join(f"[dev{n}.shop.{BILLING}]\n{live}\n" for n in range(1, count + 1)), encoding="utf-8")
+    registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [stands_file])
+    assert registry is not None
+    passfile = folder / "pgpass"
+    passfile.write_text(f"*:*:*:{BILLING}:{PASSWORDS[BILLING]}\n", encoding="utf-8")
+    passfile.chmod(0o600)
+    return Pool(registry, dict(os.environ, PGPASSFILE=str(passfile)), limit=2)
 
 
 @pytest.fixture(scope="module")
@@ -498,16 +512,7 @@ class TestManyStands:
     def test_twenty_stands_are_asked_at_once(self, pool: Pool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Twenty stands that each take a second answer in about a second, not twenty."""
         monkeypatch.delitem(sqlguard.FORBIDDEN_FUNCTIONS, "pg_sleep")  # here it stands in for a slow stand
-        settings = Settings.from_env(os.environ)
-        live = f"host={settings.host}\nport={settings.port}\ndbname={settings.database}\n"
-        stands_file = tmp_path / "many.conf"
-        stands_file.write_text("".join(f"[dev{n}.shop.{BILLING}]\n{live}\n" for n in range(1, 21)), encoding="utf-8")
-        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [stands_file])
-        assert registry is not None
-        passfile = tmp_path / "pgpass"
-        passfile.write_text(f"*:*:*:{BILLING}:{PASSWORDS[BILLING]}\n", encoding="utf-8")
-        passfile.chmod(0o600)
-        many = Pool(registry, dict(os.environ, PGPASSFILE=str(passfile)), limit=2)
+        many = billing_stands(tmp_path, 20)
         try:
             tools = by_name(build_stand_tools(many, str(ROOT), profile="analyst"))
             started = time.monotonic()
@@ -522,6 +527,37 @@ class TestManyStands:
         finally:
             many.close()
         assert pool.open_count() <= pool.limit
+
+    @pytest.mark.usefixtures("pool")  # the login and the schema
+    def test_the_next_call_on_a_stand_that_answered_late_waits_for_its_statement(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The agent asks about a late stand right away, as the answer says. That call used to share the stand's
+        session with the thread still running the statement: one thread's ROLLBACK ended the other's transaction
+        (DECLARE CURSOR ... 25P01), and the late rows and outcome went into the call's query log line."""
+        monkeypatch.delitem(sqlguard.FORBIDDEN_FUNCTIONS, "pg_sleep")  # here it stands in for a slow stand
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0.5)
+        late = billing_stands(tmp_path, 1)
+        log = tmp_path / "queries.jsonl"
+        try:
+            tools = by_name(build_stand_tools(late, str(ROOT), profile="analyst", query_log=QueryLog(str(log), late)))
+            slow = "SELECT n, pg_sleep(0.5) FROM generate_series(1, 3) AS n"  # three rows in a second and a half
+            assert lines_of(tools["run_select"], stands="dev1", schema=BILLING, query=slow) == [
+                "dev1: no answer within the 0.5 seconds of the call; ask about them in another call."
+            ]
+            started = time.monotonic()
+            assert lines_of(tools["run_select"], stand="dev1", schema=BILLING, query="SELECT 42 AS answer") == [
+                f"dev1 / shop / {BILLING}",
+                "answer",
+                "42",
+                "(1 row)",
+            ]
+            assert time.monotonic() - started > 0.5  # the statement of the first call ended first
+            first, second = (json.loads(line) for line in log.read_text(encoding="utf-8").splitlines())
+            assert first["stands"] == {"dev1": "skipped"}
+            assert (second["stand"], second["rows"], "stands" in second) == ("dev1", 1, False)
+        finally:
+            late.close()
 
     def test_a_list_in_stand_asks_those_stands(self, tools: dict[str, Tool]) -> None:
         arguments = {"schema": BILLING, "query": "SELECT count(*) FROM invoices"}
