@@ -11,6 +11,7 @@ import pytest
 import release
 
 import pg_explorer_mcp
+from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
 from tests.helpers import ROOT
 
 VERSION = pg_explorer_mcp.__version__
@@ -115,8 +116,10 @@ def test_the_archive_unpacks_into_one_folder_and_the_server_starts_from_it(
 
 
 def test_a_server_that_does_not_start_from_the_archive_is_reported(tmp_path: Path) -> None:
-    problems = release.check(fake_archive(tmp_path / "pg-explorer-mcp-1.2.0.zip", "print('protocol 2025-06-18')\n"))
-    assert "install.py --check did not say 'protocol 2025-06-18'" not in problems
+    problems = release.check(
+        fake_archive(tmp_path / "pg-explorer-mcp-1.2.0.zip", f"print('protocol {SUPPORTED_PROTOCOL_VERSIONS[0]}')\n")
+    )
+    assert f"install.py --check did not say 'protocol {SUPPORTED_PROTOCOL_VERSIONS[0]}'" not in problems
     assert "install.py --check did not say 'database: unavailable'" in problems
     assert "install.py --check exited with 0, not 1 for an unreachable database" in problems
 

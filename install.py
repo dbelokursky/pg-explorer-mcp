@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from pg_explorer_mcp import clients, environment, exports, i18n, imports
 from pg_explorer_mcp.i18n import t
+from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
 
 MIN_PYTHON = (3, 9)
 ROOT = Path(__file__).resolve().parent
@@ -126,7 +127,9 @@ def check(entry: dict[str, Any]) -> bool:
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                # The newest revision the server speaks: the check exercises the protocol the
+                # newest clients use, and there is one place now for the version to live.
+                "protocolVersion": SUPPORTED_PROTOCOL_VERSIONS[0],
                 "capabilities": {},
                 "clientInfo": {"name": "pg-explorer-mcp install.py"},
             },

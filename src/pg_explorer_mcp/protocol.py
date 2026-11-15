@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 from . import __version__
 from .i18n import t
 from .tools import Tool, ToolError
 
 log = logging.getLogger(__name__)
+
+# A line longer than any real MCP message: answering one error line is better than buffering it all.
+MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 
 # Legacy protocol revisions, agreed through initialize, newest first.
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
@@ -91,8 +94,10 @@ class Server:
         }
 
     def handle_line(self, line: bytes) -> bytes | None:
+        if len(line) > MAX_MESSAGE_BYTES:
+            return _encode(_error(None, PARSE_ERROR, f"Parse error: the message exceeds {MAX_MESSAGE_BYTES} bytes"))
         try:
-            message = json.loads(line)
+            message = json.loads(line, parse_constant=_reject_constant)
         except ValueError:
             return _encode(_error(None, PARSE_ERROR, "Parse error: the line is not valid JSON"))
         if isinstance(message, list):
@@ -188,6 +193,12 @@ class Server:
         except ToolError as exc:
             text, is_error = str(exc), True
         return {"content": [{"type": "text", "text": text}], "isError": is_error}
+
+
+def _reject_constant(name: str) -> NoReturn:
+    """json.loads accepts NaN and Infinity, which are not JSON; echoing one back would produce a
+    line that is not valid JSON for a strict client, so a message holding one is a parse error."""
+    raise ValueError(f"{name} is not valid JSON")
 
 
 def _error(msg_id: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
