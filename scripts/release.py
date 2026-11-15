@@ -28,6 +28,10 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
+
 ROOT = Path(__file__).resolve().parents[1]
 # The archive unpacks into this folder whatever the version: an update replaces the folder, and the
 # path in the agent settings and the extension link stay valid. 0.8.0 renamed it once, from pg-mcp (ADR 0007).
@@ -124,7 +128,7 @@ def starts(folder: Path) -> list[str]:
     )
     proc = _run([sys.executable, str(folder / "install.py"), "--check", "--lang", "en"], environment, folder.parent)
     # The server must run from the archive's copy of the code, call the folder its home and look for the database.
-    expected = ("protocol 2025-06-18", f"installed at {folder}", "database: unavailable")
+    expected = (f"protocol {SUPPORTED_PROTOCOL_VERSIONS[0]}", f"installed at {folder}", "database: unavailable")
     problems = [f"install.py --check did not say {text!r}" for text in expected if text not in proc.stdout]
     if proc.returncode != 1:
         problems.append(f"install.py --check exited with {proc.returncode}, not 1 for an unreachable database")

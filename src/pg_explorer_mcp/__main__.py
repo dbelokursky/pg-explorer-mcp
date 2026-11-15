@@ -98,6 +98,8 @@ def main(
                 sink.flush()
     except KeyboardInterrupt:
         pass
+    except BrokenPipeError:
+        return 0  # the client closed its end of stdout: there is nobody left to answer
     finally:
         connections.close()
     return 0
