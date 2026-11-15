@@ -21,6 +21,7 @@ from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .glossary import Glossary
 from .i18n import current, number, plural, t
+from .queries import SavedQueries
 from .querylog import ERROR, FAILED, OK, REFUSED, UNAVAILABLE, Mark, QueryLog
 from .sqlguard import ROW_SOURCES, SqlRejectedError, check_read_only
 from .stands import StandError
@@ -45,6 +46,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "db_health",
         "sample_rows",
         "explain_query",
+        "run_saved_query",
     ),
     "analyst": (
         "status",
@@ -56,6 +58,7 @@ PROFILES: dict[str, tuple[str, ...]] = {
         "sample_rows",
         "explain_query",
         "run_select",
+        "run_saved_query",
     ),
 }
 DEFAULT_PROFILE = "explore"
@@ -327,10 +330,13 @@ def build_tools(
     query_log: QueryLog | None = None,
     name: str = DEFAULT_NAME,
     glossary: Glossary | None = None,
+    saved: SavedQueries | None = None,
 ) -> list[Tool]:
     """The tools of this profile, described in the current language, all writing to one query log."""
     query_log = query_log or QueryLog(None)
     names = PROFILES[profile]
+    # status names the tools this server offers: a profile's conditional tool counts only when configured.
+    offered = tuple(name for name in names if name != "run_saved_query" or (saved is not None and bool(saved.queries)))
     analyze = profile == "analyst"
     table_argument = {"type": "string", "description": t("argument.table")}
     schema_argument = {"type": "string", "description": t("argument.schema")}
@@ -349,11 +355,12 @@ def build_tools(
                 install_dir,
                 budget=budget,
                 profile=profile,
-                names=names,
+                names=offered,
                 warnings=warnings,
                 query_log=query_log,
                 name=name,
                 glossary=glossary,
+                saved=saved,
             ),
         ),
         Tool(
@@ -434,9 +441,23 @@ def build_tools(
             required=("query",),
             handler=lambda args: run_select(db, args.get("query")),
         ),
+        *(
+            []
+            if saved is None or not saved.queries
+            else [
+                Tool(
+                    name="run_saved_query",
+                    title=t("tool.run_saved_query.title"),
+                    description=t("tool.run_saved_query.description", limit=RUN_SELECT_LIMIT),
+                    properties={"name": {"type": "string", "description": t("argument.saved_query")}},
+                    required=("name",),
+                    handler=lambda args: run_saved_query(db, saved, args.get("name")),
+                )
+            ]
+        ),
     ]
-    offered = [tool for tool in tools if tool.name in names]
-    return [replace(tool, budget=budget, query_log=query_log) for tool in offered]
+    present = [tool for tool in tools if tool.name in names]
+    return [replace(tool, budget=budget, query_log=query_log) for tool in present]
 
 
 def status(
@@ -450,6 +471,7 @@ def status(
     query_log: QueryLog,
     name: str = DEFAULT_NAME,
     glossary: Glossary | None = None,
+    saved: SavedQueries | None = None,
 ) -> list[str]:
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
@@ -468,6 +490,17 @@ def status(
                 )
             ]
             if glossary is not None and glossary.entries
+            else []
+        ),
+        *(
+            [
+                t(
+                    "status.queries",
+                    entries=plural("queries.entries", len(saved.queries)),
+                    path=", ".join(str(path) for path in saved.paths),
+                )
+            ]
+            if saved is not None and saved.queries
             else []
         ),
     ]
@@ -756,6 +789,23 @@ def run_select(
     except QueryFailedError as exc:
         raise QueryFailedError(query_hint(db, exc, query, schemas)) from exc
     return _plan_lines(rows, more=more) if kind == "explain" else _format_rows(names, rows, more=more)
+
+
+def run_saved_query(db: Database, saved: SavedQueries, name: Any, schemas: Sequence[str] | None = None) -> list[str]:
+    """Rows of a query the group wrote, by its name; the SQL never comes from the model."""
+    if not isinstance(name, str) or not name.strip():
+        raise ToolError(t("error.saved_query_name"))
+    if saved is not None:
+        saved.refresh()  # an edited file shows up without a restart, as the stands registry does
+    query = saved.named(name) if saved is not None else None
+    if query is None:
+        known = ", ".join(saved.names()) if saved is not None and saved.queries else t("error.none")
+        raise ToolError(t("queries.unknown", name=name, known=known))
+    try:
+        names, rows, more = db.read_only(query.sql, RUN_SELECT_LIMIT, cursor=True)
+    except QueryFailedError as exc:
+        raise QueryFailedError(query_hint(db, exc, query.sql, schemas)) from exc
+    return [t("queries.answer", name=query.name, description=query.text()), *_format_rows(names, rows, more=more)]
 
 
 def query_hint(db: Database, error: QueryFailedError, query: Any, schemas: Sequence[str] | None) -> str:
