@@ -336,9 +336,7 @@ def build_tools(
     query_log = query_log or QueryLog(None)
     names = PROFILES[profile]
     # status names the tools this server offers: a profile's conditional tool counts only when configured.
-    offered = tuple(
-        name for name in names if name != "run_saved_query" or (saved is not None and bool(saved.queries))
-    )
+    offered = tuple(name for name in names if name != "run_saved_query" or (saved is not None and bool(saved.queries)))
     analyze = profile == "analyst"
     table_argument = {"type": "string", "description": t("argument.table")}
     schema_argument = {"type": "string", "description": t("argument.schema")}

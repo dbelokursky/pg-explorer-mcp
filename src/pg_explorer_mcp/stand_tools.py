@@ -115,9 +115,7 @@ def build_stand_tools(
     """The tools of this profile for the stands of the pool's registry."""
     names = STAND_PROFILES[profile]
     # status names the tools this server offers: a profile's conditional tool counts only when configured.
-    offered = tuple(
-        name for name in names if name != "run_saved_query" or (saved is not None and bool(saved.queries))
-    )
+    offered = tuple(name for name in names if name != "run_saved_query" or (saved is not None and bool(saved.queries)))
     analyze = profile == "analyst"
     query_log = query_log or QueryLog(None)
     stand = {"type": "string", "description": t("argument.stand", stands=_stands_named(pool.registry))}
