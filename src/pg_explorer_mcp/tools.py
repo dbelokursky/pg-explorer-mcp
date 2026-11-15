@@ -19,6 +19,7 @@ from typing import Any, Callable, Union
 from . import __version__, diagram, health
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
+from .glossary import Glossary
 from .i18n import current, number, plural, t
 from .querylog import ERROR, FAILED, OK, REFUSED, UNAVAILABLE, Mark, QueryLog
 from .sqlguard import ROW_SOURCES, SqlRejectedError, check_read_only
@@ -325,6 +326,7 @@ def build_tools(
     warnings: Sequence[str] = (),
     query_log: QueryLog | None = None,
     name: str = DEFAULT_NAME,
+    glossary: Glossary | None = None,
 ) -> list[Tool]:
     """The tools of this profile, described in the current language, all writing to one query log."""
     query_log = query_log or QueryLog(None)
@@ -351,6 +353,7 @@ def build_tools(
                 warnings=warnings,
                 query_log=query_log,
                 name=name,
+                glossary=glossary,
             ),
         ),
         Tool(
@@ -358,7 +361,7 @@ def build_tools(
             title=t("tool.list_tables.title"),
             description=t("tool.list_tables.description", limit=LIST_TABLES_LIMIT),
             properties={"schema": {"type": "string", "description": t("tool.list_tables.schema")}},
-            handler=lambda args: list_tables(db, args.get("schema")),
+            handler=lambda args: list_tables(db, args.get("schema"), glossary=glossary),
         ),
         Tool(
             name="search_schema",
@@ -366,7 +369,7 @@ def build_tools(
             description=t("tool.search_schema.description", limit=SEARCH_LIMIT),
             properties={"text": {"type": "string", "description": t("argument.text")}, "schema": schema_argument},
             required=("text",),
-            handler=lambda args: search_schema(db, args.get("text"), args.get("schema")),
+            handler=lambda args: search_schema(db, args.get("text"), args.get("schema"), glossary=glossary),
         ),
         Tool(
             name="describe_table",
@@ -374,7 +377,7 @@ def build_tools(
             description=t("tool.describe_table.description"),
             properties={"table": table_argument, "schema": schema_argument},
             required=("table",),
-            handler=lambda args: describe_table(db, args.get("table"), args.get("schema")),
+            handler=lambda args: describe_table(db, args.get("table"), args.get("schema"), glossary=glossary),
         ),
         Tool(
             name="schema_diagram",
@@ -446,6 +449,7 @@ def status(
     warnings: Sequence[str],
     query_log: QueryLog,
     name: str = DEFAULT_NAME,
+    glossary: Glossary | None = None,
 ) -> list[str]:
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
@@ -455,6 +459,17 @@ def status(
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),
         query_log.describe(),
+        *(
+            [
+                t(
+                    "status.glossary",
+                    entries=plural("glossary.entries", len(glossary.entries)),
+                    path=", ".join(str(path) for path in glossary.paths),
+                )
+            ]
+            if glossary is not None and glossary.entries
+            else []
+        ),
     ]
     lines.extend(t("status.warning", warning=warning) for warning in warnings)
     try:
@@ -475,11 +490,15 @@ def status(
     return lines
 
 
-def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None = None) -> list[str]:
+def list_tables(
+    db: Database, schema: Any | None, schemas: Sequence[str] | None = None, glossary: Glossary | None = None
+) -> list[str]:
     """Readable tables, or with schemas (on a stand) the tables of those schemas."""
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema"))
     schema = schema.strip().strip('"') if schema else None
+    if glossary is not None:
+        glossary.refresh()  # an edited glossary shows up without a restart, as the stands registry does
     if schemas is None:
         rows = db.query(LIST_TABLES_SQL, schema=schema, limit=LIST_TABLES_LIMIT + 1)
     else:
@@ -490,16 +509,25 @@ def list_tables(db: Database, schema: Any | None, schemas: Sequence[str] | None 
         if schema is None:
             raise ToolError(t("error.no_tables"))
         if _guessed(db, schema):  # the question was what tables there are: those of every schema answer it
-            return [t("list.guessed_schema", schema=schema), *list_tables(db, None)]
+            return [t("list.guessed_schema", schema=schema), *list_tables(db, None, glossary=glossary)]
         raise ToolError(_closed_schema(db, schema))
-    lines = [_describe_relation(*row) for row in rows[:LIST_TABLES_LIMIT]]
+    lines = [
+        _describe_relation(schema, name, kind, estimate, comment, glossary=glossary)
+        for schema, name, kind, estimate, comment in rows[:LIST_TABLES_LIMIT]
+    ]
     if len(rows) > LIST_TABLES_LIMIT:
         lines.append(t("list.more", limit=LIST_TABLES_LIMIT))
     return lines
 
 
 def search_schema(
-    db: Database, text: Any, schema: Any, schemas: Sequence[str] | None = None, limit: int = SEARCH_LIMIT
+    db: Database,
+    text: Any,
+    schema: Any,
+    schemas: Sequence[str] | None = None,
+    limit: int = SEARCH_LIMIT,
+    *,
+    glossary: Glossary | None = None,
 ) -> list[str]:
     """Matches of text; on a stand, schemas keeps to the registry's, and limit shares the matches among stands."""
     if not isinstance(text, str) or not text.strip():
@@ -507,6 +535,8 @@ def search_schema(
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema_search"))
     fragment = text.strip()
+    if glossary is not None:
+        glossary.refresh()
     params: dict[str, Any] = {
         "patterns": _like_patterns(fragment),
         "schema": schema.strip().strip('"') if schema else None,
@@ -522,9 +552,9 @@ def search_schema(
             if params["schema"] not in visible:
                 if _guessed(db, params["schema"]):  # "public" most often: the other schemas answer the question
                     lead = t("search.guessed_schema", schema=params["schema"])
-                    return [lead, *search_schema(db, fragment, None, limit=limit)]
+                    return [lead, *search_schema(db, fragment, None, limit=limit, glossary=glossary)]
                 raise ToolError(_closed_schema(db, params["schema"], visible))
-        return [t("search.nothing", text=fragment)]
+        return _with_glossary([], fragment, glossary) or [t("search.nothing", text=fragment)]
     lines = []
     for row in rows[:limit]:
         schema_name, relation, kind, estimate, comment, column, data_type, not_null, column_comment = row
@@ -535,7 +565,40 @@ def search_schema(
             lines.append(_column_line(name, data_type, not_null=not_null, comment=column_comment))
     if len(rows) > limit:
         lines.append(t("search.more", limit=limit))
-    return lines
+    return lines + _with_glossary(_matched_names(rows[:limit]), fragment, glossary)
+
+
+def _matched_names(rows: Sequence[Sequence[Any]]) -> list[str]:
+    """The relations and columns the catalog itself matched, as the glossary spells them."""
+    return [f"{row[0]}.{row[1]}.{row[5]}".lower() if row[5] else f"{row[0]}.{row[1]}".lower() for row in rows]
+
+
+def _with_glossary(matched: list[str], fragment: str, glossary: Glossary | None) -> list[str]:
+    """The glossary's own matches: what the group wrote about a thing, found by its words.
+
+    Tables and columns the catalog already matched by name or comment are left out; the terms
+    come last, for the model to read after what the database itself says.
+    """
+    if glossary is None:
+        return []
+    lines = []
+    for entry in glossary.search(fragment):
+        name = entry.name.lower()
+        if name in matched:
+            continue
+        if entry.kind == "term":
+            lines.append(f"{entry.name}: {entry.text()}")
+        elif entry.kind == "column":
+            lines.append(f"{entry.name}  -- {entry.text()}")
+        else:
+            # Not _describe_relation: the glossary knows no kind and no row estimate, only the words.
+            lines.append(f"{entry.name} | {t('kind.r')} | {entry.text()}")
+    return [t("search.glossary"), *lines] if lines else []
+
+
+def _glossary_text(glossary: Glossary | None, kind: str, name: str) -> str | None:
+    """What the glossary says about a thing, for where the database holds no comment of its own."""
+    return glossary.describe(kind, name) if glossary is not None else None
 
 
 def _system(schema: str) -> bool:
@@ -558,11 +621,15 @@ def _closed_schema(db: Database, schema: str, visible: Sequence[str] | None = No
     return t(key, schema=schema, visible=", ".join(names) or t("error.none"))
 
 
-def describe_table(db: Database, table: Any, schema: Any) -> list[str]:
+def describe_table(db: Database, table: Any, schema: Any, glossary: Glossary | None = None) -> list[str]:
+    if glossary is not None:
+        glossary.refresh()
     oid, schema_name, relation, kind, estimate, comment = _resolve_relation(db, table, schema)
-    lines = [_describe_relation(schema_name, relation, kind, estimate, comment), t("describe.columns")]
+    described = comment or _glossary_text(glossary, "table", f"{schema_name}.{relation}")
+    lines = [_describe_relation(schema_name, relation, kind, estimate, described), t("describe.columns")]
     for column, data_type, not_null, default, column_comment in db.query(COLUMNS_SQL, oid=oid):
-        line = _column_line(column, data_type, not_null=not_null, default=default, comment=column_comment)
+        noted = column_comment or _glossary_text(glossary, "column", f"{schema_name}.{relation}.{column}")
+        line = _column_line(column, data_type, not_null=not_null, default=default, comment=noted)
         lines.append(f"  {line}")
     constraints = db.query(CONSTRAINTS_SQL, oid=oid)
     _section(lines, t("describe.constraints"), (f"{name}: {shorten(definition)}" for name, definition in constraints))
@@ -917,7 +984,16 @@ def _section(lines: list[str], title: str, entries: Any) -> None:
         lines.extend(f"  {entry}" for entry in entries)
 
 
-def _describe_relation(schema: str, name: str, kind: str, estimate: int | None, comment: str | None) -> str:
+def _describe_relation(
+    schema: str,
+    name: str,
+    kind: str,
+    estimate: int | None,
+    comment: str | None,
+    *,
+    glossary: Glossary | None = None,
+) -> str:
+    comment = comment or _glossary_text(glossary, "table", f"{schema}.{name}")
     parts = [f"{schema}.{name}", t(f"kind.{kind}") if kind in RELATION_KINDS else kind]
     if kind in ("r", "p", "m"):
         parts.append(_estimate(estimate))

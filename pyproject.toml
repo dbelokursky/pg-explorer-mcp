@@ -70,6 +70,8 @@ ignore = [
 "install.py" = ["T201", "S603"]
 # The Russian catalog: Cyrillic letters that look Latin are the point there, not a trick.
 "src/pg_explorer_mcp/i18n.py" = ["RUF001"]
+# The glossary docstring holds a Russian example of the file format on purpose.
+"src/pg_explorer_mcp/glossary.py" = ["RUF002"]
 "scripts/**" = ["T201", "S603"]
 
 [tool.ruff.format]

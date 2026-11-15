@@ -153,6 +153,12 @@ EN: dict[str, str] = {
         "database, describe_table for the details. Reply to the user in the language they write in."
     ),
     "number.decimal": ".",
+    # The glossary: business descriptions kept in a file beside the database (glossary.py).
+    "glossary.unreadable": "The glossary {path} cannot be read: {error}",
+    "glossary.entries.one": "{count} entry",
+    "glossary.entries.other": "{count} entries",
+    "status.glossary": "glossary: {entries} from {path}",
+    "search.glossary": "from the glossary:",
     # Tools as the model sees them in tools/list.
     "tool.status.title": "Connection status",
     "tool.status.description": (
@@ -745,6 +751,12 @@ RU: dict[str, str] = {
         "на котором он пишет."
     ),
     "number.decimal": ",",
+    "glossary.unreadable": "Глоссарий {path} не читается: {error}",
+    "glossary.entries.one": "{count} запись",
+    "glossary.entries.few": "{count} записи",
+    "glossary.entries.many": "{count} записей",
+    "status.glossary": "глоссарий: {entries} из {path}",
+    "search.glossary": "из глоссария:",
     "tool.status.title": "Состояние подключения",
     "tool.status.description": (
         "Сервер только читает: база, роль, профиль и лимиты. Вызывайте первым и когда инструмент сообщает о "

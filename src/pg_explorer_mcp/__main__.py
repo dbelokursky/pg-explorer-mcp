@@ -17,10 +17,11 @@ from typing import BinaryIO
 from . import environment, i18n
 from .budget import budget_from_env
 from .db import Database
+from .glossary import Glossary
 from .protocol import Server
 from .querylog import QueryLog
 from .stand_tools import build_stand_tools, registry_warnings
-from .stands import DEFAULT_MAX_CONNECTIONS, Pool, load_registry
+from .stands import DEFAULT_MAX_CONNECTIONS, Pool, Registry, load_registry
 from .tools import DEFAULT_NAME, build_tools, profile_from_env
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -58,9 +59,7 @@ def main(
         warnings.append(profile_warning)
     name = env.get("PG_EXPLORER_MCP_NAME", "").strip() or DEFAULT_NAME
     # Many stands only when PG_EXPLORER_MCP_STANDS asks and the registry has some; otherwise the PG* settings.
-    registry = load_registry(env)
-    if registry is not None and not registry.targets:
-        warnings.extend(registry_warnings(registry))  # the single-database tools show why the stands are off
+    glossary, registry = _surroundings(env, warnings)
     connections: Database | Pool
     if registry is not None and registry.targets:
         connections = Pool(registry, env, _whole(env, "PG_EXPLORER_MCP_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS))
@@ -73,6 +72,7 @@ def main(
             warnings=warnings,
             query_log=query_log,
             name=name,
+            glossary=glossary,
         )
         server = Server(tools, instructions=i18n.t("server.instructions") + " " + i18n.t("stands.instructions"))
     else:
@@ -86,6 +86,7 @@ def main(
             warnings=warnings,
             query_log=query_log,
             name=name,
+            glossary=glossary,
         )
         server = Server(tools)
     try:
@@ -103,6 +104,16 @@ def main(
     finally:
         connections.close()
     return 0
+
+
+def _surroundings(env: Mapping[str, str], warnings: list[str]) -> tuple[Glossary, Registry | None]:
+    """The glossary of descriptions and the stands registry, with their warnings already in the list."""
+    glossary = Glossary.from_env(env)
+    warnings.extend(glossary.warnings)
+    registry = load_registry(env)
+    if registry is not None and not registry.targets:
+        warnings.extend(registry_warnings(registry))  # the single-database tools show why the stands are off
+    return glossary, registry
 
 
 def _whole(env: Mapping[str, str], variable: str, default: int) -> int:

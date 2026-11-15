@@ -21,8 +21,9 @@ import pg8000.native
 import pytest
 
 from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_explorer_mcp.glossary import Glossary
 from pg_explorer_mcp.querylog import QueryLog
-from pg_explorer_mcp.tools import Tool, ToolError, build_tools
+from pg_explorer_mcp.tools import Tool, ToolError, build_tools, describe_table, list_tables, search_schema
 from tests.helpers import ROOT
 
 pytestmark = pytest.mark.integration
@@ -237,6 +238,61 @@ class TestStructure:
     ) -> None:
         with pytest.raises(ToolError, match=message):
             tools["describe_table"].call(arguments)
+
+
+class TestGlossary:
+    """Descriptions from a file beside the database, shown where the database holds no comment."""
+
+    @pytest.fixture
+    def glossary(self, tmp_path: Path) -> Glossary:
+        path = tmp_path / "glossary.conf"
+        path.write_text(
+            "[table mcp_it.customers]\n"
+            "en = The people who order\n"
+            "ru = Люди, которые заказывают\n"
+            "[column mcp_it.orders.total]\n"
+            "en = The sum of one order\n"
+            "[table mcp_it.orders]\n"
+            "en = Orders of the shop\n"
+            "[term average_receipt]\n"
+            "en = Sum of the paid orders of a month\n",
+            encoding="utf-8",
+        )
+        return Glossary.from_env({"PG_EXPLORER_MCP_GLOSSARY_FILE": str(path)})
+
+    def test_describe_shows_glossary_texts_where_comments_are_absent(self, db: Database, glossary: Glossary) -> None:
+        lines = describe_table(db, "orders", "mcp_it", glossary)
+        assert lines[0].startswith("mcp_it.orders | table |")
+        assert "Заказы клиентов" in lines[0]  # the database's own comment wins
+        assert any(line.strip().startswith("total") and "The sum of one order" in line for line in lines)
+
+    def test_list_tables_shows_the_glossary_text_of_an_uncommented_table(
+        self, db: Database, glossary: Glossary
+    ) -> None:
+        lines = list_tables(db, "mcp_it", glossary=glossary)
+        customers = next(line for line in lines if line.startswith("mcp_it.customers |"))
+        assert "The people who order" in customers
+
+    def test_search_finds_the_groups_own_words_where_the_catalog_has_none(
+        self, db: Database, glossary: Glossary
+    ) -> None:
+        assert search_schema(db, "average receipt", None, glossary=glossary) == [
+            "from the glossary:",
+            "average_receipt: Sum of the paid orders of a month",
+        ]
+
+    def test_search_adds_glossary_matches_but_never_repeats_the_catalogs(
+        self, db: Database, glossary: Glossary
+    ) -> None:
+        lines = search_schema(db, "order", None, glossary=glossary)
+        assert lines.count("from the glossary:") == 1
+        assert any(line.startswith("mcp_it.orders |") for line in lines)  # the catalog's match
+        assert "mcp_it.orders.total  -- The sum of one order" in lines  # the glossary's addition
+        assert len([line for line in lines if line.startswith("mcp_it.orders |")]) == 1  # no duplicate
+
+    def test_status_names_the_glossary(self, db: Database, glossary: Glossary) -> None:
+        tools = by_name(build_tools(db, str(ROOT), glossary=glossary))
+        assert any(line.startswith("glossary: 4 entries from ") for line in tools["status"].call({}).splitlines())
 
 
 class TestSearch:
