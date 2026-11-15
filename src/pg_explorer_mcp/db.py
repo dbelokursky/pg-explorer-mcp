@@ -41,7 +41,7 @@ SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"
 DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
 STATEMENT_GRACE_S = 5  # a socket outwaits the statement timeout, so PostgreSQL's own error comes first
-CURSOR_NAME = "pg_mcp_rows"
+CURSOR_NAME = "pg_explorer_mcp_rows"  # the cursor of read_only: one transaction old, so the rename cost nothing
 
 
 class DatabaseUnavailableError(Exception):

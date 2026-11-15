@@ -265,8 +265,8 @@ class TestEveryCallIsOneTransaction:
         assert db.read_only("SELECT 1", 5, cursor=True) == (["n"], [[1]], False)
         assert connection.statements[-4:] == [
             'BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 5000; SET LOCAL search_path = "shop", public',
-            "DECLARE pg_mcp_rows NO SCROLL CURSOR FOR SELECT 1",
-            "FETCH FORWARD 6 FROM pg_mcp_rows",
+            "DECLARE pg_explorer_mcp_rows NO SCROLL CURSOR FOR SELECT 1",
+            "FETCH FORWARD 6 FROM pg_explorer_mcp_rows",
             "ROLLBACK",
         ]
 

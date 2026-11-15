@@ -143,7 +143,7 @@ def test_an_archive_with_the_wrong_contents_is_refused_before_anything_runs(tmp_
     assert "pg-explorer-mcp-9.9.9.zip holds version 1.2.0" in problems
 
 
-def test_an_archive_that_does_not_unpack_into_pg_mcp_is_refused(tmp_path: Path) -> None:
+def test_an_archive_that_does_not_unpack_into_the_one_folder_is_refused(tmp_path: Path) -> None:
     archive = tmp_path / "loose.zip"
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("run.py", "")
