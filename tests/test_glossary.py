@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -71,7 +72,8 @@ class TestReading:
 
     def test_the_default_file_lives_beside_the_stands_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("HOME", "/home/anna")
-        assert str(default_file({})).endswith("/.pg-explorer-mcp/glossary.conf")
+        folder = "pg-explorer-mcp" if sys.platform == "win32" else ".pg-explorer-mcp"
+        assert default_file({}).parts[-2:] == (folder, "glossary.conf")
 
 
 class TestSearch:
