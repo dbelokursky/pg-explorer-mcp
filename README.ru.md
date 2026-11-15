@@ -787,6 +787,29 @@ dev3 / demo / shop
 предупреждает об этом. Профиль — удобство, а не граница доступа: что можно читать, решают права роли
 в базе.
 
+## Глоссарий
+
+Базы, написанные до эры агентов, часто не несут комментариев. Файл глоссария,
+`~/.pg-explorer-mcp/glossary.conf` (на Windows `%APPDATA%\pg-explorer-mcp\glossary.conf`, или файл,
+названный `PG_EXPLORER_MCP_GLOSSARY_FILE`), хранит то, что группа знает о своих данных, секция на каждую сущность:
+
+```ini
+[table shop.orders]
+ru = Заказы клиентов: статус и время
+[column shop.orders.status]
+en = new, paid, shipped or cancelled
+[term average_receipt]
+en = Sum of the paid orders of a month
+ru = Сумма оплаченных заказов за месяц
+```
+
+- `table` и `column` принимают полное имя; `term` — слово самой группы. В секции строки `en` и `ru`:
+  сначала язык сервера, недостающий замещает другой.
+- `describe_table` и `list_tables` показывают текст глоссария только там, где у таблицы или колонки
+  нет собственного `COMMENT ON`; `search_schema` ищет и по текстам глоссария, и по именам терминов —
+  вопрос словами группы находит таблицы за ними. Изменённый файл подхватывается без перезапуска,
+  а `status` называет файл и число записей. Обоснование — в [ADR 0010](docs/adr/0010-glossary.md).
+
 ## Язык
 
 Сервер говорит по-английски (`en`) или по-русски (`ru`): описания инструментов, ответы, подсказки,
@@ -946,6 +969,7 @@ Refused by the SQL check (2)
 | `PG_EXPLORER_MCP_SOCKET_TIMEOUT_S` | `30`, для стендов `10` | сколько секунд ждать нового подключения; открытый сокет ждёт не меньше таймаута запроса плюс 5 секунд |
 | `PG_EXPLORER_MCP_STANDS` | — (выключено) | `*` или шаблоны имён стендов вроде `dev*,ift2`: одна запись для [многих стендов](#много-стендов) |
 | `PG_EXPLORER_MCP_STANDS_FILE` | `~/.pg-explorer-mcp/stands.conf`, на Windows `%APPDATA%\pg-explorer-mcp\stands.conf` | реестр стендов |
+| `PG_EXPLORER_MCP_GLOSSARY_FILE` | `~/.pg-explorer-mcp/glossary.conf`, на Windows `%APPDATA%\pg-explorer-mcp\glossary.conf` | [глоссарий](#глоссарий) описаний |
 | `PGSERVICEFILE` | `~/.pg_service.conf`, на Windows `%APPDATA%\postgresql\.pg_service.conf` | ваши сервисы psql; стенды читаются и оттуда |
 | `PG_EXPLORER_MCP_MAX_CONNECTIONS` | `8` | сколько подключений держит открытыми запись стендов |
 
