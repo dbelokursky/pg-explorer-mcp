@@ -38,6 +38,7 @@ jobs:
   archive:
     name: build and check the archive
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -77,6 +78,7 @@ jobs:
     needs: archive
     if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.build_only)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
       id-token: write  # the provenance attestation is signed with the workflow's identity
