@@ -405,8 +405,11 @@ def _open(settings: Settings, endpoint: Endpoint) -> pg8000.native.Connection:
 def _prepared(conn: pg8000.native.Connection, settings: Settings) -> pg8000.native.Connection:
     """The connection with the session set up: read only, the statement timeout, the schema first."""
     # Connecting waited connect_timeout(); a statement may run for statement_timeout_ms,
-    # so from here on the socket waits longer. pg8000 keeps the socket in _usock.
-    conn._usock.settimeout(socket_timeout(settings))
+    # so from here on the socket waits longer. pg8000 keeps the socket in _usock; the guard, so
+    # that a vendored rename costs the longer wait, not every connection with an internal error.
+    socket = getattr(conn, "_usock", None)
+    if socket is not None:
+        socket.settimeout(socket_timeout(settings))
     try:
         # Guardrails, not the security boundary: the role's privileges are. Every transaction sets
         # them again for itself (transaction_start), since a pooler may not keep the session.

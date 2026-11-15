@@ -204,6 +204,15 @@ class FakeConnection:
         pass
 
 
+def test_a_connection_whose_socket_is_elsewhere_still_gets_its_session_set_up() -> None:
+    """A vendored pg8000 that renames _usock costs the longer socket wait, not every connection."""
+    conn = FakeConnection()
+    del conn._usock
+    settings = Settings.from_env({"PGUSER": "app", "PGPASSFILE": os.devnull})
+    assert db._prepared(conn, settings) is conn
+    assert conn.statements[0] == "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"
+
+
 class TestEveryCallIsOneTransaction:
     """A pooler in transaction mode may serve each transaction from another session, or reset the session
     in between: a call pins one session with BEGIN and carries its limits with SET LOCAL."""

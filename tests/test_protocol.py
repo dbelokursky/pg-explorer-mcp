@@ -13,6 +13,7 @@ from pg_explorer_mcp.protocol import (
     INVALID_PARAMS,
     INVALID_REQUEST,
     LIST_TTL_MS,
+    MAX_MESSAGE_BYTES,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
     SUPPORTED_PROTOCOL_VERSIONS,
@@ -178,6 +179,21 @@ class TestLegacyProtocol:
             "id": None,
             "error": {"code": INVALID_REQUEST, "message": "Invalid request: the batch is empty"},
         }
+
+    @pytest.mark.parametrize("line", [b'{"jsonrpc": "2.0", "id": NaN, "method": "ping"}', b"[Infinity]"])
+    def test_nan_and_infinity_are_parse_errors_not_replies_that_echo_them(self, server: Server, line: bytes) -> None:
+        # json.loads accepts them, but they are not JSON: a reply echoing one would be a line no
+        # strict client can read back.
+        reply = server.handle_line(line)
+        assert reply is not None
+        assert json.loads(reply)["error"]["code"] == PARSE_ERROR
+
+    def test_a_message_beyond_the_size_limit_gets_one_error_line(self, server: Server) -> None:
+        line = b'{"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"x": "' + b"a" * (MAX_MESSAGE_BYTES) + b'"}}'
+        reply = server.handle_line(line)
+        assert reply is not None
+        assert json.loads(reply)["error"]["code"] == PARSE_ERROR
+        assert "exceeds" in json.loads(reply)["error"]["message"]
 
     def test_reply_is_one_ascii_line_whatever_the_tool_returns(self, server: Server) -> None:
         message = rpc(7, "tools/call", {"name": "echo", "arguments": {"text": "таблица\nзаказы"}})
