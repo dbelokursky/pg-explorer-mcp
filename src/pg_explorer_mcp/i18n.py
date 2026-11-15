@@ -159,6 +159,15 @@ EN: dict[str, str] = {
     "glossary.entries.other": "{count} entries",
     "status.glossary": "glossary: {entries} from {path}",
     "search.glossary": "from the glossary:",
+    # Saved queries: the group's own SQL, run by name (queries.py).
+    "queries.unreadable": "The saved queries {path} cannot be read: {error}",
+    "queries.refused": "Query {name} was left out: {message}",
+    "queries.not_rows": "only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)",
+    "queries.unknown": "No saved query {name!r}. Saved: {known}.",
+    "queries.answer": "{name}: {description}",
+    "queries.entries.one": "{count} query",
+    "queries.entries.other": "{count} queries",
+    "status.queries": "saved queries: {entries} from {path}",
     # Tools as the model sees them in tools/list.
     "tool.status.title": "Connection status",
     "tool.status.description": (
@@ -192,6 +201,13 @@ EN: dict[str, str] = {
         "PostgreSQL's plan for one read-only query passed without EXPLAIN; with analyze it runs read-only and "
         "the plan shows real timings."
     ),
+    "tool.run_saved_query.title": "Run a saved query",
+    "tool.run_saved_query.description": (
+        "One of the queries this group wrote into queries.conf, by name: an unknown name lists them. "
+        "At most {limit} rows. Prefer it to run_select when the name fits."
+    ),
+    "argument.saved_query": 'Name of a query the group saved, e.g. "orders_by_status".',
+    "error.saved_query_name": "name must be a non-empty string",
     "tool.run_select.title": "Run a read-only query",
     "tool.run_select.description": (
         "One read-only statement: SELECT, WITH, VALUES, TABLE, EXPLAIN or SHOW. At most {limit} rows, so use "
@@ -757,6 +773,15 @@ RU: dict[str, str] = {
     "glossary.entries.many": "{count} записей",
     "status.glossary": "глоссарий: {entries} из {path}",
     "search.glossary": "из глоссария:",
+    "queries.unreadable": "Файл сохранённых запросов {path} не читается: {error}",
+    "queries.refused": "Запрос {name} не взят: {message}",
+    "queries.not_rows": "сохранить можно только запрос, возвращающий строки (SELECT, WITH, VALUES, TABLE)",
+    "queries.unknown": "Нет сохранённого запроса {name!r}. Сохранены: {known}.",
+    "queries.answer": "{name}: {description}",
+    "queries.entries.one": "{count} запрос",
+    "queries.entries.few": "{count} запроса",
+    "queries.entries.many": "{count} запросов",
+    "status.queries": "сохранённые запросы: {entries} из {path}",
     "tool.status.title": "Состояние подключения",
     "tool.status.description": (
         "Сервер только читает: база, роль, профиль и лимиты. Вызывайте первым и когда инструмент сообщает о "
@@ -790,6 +815,13 @@ RU: dict[str, str] = {
         "План PostgreSQL для одного запроса на чтение, переданного без EXPLAIN; с analyze запрос выполняется "
         "в транзакции только на чтение, и в плане видно реальное время."
     ),
+    "tool.run_saved_query.title": "Выполнить сохранённый запрос",
+    "tool.run_saved_query.description": (
+        "Один из запросов, записанных группой в queries.conf, по имени; неизвестное имя перечисляет их. "
+        "Не больше {limit} строк. Когда имя подходит, предпочти его run_select."
+    ),
+    "argument.saved_query": 'Имя сохранённого запроса, например "orders_by_status".',
+    "error.saved_query_name": "name должен быть непустой строкой",
     "tool.run_select.title": "Выполнить запрос на чтение",
     "tool.run_select.description": (
         "Одна команда только на чтение: SELECT, WITH, VALUES, TABLE, EXPLAIN или SHOW. Возвращает не больше "

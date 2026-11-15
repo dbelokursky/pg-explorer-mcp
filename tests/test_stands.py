@@ -32,6 +32,7 @@ from pg_explorer_mcp.compare import (
     read_structure,
 )
 from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_explorer_mcp.queries import SavedQueries
 from pg_explorer_mcp.querylog import QueryLog
 from pg_explorer_mcp.stand_tools import STAND_ONLY_TOOLS, STAND_PROFILES, build_stand_tools
 from pg_explorer_mcp.stands import (
@@ -582,9 +583,20 @@ class TestOfflineTools:
         self, pool: Pool, profile: str
     ) -> None:
         names = [tool.name for tool in build_stand_tools(pool, str(ROOT), profile=profile)]
-        assert names == list(STAND_PROFILES[profile])
-        assert [name for name in names if name not in STAND_ONLY_TOOLS] == list(PROFILES[profile])
+        # run_saved_query appears only when the group saved queries: without a file it is not offered.
+        assert names == [name for name in STAND_PROFILES[profile] if name != "run_saved_query"]
+        assert [name for name in names if name not in STAND_ONLY_TOOLS] == [
+            name for name in PROFILES[profile] if name != "run_saved_query"
+        ]
         assert [names[names.index(after) + 1] for after in STAND_ONLY_TOOLS.values()] == list(STAND_ONLY_TOOLS)
+
+    def test_a_saved_query_on_a_stand_uses_the_schemas_login(self, pool: Pool, tmp_path: Path) -> None:
+        file = write(tmp_path / "queries.conf", "[one]\nquery = SELECT 1\n")
+        saved = SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(file)})
+        tools = by_name(build_stand_tools(pool, str(ROOT), profile="analyst", saved=saved))
+        lines = tools["run_saved_query"].call({"stand": "dev1", "schema": "shipping", "name": "one"}).splitlines()
+        assert lines[0] == "dev1 / orders / shipping"
+        assert lines[1].startswith("  ")  # why the stand did not answer, under its label
 
     def test_the_schema_profile_in_full(self) -> None:
         assert STAND_PROFILES["schema"] == (
@@ -1623,20 +1635,20 @@ class TestEntry:
     def test_one_entry_serves_every_stand(self, env: dict[str, str]) -> None:
         instructions, names, status = self.answers(env)
         assert "This server reaches many stands." in instructions
-        assert names == list(STAND_PROFILES["explore"])
+        assert names == [name for name in STAND_PROFILES["explore"] if name != "run_saved_query"]  # no queries saved
         assert "stands: 3 (dev1–dev2, ift1), connections in the registry: 6" in status
 
     def test_without_pg_mcp_stands_the_entry_works_as_before(self, env: dict[str, str]) -> None:
         del env["PG_EXPLORER_MCP_STANDS"]
         instructions, names, status = self.answers(env)
         assert "many stands" not in instructions
-        assert names == list(PROFILES["explore"])
+        assert names == [name for name in PROFILES["explore"] if name != "run_saved_query"]  # no queries saved
         assert "database: unavailable" in status
 
     def test_no_stands_found_falls_back_to_the_pg_settings(self, env: dict[str, str], tmp_path: Path) -> None:
         write(tmp_path / "stands.conf", "")
         _, names, status = self.answers(env)
-        assert names == list(PROFILES["explore"])
+        assert names == [name for name in PROFILES["explore"] if name != "run_saved_query"]  # no queries saved
         assert "warning: PG_EXPLORER_MCP_STANDS is set, but no stands were found in" in status
         assert "database: unavailable" in status
 

@@ -20,10 +20,20 @@ import pg8000.exceptions
 import pg8000.native
 import pytest
 
+from pg_explorer_mcp import i18n
 from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
 from pg_explorer_mcp.glossary import Glossary
+from pg_explorer_mcp.queries import SavedQueries
 from pg_explorer_mcp.querylog import QueryLog
-from pg_explorer_mcp.tools import Tool, ToolError, build_tools, describe_table, list_tables, search_schema
+from pg_explorer_mcp.tools import (
+    Tool,
+    ToolError,
+    build_tools,
+    describe_table,
+    list_tables,
+    run_saved_query,
+    search_schema,
+)
 from tests.helpers import ROOT
 
 pytestmark = pytest.mark.integration
@@ -238,6 +248,52 @@ class TestStructure:
     ) -> None:
         with pytest.raises(ToolError, match=message):
             tools["describe_table"].call(arguments)
+
+
+class TestSavedQueries:
+    """The group's own SQL, run by name: the rows come back as run_select's would."""
+
+    @pytest.fixture
+    def saved(self, tmp_path: Path) -> SavedQueries:
+        path = tmp_path / "queries.conf"
+        path.write_text(
+            "[orders_total]\nen = Count of orders\nru = Число заказов\n"
+            "query = SELECT count(*) AS orders FROM mcp_it.orders\n",
+            encoding="utf-8",
+        )
+        return SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(path)})
+
+    def test_rows_under_the_description_header(self, db: Database, saved: SavedQueries) -> None:
+        lines = run_saved_query(db, saved, "orders_total")
+        assert lines[0] == "orders_total: Count of orders"
+        assert lines[1] == "orders"
+        assert int(lines[2]) == 1000
+        assert lines[3] == "(1 row)"
+
+    def test_the_row_limit_of_run_select_holds(self, db: Database, tmp_path: Path) -> None:
+        path = tmp_path / "many.conf"
+        path.write_text("[ids]\nquery = SELECT id FROM mcp_it.orders ORDER BY id\n", encoding="utf-8")
+        lines = run_saved_query(db, SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(path)}), "ids")
+        assert len(lines) == 203  # the header, the column line, 200 rows and the "there are more" line
+        assert "there are more" in lines[-1]
+
+    def test_the_description_follows_the_servers_language(self, db: Database, saved: SavedQueries) -> None:
+        with i18n.speaking("ru"):
+            assert run_saved_query(db, saved, "orders_total")[0] == "orders_total: Число заказов"
+
+    def test_the_query_log_names_the_saved_query_not_the_sql(
+        self, db: Database, saved: SavedQueries, tmp_path: Path
+    ) -> None:
+        log = tmp_path / "queries.jsonl"
+        tools = by_name(build_tools(db, str(ROOT), profile="analyst", saved=saved, query_log=QueryLog(str(log), db)))
+        tools["run_saved_query"].call({"name": "orders_total"})
+        entry = json.loads(log.read_text(encoding="utf-8"))
+        assert (entry["tool"], entry["arguments"]) == ("run_saved_query", {"name": "orders_total"})
+        assert entry["rows"] == 1
+
+    def test_status_names_the_file(self, db: Database, saved: SavedQueries) -> None:
+        tools = by_name(build_tools(db, str(ROOT), saved=saved))
+        assert any(line.startswith("saved queries: 1 query from ") for line in tools["status"].call({}).splitlines())
 
 
 class TestGlossary:

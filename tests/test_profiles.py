@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from pg_explorer_mcp.db import Database
+from pg_explorer_mcp.queries import SavedQueries
 from pg_explorer_mcp.tools import PROFILES, Tool, build_tools, profile_from_env
 from tests.helpers import ROOT
 
@@ -33,9 +36,22 @@ def test_unknown_profile_falls_back_to_the_strictest_with_a_warning() -> None:
     assert "warning: PG_EXPLORER_MCP_PROFILE='admin'" in status
 
 
+# run_saved_query is offered only when the group saved queries (queries.py): its place in the list,
+# not its presence, is what the profile decides.
+OFFERED_WITHOUT_SAVED = tuple(name for name in PROFILES["analyst"] if name != "run_saved_query")
+
+
 @pytest.mark.parametrize(("profile", "names"), PROFILES.items())
 def test_each_profile_offers_its_tools_in_a_fixed_order(profile: str, names: tuple[str, ...]) -> None:
-    assert tuple(tools_for(profile)) == names
+    assert tuple(tools_for(profile)) == tuple(name for name in names if name != "run_saved_query")
+
+
+def test_saved_queries_add_their_tool_where_the_profile_says(tmp_path: Path) -> None:
+    file = tmp_path / "queries.conf"
+    file.write_text("[one]\nquery = SELECT 1\n", encoding="utf-8")
+    saved = SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(file)})
+    tools = build_tools(Database({"PGPORT": "not-a-number"}), str(ROOT), profile="analyst", saved=saved)
+    assert tuple(tool.name for tool in tools) == PROFILES["analyst"]
 
 
 def test_only_analysts_may_ask_explain_to_run_the_query() -> None:
