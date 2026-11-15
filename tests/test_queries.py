@@ -61,7 +61,8 @@ class TestReading:
         path = tmp_path / "queries.conf"
         found = saved(path, "[one]\nquery = SELECT 1\n")
         assert found.names() == ["one"]
-        path.write_text("[two]\nquery = SELECT 2\n", encoding="utf-8")
+        # Another size, as on Windows the timestamps of two writes in one tick can come out equal.
+        path.write_text("[two]\nquery = SELECT 2222\n", encoding="utf-8")
         assert found.refresh() is True
         assert found.names() == ["two"]
         assert found.refresh() is False
