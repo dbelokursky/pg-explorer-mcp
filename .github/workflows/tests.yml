@@ -27,6 +27,7 @@ jobs:
   lint:
     name: lint (ruff, mypy, vendor)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -43,6 +44,7 @@ jobs:
   unit:
     name: unit (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +66,7 @@ jobs:
     # it must reach the server that install.py registered and see the extension.
     name: real client (Qwen Code)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -93,6 +96,7 @@ jobs:
     # the runner's own PostgreSQL 17, which the image ships stopped, with the password "root".
     name: integration (Windows, PostgreSQL 17)
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       PG_EXPLORER_MCP_IT: "1"
       PGHOST: localhost
@@ -126,6 +130,7 @@ jobs:
   integration:
     name: integration (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -170,6 +175,7 @@ jobs:
     # code from develop, so a line here naming the package would break when develop renames it.
     name: export to pgAdmin
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       PGADMIN_IMAGE: dpage/pgadmin4:9.18
     steps:
