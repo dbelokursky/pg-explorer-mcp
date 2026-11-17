@@ -19,10 +19,12 @@ import socket
 import subprocess
 import time
 from collections.abc import Iterator
+from contextlib import suppress
 
 import pg8000.native
 import pytest
 from testcontainers.core.container import DockerContainer
+from testcontainers.core.network import Network
 
 from pg_explorer_mcp.db import Database, Settings
 from pg_explorer_mcp.tools import Tool, build_tools
@@ -44,7 +46,7 @@ def free_port() -> int:
 def pooler(own_postgres: object | None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
     """PG* variables that point at a pgbouncer in transaction mode in front of the test database."""
     if own_postgres is not None:
-        yield from _pooler_container()
+        yield from _pooler_container(own_postgres)
         return
     if shutil.which("pgbouncer") is None:
         pytest.skip("needs pgbouncer on PATH (or the run's own PostgreSQL container for one beside it)")
@@ -93,19 +95,24 @@ def pooler(own_postgres: object | None, tmp_path_factory: pytest.TempPathFactory
         process.wait(timeout=10)
 
 
-def _pooler_container() -> Iterator[dict[str, str]]:
-    """A pgbouncer container in front of this run's PostgreSQL container, in transaction mode.
+def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
+    """A pgbouncer container beside this run's PostgreSQL container, on one Docker network.
 
-    The pooler reaches the database the way any container reaches a port of the host: through
-    host.docker.internal, which the extra host makes work on Linux runners too. The reset and the
-    prepared statements are set the same way the host process's ini sets them.
+    The pooler reaches the database by its alias on that network, not through a port of the host:
+    a published port is not promised to answer from another container. The reset and the prepared
+    statements are set the way the host process's ini sets them.
     """
     settings = Settings.from_env(os.environ)
+    container_id = postgres.get_wrapped_container().id  # type: ignore[attr-defined]
+    network = Network().create()
+    network.connect(container_id, network_aliases=["it-postgres"])
     bouncer = (
         DockerContainer(os.environ.get("PG_EXPLORER_MCP_PGBOUNCER_IMAGE", DEFAULT_PGBOUNCER_IMAGE))
+        .with_network(network)
+        .with_network_aliases("it-pgbouncer")
         .with_exposed_ports(5432)
-        .with_env("DB_HOST", "host.docker.internal")
-        .with_env("DB_PORT", str(settings.port))
+        .with_env("DB_HOST", "it-postgres")
+        .with_env("DB_PORT", "5432")
         .with_env("DB_NAME", settings.database)
         .with_env("DB_USER", settings.user)
         .with_env("DB_PASSWORD", settings.password or "")
@@ -117,7 +124,6 @@ def _pooler_container() -> Iterator[dict[str, str]]:
         .with_env("SERVER_RESET_QUERY", "DISCARD ALL")
         .with_env("SERVER_RESET_QUERY_ALWAYS", "1")
         .with_env("MAX_PREPARED_STATEMENTS", "0")
-        .with_kwargs(extra_hosts={"host.docker.internal": "host-gateway"})
     )
     bouncer.start()
     port = int(bouncer.get_exposed_port(5432))
@@ -129,7 +135,7 @@ def _pooler_container() -> Iterator[dict[str, str]]:
         except OSError:
             time.sleep(0.2)
     else:
-        bouncer.stop()
+        _take_down(bouncer, network, container_id)
         pytest.fail("the pgbouncer container did not come to listen")
     try:
         yield {
@@ -143,7 +149,15 @@ def _pooler_container() -> Iterator[dict[str, str]]:
             "PG_EXPLORER_MCP_LANG": "en",
         }
     finally:
-        bouncer.stop()
+        _take_down(bouncer, network, container_id)
+
+
+def _take_down(bouncer: DockerContainer, network: Network, postgres_id: str) -> None:
+    bouncer.stop()
+    with suppress(Exception):  # the database container outlives this test: it only leaves the network
+        network._docker.client.disconnect_container_from_network(network.id, postgres_id)
+    with suppress(Exception):
+        network.remove()
 
 
 @pytest.fixture(scope="module")
