@@ -64,9 +64,10 @@ def _start_postgres() -> bool:
     try:
         container = PostgresContainer(
             os.environ.get("PG_EXPLORER_MCP_IT_IMAGE", DEFAULT_IMAGE),
-            # The tests create databases and roles, so the superuser it is.
+            # The tests create databases and roles, so the superuser it is; the password is this
+            # throwaway container's own, not a secret anywhere.
             username="postgres",
-            password="postgres",
+            password="postgres",  # noqa: S106
             dbname="postgres",
         )
         container.start()
