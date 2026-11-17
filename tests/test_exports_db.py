@@ -15,10 +15,9 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
-from tests.helpers import it_suffix
-
 from pg_explorer_mcp import exports
 from pg_explorer_mcp.db import Settings
+from tests.helpers import it_suffix
 
 pytestmark = pytest.mark.integration
 
