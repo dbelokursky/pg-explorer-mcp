@@ -104,7 +104,8 @@ def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
     settings = Settings.from_env(os.environ)
     wrapped = postgres.get_wrapped_container()  # type: ignore[attr-defined]
     wrapped.reload()
-    address = wrapped.attrs["NetworkSettings"]["Networks"]["bridge"]["IPAddress"]
+    attached = wrapped.attrs["NetworkSettings"]["Networks"]
+    address = next(iter(attached.values()))["IPAddress"]  # bridge, or whatever network it is on
     bouncer = (
         DockerContainer(os.environ.get("PG_EXPLORER_MCP_PGBOUNCER_IMAGE", DEFAULT_PGBOUNCER_IMAGE))
         .with_exposed_ports(5432)
@@ -132,8 +133,22 @@ def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
         except OSError:
             time.sleep(0.2)
     else:
-        bouncer.stop()
-        pytest.fail(f"the pgbouncer container did not come to listen (backend at {address})")
+        _give_up(bouncer, address)
+    try:  # the pooler is up: prove the database behind it answers, or say why it does not
+        probe = pg8000.native.Connection(
+            user=settings.user,
+            password=settings.password,
+            host="127.0.0.1",
+            port=port,
+            database=settings.database,
+            ssl_context=False,
+        )
+        try:
+            probe.run("SELECT 1")
+        finally:
+            probe.close()
+    except Exception as exc:
+        _give_up(bouncer, address, f"through the pooler: {type(exc).__name__}: {exc}")
     try:
         yield {
             "PGHOST": "127.0.0.1",
@@ -147,6 +162,12 @@ def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
         }
     finally:
         bouncer.stop()
+
+
+def _give_up(bouncer: DockerContainer, address: str, why: str = "never came to listen") -> None:
+    logs = bouncer.get_logs()[1].decode("utf-8", "replace")[-1500:] if bouncer.get_logs() else ""
+    bouncer.stop()
+    pytest.fail(f"the pgbouncer container ({why}, backend at {address}):\n{logs}")
 
 
 @pytest.fixture(scope="module")
