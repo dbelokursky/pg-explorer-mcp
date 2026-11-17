@@ -3,8 +3,12 @@
 pgbouncer here serves each transaction from any server session and resets the session in between
 (DISCARD ALL), so what the server SET when it connected is gone by the next call, and a prepared
 statement does not live from one message to the next. The tools must work all the same: every call is
-one transaction that carries its own limits (db.transaction_start). Needs pgbouncer on PATH besides
-PG_EXPLORER_MCP_IT=1 and the PG* variables; skipped otherwise.
+one transaction that carries its own limits (db.transaction_start).
+
+With this run's own PostgreSQL container, pgbouncer runs in a container beside it (the image is
+PG_EXPLORER_MCP_PGBOUNCER_IMAGE's, edoburu/pgbouncer by default), so the tests need nothing on the
+host. With an external database it is a process on the host, started here with its own ini, and
+needs pgbouncer on PATH; without either, the tests skip.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from collections.abc import Iterator
 
 import pg8000.native
 import pytest
+from testcontainers.core.container import DockerContainer
 
 from pg_explorer_mcp.db import Database, Settings
 from pg_explorer_mcp.tools import Tool, build_tools
@@ -26,6 +31,7 @@ from tests.helpers import ROOT, it_suffix
 pytestmark = pytest.mark.integration
 
 SCHEMA = f"mcp_it_pool{it_suffix()}"
+DEFAULT_PGBOUNCER_IMAGE = "edoburu/pgbouncer:latest"  # the image publishes no version tags: the override is the pin
 
 
 def free_port() -> int:
@@ -35,10 +41,13 @@ def free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def pooler(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
+def pooler(own_postgres: object | None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
     """PG* variables that point at a pgbouncer in transaction mode in front of the test database."""
+    if own_postgres is not None:
+        yield from _pooler_container()
+        return
     if shutil.which("pgbouncer") is None:
-        pytest.skip("needs pgbouncer on PATH")
+        pytest.skip("needs pgbouncer on PATH (or the run's own PostgreSQL container for one beside it)")
     settings = Settings.from_env(os.environ)
     folder = tmp_path_factory.mktemp("pgbouncer")
     port = free_port()
@@ -82,6 +91,59 @@ def pooler(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]
     finally:
         process.terminate()
         process.wait(timeout=10)
+
+
+def _pooler_container() -> Iterator[dict[str, str]]:
+    """A pgbouncer container in front of this run's PostgreSQL container, in transaction mode.
+
+    The pooler reaches the database the way any container reaches a port of the host: through
+    host.docker.internal, which the extra host makes work on Linux runners too. The reset and the
+    prepared statements are set the same way the host process's ini sets them.
+    """
+    settings = Settings.from_env(os.environ)
+    bouncer = (
+        DockerContainer(os.environ.get("PG_EXPLORER_MCP_PGBOUNCER_IMAGE", DEFAULT_PGBOUNCER_IMAGE))
+        .with_exposed_ports(5432)
+        .with_env("DB_HOST", "host.docker.internal")
+        .with_env("DB_PORT", str(settings.port))
+        .with_env("DB_NAME", settings.database)
+        .with_env("DB_USER", settings.user)
+        .with_env("DB_PASSWORD", settings.password or "")
+        .with_env("ADMIN_USERS", settings.user)
+        # plain, not trust: the image writes the password into its userlist as plain text then,
+        # which is the only form pgbouncer can answer SCRAM with both ways.
+        .with_env("AUTH_TYPE", "plain")
+        .with_env("POOL_MODE", "transaction")
+        .with_env("SERVER_RESET_QUERY", "DISCARD ALL")
+        .with_env("SERVER_RESET_QUERY_ALWAYS", "1")
+        .with_env("MAX_PREPARED_STATEMENTS", "0")
+        .with_kwargs(extra_hosts={"host.docker.internal": "host-gateway"})
+    )
+    bouncer.start()
+    port = int(bouncer.get_exposed_port(5432))
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                break
+        except OSError:
+            time.sleep(0.2)
+    else:
+        bouncer.stop()
+        pytest.fail("the pgbouncer container did not come to listen")
+    try:
+        yield {
+            "PGHOST": "127.0.0.1",
+            "PGPORT": str(port),
+            "PGDATABASE": settings.database,
+            "PGUSER": settings.user,
+            "PGPASSWORD": settings.password or "",
+            "PGSSLMODE": "disable",
+            "PG_EXPLORER_MCP_SEARCH_PATH": SCHEMA,
+            "PG_EXPLORER_MCP_LANG": "en",
+        }
+    finally:
+        bouncer.stop()
 
 
 @pytest.fixture(scope="module")
