@@ -14,12 +14,12 @@ import pytest
 
 from pg_explorer_mcp.db import Database
 from pg_explorer_mcp.tools import Tool, ToolError, build_tools
-from tests.helpers import ROOT
+from tests.helpers import ROOT, it_suffix
 
 pytestmark = pytest.mark.integration
 
-DATABASE = "pg_mcp_demo_it"
-ROLE = "mcp_demo_it_agent"
+DATABASE = f"pg_mcp_demo_it{it_suffix()}"
+ROLE = f"mcp_demo_it_agent{it_suffix()}"
 PASSWORD = "demo-it"  # noqa: S105
 
 

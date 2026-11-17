@@ -34,13 +34,13 @@ from pg_explorer_mcp.tools import (
     run_saved_query,
     search_schema,
 )
-from tests.helpers import ROOT
+from tests.helpers import ROOT, it_suffix
 
 pytestmark = pytest.mark.integration
 
-SCHEMA = "mcp_it"  # PostgreSQL reserves the pg_ prefix for system schemas
+SCHEMA = f"mcp_it{it_suffix()}"  # PostgreSQL reserves the pg_ prefix for system schemas
 SLOW_STATEMENT = "SELECT count(*) FROM generate_series(1, 1000000000)"  # minutes of work, no pg_sleep needed
-ARCHIVE = "mcp_it_archive"
+ARCHIVE = f"mcp_it_archive{it_suffix()}"
 
 FIXTURES = (
     f"DROP SCHEMA IF EXISTS {SCHEMA}, {ARCHIVE} CASCADE",
@@ -157,8 +157,11 @@ class TestStructure:
         first = f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов"
         assert lines_of(tools["describe_table"], table=f"{SCHEMA}.orders", schema="no_such_schema")[0] == first
         assert lines_of(tools["sample_rows"], table=f"{SCHEMA}.customers", schema="public")[0] == f"{SCHEMA}.customers:"
-        with pytest.raises(ToolError, match=f"orders.*{SCHEMA}.orders, {ARCHIVE}.orders"):  # two tables of that name
+        with pytest.raises(ToolError, match=r"orders.*several schemas") as caught:  # two tables of that name
             tools["describe_table"].call({"table": "orders", "schema": "no_such_schema"})
+        named = str(caught.value)
+        assert f"{SCHEMA}.orders" in named
+        assert f"{ARCHIVE}.orders" in named
 
     def test_a_system_schema_is_left_out_and_not_called_closed(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="Schema 'pg_catalog' is a system one"):
@@ -232,22 +235,25 @@ class TestStructure:
         )
 
     @pytest.mark.parametrize(
-        ("arguments", "message"),
+        ("arguments", "expected"),
         [
-            ({"table": "orders"}, f"{SCHEMA}.orders, {ARCHIVE}.orders"),
+            # The names come out in the catalog's COLLATE "C" order, which a run's own schema
+            # suffix can change: the tests take the names, not their order.
+            ({"table": "orders"}, ("several schemas", (f"{SCHEMA}.orders", f"{ARCHIVE}.orders"))),
             (
                 {"table": "order", "schema": SCHEMA},
-                f"Similar names: {SCHEMA}.big_orders, {SCHEMA}.orders, {ARCHIVE}.orders",
+                ("Similar names:", (f"{SCHEMA}.big_orders", f"{SCHEMA}.orders", f"{ARCHIVE}.orders")),
             ),
-            ({"table": "zzz"}, "Call list_tables"),
+            ({"table": "zzz"}, ("Call list_tables", ())),
         ],
         ids=["ambiguous", "similar", "nothing-similar"],
     )
     def test_names_that_do_not_pick_one_table_get_a_hint(
-        self, tools: dict[str, Tool], arguments: dict[str, str], message: str
+        self, tools: dict[str, Tool], arguments: dict[str, str], expected: tuple[str, tuple[str, ...]]
     ) -> None:
-        with pytest.raises(ToolError, match=message):
+        with pytest.raises(ToolError, match=expected[0]) as caught:
             tools["describe_table"].call(arguments)
+        assert all(name in str(caught.value) for name in expected[1])
 
 
 class TestSavedQueries:
@@ -258,7 +264,7 @@ class TestSavedQueries:
         path = tmp_path / "queries.conf"
         path.write_text(
             "[orders_total]\nen = Count of orders\nru = Число заказов\n"
-            "query = SELECT count(*) AS orders FROM mcp_it.orders\n",
+            f"query = SELECT count(*) AS orders FROM {SCHEMA}.orders\n",
             encoding="utf-8",
         )
         return SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(path)})
@@ -272,7 +278,7 @@ class TestSavedQueries:
 
     def test_the_row_limit_of_run_select_holds(self, db: Database, tmp_path: Path) -> None:
         path = tmp_path / "many.conf"
-        path.write_text("[ids]\nquery = SELECT id FROM mcp_it.orders ORDER BY id\n", encoding="utf-8")
+        path.write_text(f"[ids]\nquery = SELECT id FROM {SCHEMA}.orders ORDER BY id\n", encoding="utf-8")
         lines = run_saved_query(db, SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(path)}), "ids")
         assert len(lines) == 203  # the header, the column line, 200 rows and the "there are more" line
         assert "there are more" in lines[-1]
@@ -303,12 +309,12 @@ class TestGlossary:
     def glossary(self, tmp_path: Path) -> Glossary:
         path = tmp_path / "glossary.conf"
         path.write_text(
-            "[table mcp_it.customers]\n"
+            f"[table {SCHEMA}.customers]\n"
             "en = The people who order\n"
             "ru = Люди, которые заказывают\n"
-            "[column mcp_it.orders.total]\n"
+            f"[column {SCHEMA}.orders.total]\n"
             "en = The sum of one order\n"
-            "[table mcp_it.orders]\n"
+            f"[table {SCHEMA}.orders]\n"
             "en = Orders of the shop\n"
             "[term average_receipt]\n"
             "en = Sum of the paid orders of a month\n",
@@ -317,8 +323,8 @@ class TestGlossary:
         return Glossary.from_env({"PG_EXPLORER_MCP_GLOSSARY_FILE": str(path)})
 
     def test_describe_shows_glossary_texts_where_comments_are_absent(self, db: Database, glossary: Glossary) -> None:
-        lines = describe_table(db, "orders", "mcp_it", glossary)
-        assert lines[0].startswith("mcp_it.orders | table |")
+        lines = describe_table(db, "orders", SCHEMA, glossary)
+        assert lines[0].startswith(f"{SCHEMA}.orders | table |")
         assert "Заказы клиентов" in lines[0]  # the database's own comment wins
         assert any(line.strip().startswith("total") and "The sum of one order" in line for line in lines)
 
@@ -326,7 +332,7 @@ class TestGlossary:
         self, db: Database, glossary: Glossary
     ) -> None:
         lines = list_tables(db, "mcp_it", glossary=glossary)
-        customers = next(line for line in lines if line.startswith("mcp_it.customers |"))
+        customers = next(line for line in lines if line.startswith(f"{SCHEMA}.customers |"))
         assert "The people who order" in customers
 
     def test_search_finds_the_groups_own_words_where_the_catalog_has_none(
@@ -342,9 +348,9 @@ class TestGlossary:
     ) -> None:
         lines = search_schema(db, "order", None, glossary=glossary)
         assert lines.count("from the glossary:") == 1
-        assert any(line.startswith("mcp_it.orders |") for line in lines)  # the catalog's match
-        assert "mcp_it.orders.total  -- The sum of one order" in lines  # the glossary's addition
-        assert len([line for line in lines if line.startswith("mcp_it.orders |")]) == 1  # no duplicate
+        assert any(line.startswith(f"{SCHEMA}.orders |") for line in lines)  # the catalog's match
+        assert f"{SCHEMA}.orders.total  -- The sum of one order" in lines  # the glossary's addition
+        assert len([line for line in lines if line.startswith(f"{SCHEMA}.orders |")]) == 1  # no duplicate
 
     def test_status_names_the_glossary(self, db: Database, glossary: Glossary) -> None:
         tools = by_name(build_tools(db, str(ROOT), glossary=glossary))
@@ -590,7 +596,7 @@ class TestDefences:
         assert db.server_info()["read_only"] == "on"
 
 
-ROLE, PASSWORD, ROLE_SCHEMA = "mcp_it_agent", "agent-secret-1", "mcp_it_role"
+ROLE, PASSWORD, ROLE_SCHEMA = f"mcp_it_agent{it_suffix()}", "agent-secret-1", f"mcp_it_role{it_suffix()}"
 
 
 def drop_role(admin: pg8000.native.Connection, role: str) -> None:

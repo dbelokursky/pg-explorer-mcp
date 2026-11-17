@@ -12,11 +12,11 @@ import pytest
 from pg_explorer_mcp import health
 from pg_explorer_mcp.db import Database, QueryFailedError, time_budget
 from pg_explorer_mcp.tools import db_health
-from tests.helpers import MODERN_META, rpc, run_stdio_session
+from tests.helpers import MODERN_META, it_suffix, rpc, run_stdio_session
 from tests.test_db import connect
 
 pytestmark = pytest.mark.integration
-SCHEMA = "mcp_it_health"
+SCHEMA = f"mcp_it_health{it_suffix()}"
 HIDDEN = "mcp_it_health_hidden"
 ROLE = "mcp_it_health_reader"
 
