@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 from collections.abc import Iterator
@@ -34,7 +32,7 @@ from pg_explorer_mcp.tools import (
     run_saved_query,
     search_schema,
 )
-from tests.helpers import ROOT, it_suffix
+from tests.helpers import ROOT, PsqlFile, it_suffix
 
 pytestmark = pytest.mark.integration
 
@@ -606,23 +604,24 @@ def drop_role(admin: pg8000.native.Connection, role: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def agent(admin: pg8000.native.Connection) -> Iterator[Database]:
-    """A role made by docs/role.sql, as a DBA would make it."""
+def agent(admin: pg8000.native.Connection, run_psql_file: PsqlFile | None) -> Iterator[Database]:
+    """A role made by docs/role.sql, run by psql the way a DBA would: in this run's container, or on the host."""
+    if run_psql_file is None:
+        pytest.skip("needs psql: in the run's own container, or on PATH with an external database")
     admin.run(f"DROP SCHEMA IF EXISTS {ROLE_SCHEMA} CASCADE")
     admin.run(f"CREATE SCHEMA {ROLE_SCHEMA}")
     admin.run(f"CREATE TABLE {ROLE_SCHEMA}.items (id int PRIMARY KEY)")
     admin.run(f"INSERT INTO {ROLE_SCHEMA}.items VALUES (1), (2)")
     drop_role(admin, ROLE)
-    subprocess.run(
-        [
-            "psql", "-X", "-q",
-            "-v", f"role={ROLE}", "-v", f"password={PASSWORD}", "-v", f"schemas={ROLE_SCHEMA}",
-            "-v", f"owner={Settings.from_env(os.environ).user}",
-            "-f", str(ROOT / "docs" / "role.sql"),
-        ],
-        check=True,
-        capture_output=True,
-    )  # fmt: skip
+    run_psql_file(
+        ROOT / "docs" / "role.sql",
+        {
+            "role": ROLE,
+            "password": PASSWORD,
+            "schemas": ROLE_SCHEMA,
+            "owner": Settings.from_env(os.environ).user,
+        },
+    )
     database = Database(env_with(PGUSER=ROLE, PGPASSWORD=PASSWORD))
     yield database
     database.close()
@@ -630,7 +629,6 @@ def agent(admin: pg8000.native.Connection) -> Iterator[Database]:
     drop_role(admin, ROLE)
 
 
-@pytest.mark.skipif(shutil.which("psql") is None, reason="needs psql to run docs/role.sql")
 class TestRoleScript:
     """docs/role.sql gives a role that reads the granted schema and cannot write anywhere."""
 

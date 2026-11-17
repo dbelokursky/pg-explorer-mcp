@@ -7,7 +7,7 @@ import os
 import socket
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +59,9 @@ def unreachable_database_env() -> dict[str, str]:
         PG_EXPLORER_MCP_LANG="en",  # not the locale of whoever runs the tests
     )
     return env
+
+
+PsqlFile = Callable[[Path, Mapping[str, str]], None]  # run a SQL file the way a DBA would
 
 
 def it_suffix() -> str:

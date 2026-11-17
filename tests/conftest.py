@@ -12,14 +12,20 @@ version.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+import shutil
+import subprocess
+import tarfile
+from collections.abc import Iterator, Mapping
 from contextlib import suppress
+from io import BytesIO
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 import pg_explorer_mcp  # noqa: F401  (puts the vendored packages, pg8000 among them, on sys.path)
 from pg_explorer_mcp import i18n
-from tests.helpers import unreachable_database_env
+from tests.helpers import PsqlFile, unreachable_database_env
 
 IT_VARIABLES = ("PG_EXPLORER_MCP_IT", "PG_MCP_IT")  # the second name is the one before 0.8.0
 DEFAULT_IMAGE = "postgres:16"
@@ -105,3 +111,66 @@ def russian() -> Iterator[None]:
 def unreachable_env() -> dict[str, str]:
     """PG* variables that point at a local port where nothing listens."""
     return unreachable_database_env()
+
+
+@pytest.fixture(scope="session")
+def own_postgres() -> object | None:
+    """The container this run started, or None when the database came from outside.
+
+    Tests that need a program beside PostgreSQL find it in that container; an external
+    database keeps them on the host, as it always did. pytest_unconfigure stops it.
+    """
+    return _started
+
+
+@pytest.fixture(scope="session")
+def run_psql_file(own_postgres: object | None) -> Iterator[PsqlFile | None]:
+    """A way to run a SQL file with psql the way a DBA would; None when there is no way.
+
+    With this run's own container, psql runs inside it — the version matching the server, over
+    the local socket, the file copied in. With an external database, the host's psql connects
+    the way the PG* variables say. Neither being there is the caller's skip to explain.
+    """
+    if own_postgres is not None:
+
+        def inside(sql: Path, variables: Mapping[str, str]) -> None:
+            wrapped = own_postgres.get_wrapped_container()  # type: ignore[attr-defined]
+            _copy_into(wrapped, f"/tmp/{sql.name}", sql.read_bytes())  # noqa: S108  (the container's /tmp)
+            flags = [f"-v{name}={value}" for name, value in variables.items()]
+            code, (_out, err) = wrapped.exec_run(
+                ["psql", "-X", "-q", *flags, "-f", f"/tmp/{sql.name}"],  # noqa: S108  (the container's /tmp, not the host's)
+                environment={  # exec runs as root: the role is named, and it is the container's superuser
+                    "PGUSER": "postgres",
+                    "PGDATABASE": os.environ.get("PGDATABASE", "postgres"),
+                },
+                demux=True,
+            )
+            if code != 0:
+                tail = (err or b"").decode("utf-8", "replace").strip()[-2000:]
+                raise AssertionError(f"psql in the container failed ({code}): {tail}")
+
+        yield inside
+        return
+
+    if shutil.which("psql") is None:
+        yield None
+        return
+
+    def on_host(sql: Path, variables: Mapping[str, str]) -> None:
+        flags = [f"-v{name}={value}" for name, value in variables.items()]
+        done = subprocess.run(["psql", "-X", "-q", *flags, "-f", str(sql)], capture_output=True, check=False)
+        if done.returncode != 0:
+            tail = done.stderr.decode("utf-8", "replace").strip()[-2000:]
+            raise AssertionError(f"psql failed ({done.returncode}): {tail}")
+
+    yield on_host
+
+
+def _copy_into(wrapped: Any, path: str, data: bytes) -> None:
+    """A file into the container, the way the Docker API takes files: as a tar stream."""
+    stream = BytesIO()
+    with tarfile.open(fileobj=stream, mode="w") as archive:
+        info = tarfile.TarInfo(name=path.rsplit("/", 1)[-1])
+        info.size = len(data)
+        archive.addfile(info, BytesIO(data))
+    wrapped.put_archive("/tmp", stream.getvalue())  # noqa: S108  (the container's /tmp)
