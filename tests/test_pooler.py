@@ -21,11 +21,11 @@ import pytest
 
 from pg_explorer_mcp.db import Database, Settings
 from pg_explorer_mcp.tools import Tool, build_tools
-from tests.helpers import ROOT
+from tests.helpers import ROOT, it_suffix
 
 pytestmark = pytest.mark.integration
 
-SCHEMA = "mcp_it_pool"
+SCHEMA = f"mcp_it_pool{it_suffix()}"
 
 
 def free_port() -> int:

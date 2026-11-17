@@ -27,14 +27,16 @@ from pg_explorer_mcp.querylog import QueryLog
 from pg_explorer_mcp.stand_tools import build_stand_tools
 from pg_explorer_mcp.stands import Pool, load_registry
 from pg_explorer_mcp.tools import Tool, ToolError
-from tests.helpers import ROOT, unreachable_database_env
+from tests.helpers import ROOT, it_suffix, unreachable_database_env
 
 pytestmark = pytest.mark.integration
 
-BILLING = "mcp_it_billing"
-ORDERS = "mcp_it_orders"
-READER = "mcp_it_reader"  # a role that reads both schemas of the first database, and has no schema of its own
-OTHER_DATABASE = "mcp_it_stand"  # a second database: the stand that points at it answers differently
+BILLING = f"mcp_it_billing{it_suffix()}"
+ORDERS = f"mcp_it_orders{it_suffix()}"
+READER = (
+    f"mcp_it_reader{it_suffix()}"  # a role that reads both schemas of the first database, and has no schema of its own
+)
+OTHER_DATABASE = f"mcp_it_stand{it_suffix()}"  # a second database: the stand that points at it answers differently
 PASSWORDS = {BILLING: "billing-secret", ORDERS: "orders-secret", READER: "reader-secret"}
 
 FIXTURES = (

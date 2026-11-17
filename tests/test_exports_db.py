@@ -17,10 +17,11 @@ import pytest
 
 from pg_explorer_mcp import exports
 from pg_explorer_mcp.db import Settings
+from tests.helpers import it_suffix
 
 pytestmark = pytest.mark.integration
 
-SCHEMA = "mcp_it_export"
+SCHEMA = f"mcp_it_export{it_suffix()}"
 
 
 @pytest.fixture
