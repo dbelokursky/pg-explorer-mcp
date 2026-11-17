@@ -55,10 +55,11 @@ def certificates(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         ["req", *new_key, "-keyout", key, "-out", request, "-subj", f"/CN={HOSTNAME}"],
         ["x509", "-req", "-in", request, "-CA", ca, "-CAkey", ca_key, "-CAcreateserial", "-out", cert, *san],
     ]  # fmt: skip
+
+    def run(parts: list[object]) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(["openssl", *map(str, parts), "-days", "3650"], capture_output=True, check=False)
+
     for command in commands:
-        run = lambda parts: subprocess.run(  # noqa: E731
-            ["openssl", *map(str, parts), "-days", "3650"], capture_output=True, check=False
-        )
         completed = run(command)
         if completed.returncode != 0 and command[0] == "req" and "-addext" in command:
             plain = command[: command.index("-addext")]  # an OpenSSL without -addext: try without
