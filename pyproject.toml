@@ -36,6 +36,7 @@ dev = [
     "pytest>=8.4",
     "pytest-cov>=7.0",
     "ruff>=0.17",
+    "testcontainers[postgres]>=4.13.0",
 ]
 
 [tool.ruff]
@@ -91,6 +92,11 @@ module = ["pg8000", "pg8000.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# Dev-only: the container the integration tests may start (tests/conftest.py).
+module = ["testcontainers", "testcontainers.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
@@ -100,6 +106,10 @@ minversion = "8.4"
 testpaths = ["tests"]
 pythonpath = [".", "scripts"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+filterwarnings = [
+    # testcontainers 4.x still waits the deprecated way inside its own PostgresContainer
+    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers.*",
+]
 markers = ["integration: needs a real PostgreSQL (run with PG_EXPLORER_MCP_IT=1 and the usual PG* variables)"]
 xfail_strict = true
 
