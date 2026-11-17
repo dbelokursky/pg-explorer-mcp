@@ -19,12 +19,10 @@ import socket
 import subprocess
 import time
 from collections.abc import Iterator
-from contextlib import suppress
 
 import pg8000.native
 import pytest
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.network import Network
 
 from pg_explorer_mcp.db import Database, Settings
 from pg_explorer_mcp.tools import Tool, build_tools
@@ -96,22 +94,21 @@ def pooler(own_postgres: object | None, tmp_path_factory: pytest.TempPathFactory
 
 
 def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
-    """A pgbouncer container beside this run's PostgreSQL container, on one Docker network.
+    """A pgbouncer container beside this run's PostgreSQL container, both on Docker's bridge.
 
-    The pooler reaches the database by its alias on that network, not through a port of the host:
-    a published port is not promised to answer from another container. The reset and the prepared
-    statements are set the way the host process's ini sets them.
+    The pooler reaches the database by its address on that bridge, container port to container
+    port: no published port of the host is promised to answer from a container, and moving the
+    database container to another network has broken its published port on CI runners. The reset
+    and the prepared statements are set the way the host process's ini sets them.
     """
     settings = Settings.from_env(os.environ)
-    container_id = postgres.get_wrapped_container().id  # type: ignore[attr-defined]
-    network = Network().create()
-    network.connect(container_id, network_aliases=["it-postgres"])
+    wrapped = postgres.get_wrapped_container()  # type: ignore[attr-defined]
+    wrapped.reload()
+    address = wrapped.attrs["NetworkSettings"]["Networks"]["bridge"]["IPAddress"]
     bouncer = (
         DockerContainer(os.environ.get("PG_EXPLORER_MCP_PGBOUNCER_IMAGE", DEFAULT_PGBOUNCER_IMAGE))
-        .with_network(network)
-        .with_network_aliases("it-pgbouncer")
         .with_exposed_ports(5432)
-        .with_env("DB_HOST", "it-postgres")
+        .with_env("DB_HOST", address)
         .with_env("DB_PORT", "5432")
         .with_env("DB_NAME", settings.database)
         .with_env("DB_USER", settings.user)
@@ -135,8 +132,8 @@ def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
         except OSError:
             time.sleep(0.2)
     else:
-        _take_down(bouncer, network, container_id)
-        pytest.fail("the pgbouncer container did not come to listen")
+        bouncer.stop()
+        pytest.fail(f"the pgbouncer container did not come to listen (backend at {address})")
     try:
         yield {
             "PGHOST": "127.0.0.1",
@@ -149,15 +146,7 @@ def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
             "PG_EXPLORER_MCP_LANG": "en",
         }
     finally:
-        _take_down(bouncer, network, container_id)
-
-
-def _take_down(bouncer: DockerContainer, network: Network, postgres_id: str) -> None:
-    bouncer.stop()
-    with suppress(Exception):  # the database container outlives this test: it only leaves the network
-        network._docker.client.disconnect_container_from_network(network.id, postgres_id)
-    with suppress(Exception):
-        network.remove()
+        bouncer.stop()
 
 
 @pytest.fixture(scope="module")
