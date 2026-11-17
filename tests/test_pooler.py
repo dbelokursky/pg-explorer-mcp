@@ -147,7 +147,7 @@ def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
             probe.run("SELECT 1")
         finally:
             probe.close()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # Some Docker setups close container-to-container traffic on the bridge (CI runners do):
         # the pooler cannot reach the database there, and that is the environment's word, not a bug.
         # The host-binary path covers such setups when the binary is there; CI integration jobs have it.
