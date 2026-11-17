@@ -135,7 +135,7 @@ def run_psql_file(own_postgres: object | None) -> Iterator[PsqlFile | None]:
 
         def inside(sql: Path, variables: Mapping[str, str]) -> None:
             wrapped = own_postgres.get_wrapped_container()  # type: ignore[attr-defined]
-            _copy_into(wrapped, f"/tmp/{sql.name}", sql.read_bytes())
+            _copy_into(wrapped, f"/tmp/{sql.name}", sql.read_bytes())  # noqa: S108  (the container's /tmp)
             flags = [f"-v{name}={value}" for name, value in variables.items()]
             code, (_out, err) = wrapped.exec_run(
                 ["psql", "-X", "-q", *flags, "-f", f"/tmp/{sql.name}"],  # noqa: S108  (the container's /tmp, not the host's)
@@ -173,4 +173,4 @@ def _copy_into(wrapped: Any, path: str, data: bytes) -> None:
         info = tarfile.TarInfo(name=path.rsplit("/", 1)[-1])
         info.size = len(data)
         archive.addfile(info, BytesIO(data))
-    wrapped.put_archive("/tmp", stream.getvalue())
+    wrapped.put_archive("/tmp", stream.getvalue())  # noqa: S108  (the container's /tmp)
