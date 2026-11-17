@@ -109,6 +109,7 @@ addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importli
 filterwarnings = [
     # testcontainers 4.x still waits the deprecated way inside its own PostgresContainer
     "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers.*",
+    "ignore:testcontainers.postgres is deprecated:DeprecationWarning",
 ]
 markers = ["integration: needs a real PostgreSQL (run with PG_EXPLORER_MCP_IT=1 and the usual PG* variables)"]
 xfail_strict = true

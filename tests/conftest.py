@@ -57,10 +57,13 @@ def _start_postgres() -> bool:
     Returns False, leaving everything as it was, when Docker is not there or cannot start it.
     """
     global _started  # noqa: PLW0603
-    try:
-        from testcontainers.postgres import PostgresContainer  # noqa: PLC0415  (dev-only, and only here)
-    except ImportError:  # a checkout without dev dependencies: the skips explain the rest
-        return False
+    try:  # 4.15 moved the module; 4.13, the one Python 3.9 resolves to, has only the old one
+        from testcontainers.community.postgres import PostgresContainer  # noqa: PLC0415  (dev-only, and only here)
+    except ImportError:
+        try:
+            from testcontainers.postgres import PostgresContainer  # noqa: PLC0415
+        except ImportError:  # a checkout without dev dependencies: the skips explain the rest
+            return False
     try:
         container = PostgresContainer(
             os.environ.get("PG_EXPLORER_MCP_IT_IMAGE", DEFAULT_IMAGE),

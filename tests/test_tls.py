@@ -48,12 +48,20 @@ def certificates(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     new_key = ("-newkey", "rsa:2048", "-nodes")
     san = ["-extfile", extensions]
     commands = [
-        ["req", "-x509", *new_key, "-keyout", ca_key, "-out", ca, "-subj", "/CN=pg-explorer-mcp test CA"],
+        # A CA that names what it may do: OpenSSL 3.5 (Python 3.14) rejects an authority
+        # without keyUsage. Old OpenSSL and LibreSSL refuse -addext, so it is tried and dropped.
+        ["req", "-x509", *new_key, "-keyout", ca_key, "-out", ca, "-subj", "/CN=pg-explorer-mcp test CA",
+         "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign"],
         ["req", *new_key, "-keyout", key, "-out", request, "-subj", f"/CN={HOSTNAME}"],
         ["x509", "-req", "-in", request, "-CA", ca, "-CAkey", ca_key, "-CAcreateserial", "-out", cert, *san],
     ]  # fmt: skip
     for command in commands:
-        subprocess.run(["openssl", *map(str, command), "-days", "3650"], check=True, capture_output=True)
+        completed = subprocess.run(["openssl", *map(str, command), "-days", "3650"], capture_output=True, check=False)
+        if completed.returncode != 0 and command[0] == "req" and "-addext" in command:
+            command = [part for index, part in enumerate(command) if index < command.index("-addext")]
+            completed = subprocess.run(["openssl", *map(str, command), "-days", "3650"], check=True, capture_output=True)
+        elif completed.returncode != 0:
+            completed.check_returncode()
     return {"ca": ca, "cert": cert, "key": key}
 
 
