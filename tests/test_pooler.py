@@ -165,7 +165,8 @@ def _pooler_container(postgres: object) -> Iterator[dict[str, str]]:
 
 
 def _give_up(bouncer: DockerContainer, address: str, why: str = "never came to listen") -> None:
-    logs = bouncer.get_logs()[1].decode("utf-8", "replace")[-1500:] if bouncer.get_logs() else ""
+    out, err = bouncer.get_logs()
+    logs = (out + err).decode("utf-8", "replace")[-1500:]
     bouncer.stop()
     pytest.fail(f"the pgbouncer container ({why}, backend at {address}):\n{logs}")
 
