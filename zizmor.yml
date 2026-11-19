@@ -1,0 +1,6 @@
+# zizmor reads this for the whole repository; the CI lint job runs it on every pull request.
+# The Qwen Code smoke installs one pinned version of the client it tests with: there is no
+# application lockfile to speak of, and the version comes from the workflow, not from a branch.
+rules:
+  adhoc-packages:
+    disable: true
