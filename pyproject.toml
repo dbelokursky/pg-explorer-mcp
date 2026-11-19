@@ -31,6 +31,7 @@ pg-explorer-mcp = "pg_explorer_mcp.__main__:main"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.141.1",
     # mypy 2 cannot check code for Python 3.9 any more; move on together with requires-python.
     "mypy>=1.19,<2",
     "pytest>=8.4",
