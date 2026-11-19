@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from pg_explorer_mcp import clients, environment, exports, i18n, imports
 from pg_explorer_mcp.i18n import t
+from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
 
 MIN_PYTHON = (3, 9)
 ROOT = Path(__file__).resolve().parent
@@ -61,6 +62,8 @@ COPIED_ENV = (
     "PG_EXPLORER_MCP_MAX_RESPONSE_CHARS",
     "PG_EXPLORER_MCP_PROFILE",
     "PG_EXPLORER_MCP_QUERY_LOG",
+    "PG_EXPLORER_MCP_GLOSSARY_FILE",
+    "PG_EXPLORER_MCP_QUERIES_FILE",
     "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S",
     # many stands in one entry (ADR 0006)
     "PG_EXPLORER_MCP_STANDS",
@@ -73,7 +76,7 @@ YES = ("y", "yes", "д", "да")
 
 
 def shell_env() -> dict[str, str]:
-    """This shell's variables, with the PG_MCP_* names of pg-mcp 0.7.0 read as their new twins."""
+    """The shell's variables, with the PG_MCP_* names of pg-mcp 0.7.0 read as their new twins."""
     return environment.with_legacy_names(os.environ)
 
 
@@ -83,6 +86,7 @@ def server_name(name: str | None = None) -> str:
 
 
 def server_entry(profile: str | None = None, language: str | None = None, name: str | None = None) -> dict[str, Any]:
+    """The pg entry for the agent settings, as the agent will start it."""
     entry: dict[str, Any] = {"command": sys.executable, "args": ["-I", RUN_PY], "timeout": 30000}
     shell = shell_env()
     env = {variable: shell[variable] for variable in COPIED_ENV if shell.get(variable)}
@@ -96,6 +100,7 @@ def server_entry(profile: str | None = None, language: str | None = None, name: 
 
 
 def register(settings_path: str | Path, entry: dict[str, Any], name: str = SERVER_NAME) -> None:
+    """Write the entry into the settings file, under its name."""
     path = Path(settings_path)
     settings: Any = {}
     if path.exists():
@@ -126,7 +131,9 @@ def check(entry: dict[str, Any]) -> bool:
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                # The newest revision the server speaks: the check exercises the protocol the
+                # newest clients use, and there is one place now for the version to live.
+                "protocolVersion": SUPPORTED_PROTOCOL_VERSIONS[0],
                 "capabilities": {},
                 "clientInfo": {"name": "pg-explorer-mcp install.py"},
             },
@@ -179,6 +186,7 @@ def _name(value: str) -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Everything install.py does, from arguments to the check at the end."""
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             # Through a pipe, as an agent runs this script, Python writes in the system code page,
@@ -393,9 +401,12 @@ def _datagrip_connections(project: Path | None) -> list[imports.Connection] | No
 
 
 def offer_import(language: str) -> None:
-    """When DBeaver or a JetBrains IDE has connections on this machine: at a terminal, offer to show what an import
-    would do; otherwise name the command that shows it, for the agent that runs install.py with no terminal to
-    answer (/pg:setup). Both found make one question, not two in a row."""
+    """Offer the import preview when DBeaver or a JetBrains IDE has connections on this machine.
+
+    At a terminal, the offer is to show what an import would do; otherwise the command that shows
+    it is named, for the agent that runs install.py with no terminal to answer (/pg:setup). Both
+    found make one question, not two in a row.
+    """
     found: dict[str, str] = {}  # the source to import from, and where its connections were found
     dbeaver = imports.dbeaver_workspace(shell_env())
     if dbeaver is not None:

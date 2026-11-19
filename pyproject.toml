@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 # pg-mcp on PyPI is another project, with a pg_mcp package and a pg-mcp command of its own.
 name = "pg-explorer-mcp"
-version = "0.9.0"
+version = "0.10.0"
 description = "Read-only PostgreSQL MCP server for GigaCode CLI and other agents, with no runtime dependencies"
 readme = "README.md"
 # 3.9 stays because macOS Command Line Tools ship it; see docs/adr/0001-python-stdlib-only.md.
@@ -31,11 +31,14 @@ pg-explorer-mcp = "pg_explorer_mcp.__main__:main"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.141.1",
     # mypy 2 cannot check code for Python 3.9 any more; move on together with requires-python.
     "mypy>=1.19,<2",
     "pytest>=8.4",
     "pytest-cov>=7.0",
+    "pytest-randomly>=4.0.1",
     "ruff>=0.17",
+    "testcontainers[postgres]>=4.13.0",
 ]
 
 [tool.ruff]
@@ -58,18 +61,24 @@ select = [
     "PT",      # pytest style
     "PL",      # pylint
     "RUF",     # ruff-specific
+    "D",       # pydocstyle: this project is its docstrings
 ]
 ignore = [
     "PLR0911", "PLR0912", "PLR0913",  # long protocol and argument checks read better in one place
     "PLR2004",                       # literal limits are named where they matter
+    "D401",                          # the voice here is descriptive, not imperative
+    "D107",                          # a dataclass __init__ documents itself in its fields
+    "D203", "D213",                  # the opposite pair of the blank-line and summary conventions used
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, start subprocesses, build fixture SQL from constants and speak Russian on purpose.
-"tests/**" = ["S101", "S603", "S607", "S608", "PLR0915", "FBT003", "RUF001"]
+"tests/**" = ["S101", "S603", "S607", "S608", "PLR0915", "FBT003", "RUF001", "D"]  # a test's name is its doc
 "install.py" = ["T201", "S603"]
 # The Russian catalog: Cyrillic letters that look Latin are the point there, not a trick.
 "src/pg_explorer_mcp/i18n.py" = ["RUF001"]
+# The glossary docstring holds a Russian example of the file format on purpose.
+"src/pg_explorer_mcp/glossary.py" = ["RUF002"]
 "scripts/**" = ["T201", "S603"]
 
 [tool.ruff.format]
@@ -89,6 +98,11 @@ module = ["pg8000", "pg8000.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# Dev-only: the container the integration tests may start (tests/conftest.py).
+module = ["testcontainers", "testcontainers.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
@@ -98,6 +112,14 @@ minversion = "8.4"
 testpaths = ["tests"]
 pythonpath = [".", "scripts"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+filterwarnings = [
+    # A warning is a finding: it becomes an error unless it is one of these, each named with why.
+    # testcontainers 4.x still waits the deprecated way inside its own PostgresContainer
+    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers.*",
+    "ignore:testcontainers.postgres is deprecated:DeprecationWarning",
+    # the macOS system Python is built with LibreSSL; the developers' machines run it, CI does not
+    "ignore:urllib3 v2 only supports OpenSSL",
+]
 markers = ["integration: needs a real PostgreSQL (run with PG_EXPLORER_MCP_IT=1 and the usual PG* variables)"]
 xfail_strict = true
 

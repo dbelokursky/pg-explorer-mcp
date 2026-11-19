@@ -41,7 +41,7 @@ SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"
 DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
 STATEMENT_GRACE_S = 5  # a socket outwaits the statement timeout, so PostgreSQL's own error comes first
-CURSOR_NAME = "pg_mcp_rows"
+CURSOR_NAME = "pg_explorer_mcp_rows"  # the cursor of read_only: one transaction old, so the rename cost nothing
 
 
 class DatabaseUnavailableError(Exception):
@@ -126,6 +126,7 @@ class Counters:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def count(self, rows: int) -> None:
+        """One more statement has run, returning that many rows."""
         with self._lock:
             self.statements += 1
             self.rows += rows
@@ -141,11 +142,14 @@ class Endpoint:
 
     @property
     def address(self) -> str:
+        """host:port of this endpoint."""
         return f"{self.host}:{self.port}"
 
 
 @dataclass(frozen=True)
 class Settings:
+    """Connection settings read from the PG* variables, as libpq reads them."""
+
     endpoints: tuple[Endpoint, ...]  # the hosts in the order to try them; at least one
     database: str
     user: str
@@ -197,10 +201,12 @@ class Settings:
 
     @property
     def port(self) -> int:
+        """The first host's port: the only one of most settings."""
         return self.endpoints[0].port
 
     @property
     def password(self) -> str | None:
+        """The first host's password: the password file may hold one per host."""
         return self.endpoints[0].password
 
     @property
@@ -209,6 +215,7 @@ class Settings:
         return ",".join(endpoint.address for endpoint in self.endpoints)
 
     def describe(self) -> str:
+        """The settings as one line, user@hosts/database, for errors and status."""
         return f"{self.user}@{self.addresses}/{self.database} (sslmode={self.sslmode})"
 
 
@@ -233,13 +240,16 @@ class Database:
 
     @property
     def statements_run(self) -> int:
+        """Statements this connection has run: for the query log."""
         return self._counters.statements
 
     @property
     def rows_read(self) -> int:
+        """Rows those statements returned: for the query log."""
         return self._counters.rows
 
     def describe_target(self) -> str:
+        """What to answer when the settings do not configure a database: the reason."""
         if self.settings is None:
             return t("db.not_configured", error=self._config_error)
         return self.settings.describe()
@@ -300,6 +310,7 @@ class Database:
         raise AssertionError("unreachable")
 
     def server_info(self) -> dict[str, str]:
+        """Database, role, version, read-only flag and statement timeout, as status shows them."""
         row = self.query(
             "SELECT current_database(), current_user, current_setting('server_version'), "
             "current_setting('transaction_read_only'), current_setting('statement_timeout')"
@@ -308,6 +319,7 @@ class Database:
         return {key: str(value) for key, value in zip(keys, row)}
 
     def close(self) -> None:
+        """Close the session, if one is open; what cannot be closed is gone anyway."""
         if self._conn is not None:
             with contextlib.suppress(Exception):  # the session is gone either way
                 self._conn.close()
@@ -405,8 +417,11 @@ def _open(settings: Settings, endpoint: Endpoint) -> pg8000.native.Connection:
 def _prepared(conn: pg8000.native.Connection, settings: Settings) -> pg8000.native.Connection:
     """The connection with the session set up: read only, the statement timeout, the schema first."""
     # Connecting waited connect_timeout(); a statement may run for statement_timeout_ms,
-    # so from here on the socket waits longer. pg8000 keeps the socket in _usock.
-    conn._usock.settimeout(socket_timeout(settings))
+    # so from here on the socket waits longer. pg8000 keeps the socket in _usock; the guard, so
+    # that a vendored rename costs the longer wait, not every connection with an internal error.
+    socket = getattr(conn, "_usock", None)
+    if socket is not None:
+        socket.settimeout(socket_timeout(settings))
     try:
         # Guardrails, not the security boundary: the role's privileges are. Every transaction sets
         # them again for itself (transaction_start), since a pooler may not keep the session.
@@ -466,9 +481,10 @@ def connect_timeout(settings: Settings) -> int:
 
 
 def socket_timeout(settings: Settings) -> int:
-    """Seconds the connected socket may wait: past the statement timeout, so a slow statement
-    fails with its own error. A socket that gave up first would drop the session, and query()
-    would run the statement again.
+    """Seconds the connected socket may wait.
+
+    Past the statement timeout, so a slow statement fails with its own error. A socket that gave
+    up first would drop the session, and query() would run the statement again.
     """
     return max(connect_timeout(settings), settings.statement_timeout_ms // 1000 + STATEMENT_GRACE_S)
 
@@ -496,6 +512,7 @@ def _dropped(exc: Exception) -> bool:
 
 
 def pgpass_path(env: Mapping[str, str]) -> str:
+    """The password file: PGPASSFILE's, or the psql default of the platform."""
     if env.get("PGPASSFILE"):
         return env["PGPASSFILE"]
     if sys.platform == "win32":

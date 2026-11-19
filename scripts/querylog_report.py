@@ -76,6 +76,7 @@ class Entry:
 
     @property
     def day(self) -> str:
+        """The call's day, as the by-day table groups them."""
         return self.time.date().isoformat()
 
     @property
@@ -201,6 +202,7 @@ class Bucket:
     users: set[str] = field(default_factory=set)
 
     def add(self, outcome: str, entry: Entry | None = None) -> None:
+        """Count one more call, and the entry when this bucket keeps them."""
         self.calls += 1
         self.outcomes[outcome] += 1
         if entry is not None:
@@ -216,6 +218,7 @@ class Bucket:
         return round(100 * problems / self.calls, 1) if self.calls else 0.0
 
     def row(self, kind: str, name: str) -> dict[str, object]:
+        """The bucket as one row of a table: its name and every count."""
         values: dict[str, object] = {
             kind: name,
             "calls": self.calls,
@@ -260,9 +263,11 @@ class Report:
                 self.add(entry)
 
     def covers(self, moment: dt.datetime) -> bool:
+        """Whether a call fell inside this report's time window."""
         return (self.since is None or moment >= self.since) and (self.until is None or moment < self.until)
 
     def add(self, entry: Entry) -> None:
+        """One call of the report: the counts, the edges, the longest notes."""
         self.calls += 1
         self.first = entry.time if self.first is None else min(self.first, entry.time)
         self.last = entry.time if self.last is None else max(self.last, entry.time)
@@ -286,14 +291,17 @@ class Report:
             self.bucket("stand", stand).add(outcome)
 
     def bucket(self, kind: str, name: str) -> Bucket:
+        """The bucket of a tool, user, stand or day, made on first sight."""
         return self.buckets[kind].setdefault(name, Bucket())
 
     @property
     def stands_mode(self) -> bool:
+        """Whether the log holds calls over several stands."""
         return bool(self.buckets["stand"])
 
     @property
     def longest(self) -> list[Entry]:
+        """The ten longest calls, longest first."""
         return [entry for _, _, entry in sorted(self._longest, key=lambda item: (-item[0], item[1]))]
 
     @property
@@ -303,10 +311,12 @@ class Report:
 
     @property
     def median(self) -> float | None:
+        """The median duration of the calls, in milliseconds."""
         return statistics.median(self.durations) if self.durations else None
 
     @property
     def p95(self) -> float | None:
+        """The 95th percentile of them."""
         return percentile(self.durations, 0.95) if self.durations else None
 
     def table(self, kind: str) -> list[dict[str, object]]:
@@ -316,6 +326,7 @@ class Report:
         return [buckets[name].row(kind, name) for name in names]
 
     def as_dict(self) -> dict[str, Any]:
+        """The report as the --format json answer."""
         return {
             "files": self.files,
             "lines": self.lines,
@@ -351,14 +362,17 @@ def detail(entry: Entry) -> dict[str, object]:
 
 
 def stamp(moment: dt.datetime) -> str:
+    """A moment as the tables show it."""
     return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def iso(moment: dt.datetime) -> str:
+    """A moment as the JSON output writes it, in UTC milliseconds."""
     return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def cell_text(column: str, value: object) -> str:
+    """One cell of a table: a time, a number, a cut argument line."""
     if value is None:
         return ""
     if isinstance(value, dt.datetime):
@@ -383,6 +397,7 @@ def table_text(columns: Sequence[str], rows: Sequence[dict[str, object]], indent
 
 
 def detail_columns(report: Report, *, duration: bool) -> list[str]:
+    """The columns of the details tables, per stands mode and duration."""
     columns = ["time", "user", "stand", "tool", "arguments"]
     if not report.stands_mode:
         columns.remove("stand")
@@ -390,6 +405,7 @@ def detail_columns(report: Report, *, duration: bool) -> list[str]:
 
 
 def render_text(report: Report, by: str) -> str:
+    """The report as text: the counts, the tables, the longest calls."""
     lines = [f"Files: {', '.join(report.files)} ({report.lines} lines, {report.broken} broken)"]
     if report.since or report.until:
         edges = (("from", report.since), ("before", report.until))
@@ -417,6 +433,7 @@ def render_text(report: Report, by: str) -> str:
 
 
 def render_json(report: Report) -> str:
+    """The report as JSON, the same figures as text."""
     return json.dumps(report.as_dict(), ensure_ascii=False, indent=2, default=_json_default) + "\n"
 
 
@@ -425,6 +442,7 @@ def _json_default(value: object) -> str:
 
 
 def render_csv(report: Report, by: str) -> str:
+    """The report as CSV, one table of the breakdown asked for."""
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerow(COLUMNS[by])
@@ -433,6 +451,7 @@ def render_csv(report: Report, by: str) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Sum up the query log files the arguments name."""
     parser = argparse.ArgumentParser(
         description="Sum up the query log: calls by tool, user and stand, the longest calls and the refused SQL."
     )

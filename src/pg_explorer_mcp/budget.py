@@ -61,6 +61,7 @@ def shorten(value: str, limit: int = VALUE_LIMIT) -> str:
 
 
 def budget_from_env(env: Mapping[str, str]) -> int:
+    """The response budget PG_EXPLORER_MCP_MAX_RESPONSE_CHARS names, with its fallbacks."""
     raw = env.get("PG_EXPLORER_MCP_MAX_RESPONSE_CHARS")
     if not raw:
         return DEFAULT_BUDGET

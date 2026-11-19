@@ -15,9 +15,16 @@ from pathlib import Path
 import pytest
 import querylog_report
 
+from pg_explorer_mcp.querylog import ERROR, FAILED, OK, REFUSED, SKIPPED, UNAVAILABLE
 from tests.helpers import ROOT
 
 UTC = dt.timezone.utc
+
+
+def test_the_report_counts_every_outcome_the_log_writes() -> None:
+    """The script stands alone, but its outcome columns are the server's: a new one must not stay out."""
+    assert querylog_report.OUTCOMES == (OK, ERROR, REFUSED, UNAVAILABLE, FAILED, SKIPPED)
+
 
 # The two lines of the README, as the server wrote them.
 README_LINES = """\

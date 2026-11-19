@@ -38,10 +38,13 @@ jobs:
   archive:
     name: build and check the archive
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no push follows: the token leaves nothing in .git
       - name: the version, the same in every file (and in the tag)
         id: version
         run: |
@@ -77,6 +80,7 @@ jobs:
     needs: archive
     if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.build_only)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
       id-token: write  # the provenance attestation is signed with the workflow's identity
@@ -90,6 +94,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0  # the whole history, so merge-base can tell whether the tag sits on main
+          persist-credentials: false  # gh release takes the token from env, not from .git
       - name: the tag sits on main, so the release is of code merged there
         run: |
           if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then

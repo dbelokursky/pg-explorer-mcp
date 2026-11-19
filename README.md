@@ -53,6 +53,7 @@ English or Russian.
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
 | `run_select` | one read-only statement: `SELECT`, `WITH … SELECT`, `VALUES`, `TABLE`, `EXPLAIN`, `SHOW` | `analyst` |
+| `run_saved_query` | one of the queries this group wrote into `queries.conf`, by name; an unknown name lists them | `explore`, `analyst` |
 
 The group's administrator picks the profile at installation: [details](#group-profiles).
 
@@ -791,6 +792,52 @@ Set it at registration (`python3 install.py --profile schema`) or with `PG_EXPLO
 A profile is a convenience, not an access boundary: what can be read is decided by the role's
 privileges in the database.
 
+## Glossary
+
+Databases written before the agents often carry no comments. The glossary file,
+`~/.pg-explorer-mcp/glossary.conf` (on Windows `%APPDATA%\pg-explorer-mcp\glossary.conf`, or the file
+`PG_EXPLORER_MCP_GLOSSARY_FILE` names), holds what the group knows about its data, one section per thing:
+
+```ini
+[table shop.orders]
+ru = Заказы клиентов: статус и время
+[column shop.orders.status]
+en = new, paid, shipped or cancelled
+[term average_receipt]
+en = Sum of the paid orders of a month
+ru = Сумма оплаченных заказов за месяц
+```
+
+- `table` and `column` take the full name; `term` is the group's own word. Each section holds `en`
+  and `ru` lines: whichever language the server speaks comes first, the other stands in.
+- `describe_table` and `list_tables` show a glossary text only where the table or column has no
+  `COMMENT ON` of its own; `search_schema` also matches the glossary's texts and term names, so a
+  question in the group's words finds the tables behind them. An edited file is picked up without a
+  restart, and `status` names the file and its entry count. The reasoning is in
+  [ADR 0010](docs/adr/0010-glossary.md).
+
+## Saved queries
+
+A group that does not want the agent writing its own SQL still wants it to answer questions with
+data. The queries file, `~/.pg-explorer-mcp/queries.conf` (on Windows
+`%APPDATA%\pg-explorer-mcp\queries.conf`, or the file `PG_EXPLORER_MCP_QUERIES_FILE` names), holds
+one section per query — the name, the descriptions, the SQL:
+
+```ini
+[orders_by_status]
+ru = Заказы по статусам
+en = Orders by status
+query = SELECT status, count(*) FROM shop.orders GROUP BY status ORDER BY 2 DESC
+```
+
+- Each query passes the same read-only check as `run_select` when the file is read: a query that
+  changes anything is left out, and `status` says so. Rows run through the same limit and cursor.
+- The tool `run_saved_query` (profiles `explore` and `analyst`) appears only when the file holds a
+  query, so a group that does not use it carries none of its tokens. An unknown name lists the saved
+  ones. On an entry for many stands the query takes the named schema's login, as `run_select` does.
+- An edited file is re-read without a restart; the first query, since it adds the tool, costs one.
+  The reasoning is in [ADR 0011](docs/adr/0011-saved-queries.md).
+
 ## Language
 
 The server speaks English (`en`) or Russian (`ru`): tool descriptions, answers, hints, refusals and
@@ -949,6 +996,8 @@ writes only the new ones.
 | `PG_EXPLORER_MCP_SOCKET_TIMEOUT_S` | `30`, for stands `10` | seconds to wait for a new connection; once connected, the socket waits at least the query timeout plus 5 seconds |
 | `PG_EXPLORER_MCP_STANDS` | — (off) | `*` or stand name patterns such as `dev*,ift2`: one entry for [many stands](#many-stands) |
 | `PG_EXPLORER_MCP_STANDS_FILE` | `~/.pg-explorer-mcp/stands.conf`, on Windows `%APPDATA%\pg-explorer-mcp\stands.conf` | the stands registry |
+| `PG_EXPLORER_MCP_GLOSSARY_FILE` | `~/.pg-explorer-mcp/glossary.conf`, on Windows `%APPDATA%\pg-explorer-mcp\glossary.conf` | the [glossary](#glossary) of descriptions |
+| `PG_EXPLORER_MCP_QUERIES_FILE` | `~/.pg-explorer-mcp/queries.conf`, on Windows `%APPDATA%\pg-explorer-mcp\queries.conf` | the [saved queries](#saved-queries) the group wrote |
 | `PGSERVICEFILE` | `~/.pg_service.conf`, on Windows `%APPDATA%\postgresql\.pg_service.conf` | your psql services; stands are read from it too |
 | `PG_EXPLORER_MCP_MAX_CONNECTIONS` | `8` | connections an entry for stands keeps open |
 

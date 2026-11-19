@@ -7,7 +7,7 @@ import os
 import socket
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -59,3 +59,17 @@ def unreachable_database_env() -> dict[str, str]:
         PG_EXPLORER_MCP_LANG="en",  # not the locale of whoever runs the tests
     )
     return env
+
+
+PsqlFile = Callable[[Path, Mapping[str, str]], None]  # run a SQL file the way a DBA would
+
+
+def it_suffix() -> str:
+    """What separates this run's schemas and roles from another's, so parallel runs do not clash.
+
+    Empty in an ordinary run, so the names stay readable and stable; under pytest-xdist each
+    worker adds itself, and under an explicit PG_EXPLORER_MCP_IT_SUFFIX that tag is used.
+    """
+    return os.environ.get("PG_EXPLORER_MCP_IT_SUFFIX") or (
+        f"_{os.environ['PYTEST_XDIST_WORKER']}" if os.environ.get("PYTEST_XDIST_WORKER") else ""
+    )

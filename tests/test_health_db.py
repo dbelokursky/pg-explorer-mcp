@@ -12,11 +12,11 @@ import pytest
 from pg_explorer_mcp import health
 from pg_explorer_mcp.db import Database, QueryFailedError, time_budget
 from pg_explorer_mcp.tools import db_health
-from tests.helpers import MODERN_META, rpc, run_stdio_session
+from tests.helpers import MODERN_META, it_suffix, rpc, run_stdio_session
 from tests.test_db import connect
 
 pytestmark = pytest.mark.integration
-SCHEMA = "mcp_it_health"
+SCHEMA = f"mcp_it_health{it_suffix()}"
 HIDDEN = "mcp_it_health_hidden"
 ROLE = "mcp_it_health_reader"
 
@@ -150,8 +150,12 @@ def test_registry_scope_is_used_instead_of_login_table_grants(reader: Database) 
 
 
 def test_deadline_cancels_query_and_next_transaction_still_works(reader: Database) -> None:
-    with time_budget(0.05), pytest.raises(QueryFailedError) as exc:
-        reader.query("SELECT pg_sleep(1)")
+    # The budget has room to enter the transaction, not just to be spent in it: on Windows the
+    # 15.6 ms timer tick plus a loaded CI runner had the deadline pass before the query began
+    # (OverdueError instead of the cancellation this test is about). The sleep keeps well past
+    # the budget either way, so the cancellation, not the timer, ends the query.
+    with time_budget(0.5), pytest.raises(QueryFailedError) as exc:
+        reader.query("SELECT pg_sleep(2)")
     assert exc.value.code == "57014"
     assert reader.query("SELECT 42")[0][0] == 42
 

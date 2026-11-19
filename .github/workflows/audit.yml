@@ -1,0 +1,29 @@
+name: audit
+
+# The development dependencies are many and update by themselves (Depabot); a known hole in one
+# of them is worth a red run even when the lock is a week old. The runtime has no dependencies
+# at all: everything the server itself needs is vendored and covered by Dependabot alerts.
+on:
+  schedule:
+    - cron: "23 4 * * 1"  # Monday morning, Europe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    name: pip-audit over the lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # the audit reads the tree, not the repository
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+      - name: every locked package, one line each
+        run: uv export --locked --all-groups --no-emit-project -o requirements.txt
+      - name: known holes in them
+        run: uvx pip-audit --no-deps -r requirements.txt

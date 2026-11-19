@@ -25,7 +25,9 @@ from . import __version__, health
 from .budget import DEFAULT_BUDGET
 from .compare import Structure, compare_schema, comparison, read_structure
 from .db import Database, DatabaseUnavailableError, OverdueError, QueryFailedError, answer_by, overdue, time_budget
+from .glossary import Glossary
 from .i18n import current, plural, t
+from .queries import SavedQueries
 from .querylog import ERROR, OK, SKIPPED, UNAVAILABLE, QueryLog
 from .sqlguard import check_read_only
 from .stands import (
@@ -59,6 +61,7 @@ from .tools import (
     explain_query,
     list_tables,
     relations_named,
+    run_saved_query,
     run_select,
     sample_rows,
     schema_diagram,
@@ -106,9 +109,13 @@ def build_stand_tools(
     warnings: Sequence[str] = (),
     query_log: QueryLog | None = None,
     name: str = DEFAULT_NAME,
+    glossary: Glossary | None = None,
+    saved: SavedQueries | None = None,
 ) -> list[Tool]:
     """The tools of this profile for the stands of the pool's registry."""
     names = STAND_PROFILES[profile]
+    # status names the tools this server offers: a profile's conditional tool counts only when configured.
+    offered = tuple(name for name in names if name != "run_saved_query" or (saved is not None and bool(saved.queries)))
     analyze = profile == "analyst"
     query_log = query_log or QueryLog(None)
     stand = {"type": "string", "description": t("argument.stand", stands=_stands_named(pool.registry))}
@@ -118,6 +125,7 @@ def build_stand_tools(
     any_schema = {"type": "string", "description": t("argument.schema_stand")}
     table = {"type": "string", "description": t("argument.table")}
     query = {"type": "string", "description": t("argument.query")}
+    saved_name = {"type": "string", "description": t("argument.saved_query")}
     explain_properties: dict[str, Any] = {"stand": stand, "schema": data_schema, "database": database, "query": query}
     if analyze:
         explain_properties["analyze"] = {"type": "boolean", "description": t("argument.analyze")}
@@ -132,11 +140,13 @@ def build_stand_tools(
                 install_dir,
                 budget=budget,
                 profile=profile,
-                names=names,
+                names=offered,
                 warnings=warnings,
                 query_log=query_log,
                 name=name,
                 stand=args.get("stand"),
+                glossary=glossary,
+                saved=saved,
             ),
         ),
         Tool(
@@ -153,7 +163,7 @@ def build_stand_tools(
             description=t("tool.list_tables.description", limit=LIST_TABLES_LIMIT),
             properties={"stand": stand, "schema": any_schema, "database": database},
             required=("stand",),
-            handler=lambda args: stand_list_tables(pool, args),
+            handler=lambda args: stand_list_tables(pool, args, glossary),
         ),
         Tool(
             name="search_schema",
@@ -167,7 +177,7 @@ def build_stand_tools(
                 "database": database,
             },
             required=("text",),
-            handler=lambda args: stand_search(pool, args),
+            handler=lambda args: stand_search(pool, args, glossary),
         ),
         Tool(
             name="describe_table",
@@ -175,7 +185,7 @@ def build_stand_tools(
             description=t("tool.describe_table.description"),
             properties={"stand": stand, "table": table, "schema": any_schema, "database": database},
             required=("stand", "table"),
-            handler=lambda args: stand_describe(pool, args),
+            handler=lambda args: stand_describe(pool, args, glossary),
         ),
         Tool(
             name="compare_schema",
@@ -248,8 +258,22 @@ def build_stand_tools(
             required=("schema", "query"),
             handler=lambda args: stand_run(pool, args),
         ),
+        *(
+            []
+            if saved is None or not saved.queries
+            else [
+                Tool(
+                    name="run_saved_query",
+                    title=t("tool.run_saved_query.title"),
+                    description=t("tool.run_saved_query.description", limit=RUN_SELECT_LIMIT),
+                    properties={"stand": stand, "schema": data_schema, "database": database, "name": saved_name},
+                    required=("schema", "name"),
+                    handler=lambda args: stand_run_saved(pool, args, saved),
+                )
+            ]
+        ),
     ]
-    offered = [tool for tool in tools if tool.name in names]
+    present = [tool for tool in tools if tool.name in names]
     return [
         replace(
             tool,
@@ -258,7 +282,7 @@ def build_stand_tools(
             query_log=query_log,
             missing_hint=lambda args, missing: _schema_left_out(pool, args, missing),
         )
-        for tool in offered
+        for tool in present
     ]
 
 
@@ -311,7 +335,10 @@ def stand_status(
     query_log: QueryLog,
     name: str,
     stand: Any,
+    glossary: Glossary | None = None,
+    saved: SavedQueries | None = None,
 ) -> list[str]:
+    """Status of the entry for many stands: every stand, or one that is asked about."""
     registry = pool.registry
     stands = registry.stands()
     lines = [
@@ -323,6 +350,28 @@ def stand_status(
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),
         query_log.describe(),
+        *(
+            [
+                t(
+                    "status.queries",
+                    entries=plural("queries.entries", len(saved.queries)),
+                    path=", ".join(str(path) for path in saved.paths),
+                )
+            ]
+            if saved is not None and saved.queries
+            else []
+        ),
+        *(
+            [
+                t(
+                    "status.glossary",
+                    entries=plural("glossary.entries", len(glossary.entries)),
+                    path=", ".join(str(path) for path in glossary.paths),
+                )
+            ]
+            if glossary is not None and glossary.entries
+            else []
+        ),
     ]
     lines.extend(t("status.warning", warning=warning) for warning in (*warnings, *registry_warnings(registry)))
     if not isinstance(stand, str) or not stand.strip():
@@ -415,50 +464,59 @@ def _readable_schemas(pool: Pool, sections: Sequence[Target], down: Down) -> str
         return str(exc)
 
 
-def stand_list_tables(pool: Pool, args: Arguments) -> list[str]:
+def stand_list_tables(pool: Pool, args: Arguments, glossary: Glossary | None = None) -> list[str]:
+    """The stand's tables: one schema with its login, or every database from the catalog."""
     target = _optional_target(pool, args)
     if target is not None:
-        return [target.label, *list_tables(pool.database(target), target.schema)]
+        return [target.label, *list_tables(pool.database(target), target.schema, glossary=glossary)]
     stand = pool.registry.stand(args.get("stand"))
-    return _each_database(pool, stand, args.get("database"), lambda db, schemas: list_tables(db, None, schemas))
+    return _each_database(
+        pool, stand, args.get("database"), lambda db, schemas: list_tables(db, None, schemas, glossary)
+    )
 
 
-def stand_search(pool: Pool, args: Arguments) -> list[str]:
+def stand_search(pool: Pool, args: Arguments, glossary: Glossary | None = None) -> list[str]:
+    """The search over the stand, or over many stands at once when the argument says so."""
     text = args.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ToolError(t("error.text"))
     stands = _many_stands(pool, args)
     if stands is not None:
-        return _search_stands(pool, stands, args, text)
+        return _search_stands(pool, stands, args, text, glossary)
     target = _optional_target(pool, args)
     if target is not None:
-        return [target.label, *search_schema(pool.database(target), text, target.schema)]
+        return [target.label, *search_schema(pool.database(target), text, target.schema, glossary=glossary)]
     stand = pool.registry.stand(args.get("stand"))
-    return _each_database(pool, stand, args.get("database"), lambda db, schemas: search_schema(db, text, None, schemas))
+    return _each_database(
+        pool, stand, args.get("database"), lambda db, schemas: search_schema(db, text, None, schemas, glossary=glossary)
+    )
 
 
-def _search_stands(pool: Pool, stands: Sequence[str], args: Arguments, text: str) -> list[str]:
+def _search_stands(
+    pool: Pool, stands: Sequence[str], args: Arguments, text: str, glossary: Glossary | None = None
+) -> list[str]:
     """search_schema on every stand at once: one schema with its login, or every schema from the catalog."""
     limit = _share(SEARCH_LIMIT, len(stands))
     if args.get("schema") in (None, ""):
 
         def catalog(db: Database, schemas: list[str] | None) -> list[str]:
-            return search_schema(db, text, None, schemas, limit)
+            return search_schema(db, text, None, schemas, limit, glossary=glossary)
 
         return _each_stand(pool, stands, lambda stand: _whole_stand(pool, stand, args.get("database"), catalog))
     _schema_on_some(pool, stands, args)
 
     def with_login(target: Target) -> list[str]:
-        return search_schema(pool.database(target), text, target.schema, limit=limit)
+        return search_schema(pool.database(target), text, target.schema, limit=limit, glossary=glossary)
 
     nothing = t("search.nothing", text=text.strip())
     answers, late = _ask_stands(pool, stands, lambda stand: _with_login(pool, stand, args, with_login))
     return _folded(pool, stands, answers, late, empty=lambda lines: lines[1:] == [nothing], key="stands.no_matches")
 
 
-def stand_describe(pool: Pool, args: Arguments) -> list[str]:
+def stand_describe(pool: Pool, args: Arguments, glossary: Glossary | None = None) -> list[str]:
+    """A table of the stand, described under that schema's login."""
     target, table = _table_target(pool, args)
-    return [target.label, *describe_table(pool.database(target), table, target.schema)]
+    return [target.label, *describe_table(pool.database(target), table, target.schema, glossary)]
 
 
 def stand_compare(pool: Pool, args: Arguments) -> list[str]:
@@ -555,19 +613,33 @@ def stand_health(pool: Pool, args: Arguments) -> list[str]:
 
 
 def stand_sample(pool: Pool, args: Arguments) -> list[str]:
+    """Rows of a table of the stand, under its label."""
     target, table = _table_target(pool, args)
     rows = sample_rows(pool.database(target), table, target.schema, args.get("columns"), args.get("limit"))
     return [target.label, *rows]
 
 
 def stand_explain(pool: Pool, args: Arguments, *, analyze: bool) -> list[str]:
+    """The plan of a query on the stand, under its label."""
     target = _required_target(pool, args)
     analyzed = args.get("analyze") if analyze else None
     plan = explain_query(pool.database(target), args.get("query"), analyzed, _database_schemas(pool, target))
     return [target.label, *plan]
 
 
+def stand_run_saved(pool: Pool, args: Arguments, saved: SavedQueries) -> list[str]:
+    """A saved query on one stand, with that schema's login, under its label."""
+    return _with_login(pool, args.get("stand", ""), args, lambda target: _saved(pool, target, args, saved))
+
+
+def _saved(pool: Pool, target: Target, args: Arguments, saved: SavedQueries) -> list[str]:
+    others = [other for other in pool.registry.of_stand(target.stand) if other.database == target.database]
+    schemas = [other.schema for other in others] if len({other.login for other in others}) > 1 else None
+    return run_saved_query(pool.database(target), saved, args.get("name"), schemas)
+
+
 def stand_run(pool: Pool, args: Arguments) -> list[str]:
+    """One query on the stand, or the same query on many stands at once."""
     stands = _many_stands(pool, args)
     if stands is None:
         target = _required_target(pool, args)
@@ -668,7 +740,7 @@ def _each_stand(pool: Pool, stands: Sequence[str], run: Callable[[str], list[str
 def _ask_stands(
     pool: Pool, stands: Sequence[str], run: Callable[[str], list[str]]
 ) -> tuple[dict[str, list[str]], list[str]]:
-    """run on every stand at the same time, one thread each, for as long as the call may take.
+    """Run on every stand at the same time, one thread each, for as long as the call may take.
 
     The answers of the stands that made it, and the stands that did not: the client waits only so long
     for the call, so the call does not wait for them. Their threads finish the statement they are running,
@@ -742,7 +814,7 @@ def _folded(
 
 
 def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target], list[str]]) -> list[str]:
-    """run with the schema's login on the stand, under its label; whatever stops it is one line under the label."""
+    """Run with the schema's login on the stand, under its label; whatever stops it is one line under the label."""
     try:
         target = pool.registry.target(stand, args.get("schema"), args.get("database"))
     except StandError as exc:

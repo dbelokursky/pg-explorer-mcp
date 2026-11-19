@@ -53,6 +53,7 @@ stdio, например Claude Code или Qwen Code. Работает на Pyth
 | `sample_rows` | несколько строк таблицы, можно выбрать колонки | `explore`, `analyst` |
 | `explain_query` | план запроса без выполнения; в профиле `analyst` — и с реальным временем (`ANALYZE`) | `explore`, `analyst` |
 | `run_select` | один запрос только на чтение: `SELECT`, `WITH … SELECT`, `VALUES`, `TABLE`, `EXPLAIN`, `SHOW` | `analyst` |
+| `run_saved_query` | один из записанных группой в `queries.conf` запросов, по имени; неизвестное имя перечисляет их | `explore`, `analyst` |
 
 Профиль выбирает администратор группы при установке: [подробнее](#профили-групп).
 
@@ -787,6 +788,50 @@ dev3 / demo / shop
 предупреждает об этом. Профиль — удобство, а не граница доступа: что можно читать, решают права роли
 в базе.
 
+## Глоссарий
+
+Базы, написанные до эры агентов, часто не несут комментариев. Файл глоссария,
+`~/.pg-explorer-mcp/glossary.conf` (на Windows `%APPDATA%\pg-explorer-mcp\glossary.conf`, или файл,
+названный `PG_EXPLORER_MCP_GLOSSARY_FILE`), хранит то, что группа знает о своих данных, секция на каждую сущность:
+
+```ini
+[table shop.orders]
+ru = Заказы клиентов: статус и время
+[column shop.orders.status]
+en = new, paid, shipped or cancelled
+[term average_receipt]
+en = Sum of the paid orders of a month
+ru = Сумма оплаченных заказов за месяц
+```
+
+- `table` и `column` принимают полное имя; `term` — слово самой группы. В секции строки `en` и `ru`:
+  сначала язык сервера, недостающий замещает другой.
+- `describe_table` и `list_tables` показывают текст глоссария только там, где у таблицы или колонки
+  нет собственного `COMMENT ON`; `search_schema` ищет и по текстам глоссария, и по именам терминов —
+  вопрос словами группы находит таблицы за ними. Изменённый файл подхватывается без перезапуска,
+  а `status` называет файл и число записей. Обоснование — в [ADR 0010](docs/adr/0010-glossary.md).
+
+## Сохранённые запросы
+
+Группе, не желающей, чтобы агент сочинял SQL сам, всё равно нужны ответы с данными. Файл запросов,
+`~/.pg-explorer-mcp/queries.conf` (на Windows `%APPDATA%\pg-explorer-mcp\queries.conf`, или файл,
+названный `PG_EXPLORER_MCP_QUERIES_FILE`), держит секцию на запрос — имя, описания и SQL:
+
+```ini
+[orders_by_status]
+ru = Заказы по статусам
+en = Orders by status
+query = SELECT status, count(*) FROM shop.orders GROUP BY status ORDER BY 2 DESC
+```
+
+- Каждый запрос при чтении файла проходит ту же проверку на чтение, что `run_select`: запрос,
+  меняющий данные, не берётся, и `status` об этом говорит. Строки идут через тот же лимит и курсор.
+- Инструмент `run_saved_query` (профили `explore` и `analyst`) появляется, только когда в файле есть
+  запрос: группа без файла не несёт ни одного лишнего токена. Неизвестное имя перечисляет
+  сохранённые. На стендах запрос идёт под логином названной схемы, как `run_select`.
+- Изменённый файл перечитывается без перезапуска; первый запрос, поскольку он добавляет инструмент,
+  стоит одного перезапуска. Обоснование — в [ADR 0011](docs/adr/0011-saved-queries.md).
+
 ## Язык
 
 Сервер говорит по-английски (`en`) или по-русски (`ru`): описания инструментов, ответы, подсказки,
@@ -946,6 +991,8 @@ Refused by the SQL check (2)
 | `PG_EXPLORER_MCP_SOCKET_TIMEOUT_S` | `30`, для стендов `10` | сколько секунд ждать нового подключения; открытый сокет ждёт не меньше таймаута запроса плюс 5 секунд |
 | `PG_EXPLORER_MCP_STANDS` | — (выключено) | `*` или шаблоны имён стендов вроде `dev*,ift2`: одна запись для [многих стендов](#много-стендов) |
 | `PG_EXPLORER_MCP_STANDS_FILE` | `~/.pg-explorer-mcp/stands.conf`, на Windows `%APPDATA%\pg-explorer-mcp\stands.conf` | реестр стендов |
+| `PG_EXPLORER_MCP_GLOSSARY_FILE` | `~/.pg-explorer-mcp/glossary.conf`, на Windows `%APPDATA%\pg-explorer-mcp\glossary.conf` | [глоссарий](#глоссарий) описаний |
+| `PG_EXPLORER_MCP_QUERIES_FILE` | `~/.pg-explorer-mcp/queries.conf`, на Windows `%APPDATA%\pg-explorer-mcp\queries.conf` | [сохранённые запросы](#сохранённые-запросы) группы |
 | `PGSERVICEFILE` | `~/.pg_service.conf`, на Windows `%APPDATA%\postgresql\.pg_service.conf` | ваши сервисы psql; стенды читаются и оттуда |
 | `PG_EXPLORER_MCP_MAX_CONNECTIONS` | `8` | сколько подключений держит открытыми запись стендов |
 

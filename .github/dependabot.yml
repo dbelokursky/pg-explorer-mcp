@@ -12,11 +12,15 @@ updates:
     target-branch: develop
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
   - package-ecosystem: uv
     directory: /
     target-branch: develop
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       dev-tools:
         patterns: ["*"]

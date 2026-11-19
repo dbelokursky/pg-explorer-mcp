@@ -32,15 +32,29 @@ uvx pre-commit install
 | `python3 scripts/querylog_report.py <журнал> [--since ДАТА] [--until ДАТА] [--by user\|tool\|stand\|day] [--format text\|json\|csv]` | сводка по журналу запросов (`PG_EXPLORER_MCP_QUERY_LOG`) для администратора группы: вызовы по инструментам, пользователям и стендам, медиана и 95-й процентиль, самые долгие и отклонённые проверкой SQL запросы; база не нужна |
 | `python3 scripts/agent_eval.py` | прогон типовых вопросов через настоящую модель на демо-базе: какие инструменты она вызвала и что ответила; нужны Ollama с моделью и Qwen Code, см. ниже |
 
-Интеграционные тесты ходят в настоящий PostgreSQL. Они создают и удаляют схемы `mcp_it`,
-`mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`, а тесты стендов — схемы
-`mcp_it_billing`, `mcp_it_orders`, одноимённые роли и вторую базу `mcp_it_stand` (для неё нужен
-суперпользователь), а тест демо-базы — базу `pg_mcp_demo_it` и роль `mcp_demo_it_agent`; тестам роли нужен `psql`, тестам TLS — `openssl` (они ставят перед сервером
-TLS-прослойку со своим сертификатом, самому серверу TLS не нужен):
+Интеграционные тесты ходят в настоящий PostgreSQL. Если запущен Docker, обычный
+`uv run pytest` поднимает его сам: контейнер `postgres:16` (суперпользователь) на время прогона,
+через testcontainers, и убирает за собой. Другой образ — переменной
+`PG_EXPLORER_MCP_IT_IMAGE=postgres:13 uv run pytest -m integration`. Своя база — как раньше,
+переменной и `PG*` (так работает CI):
 
 ```bash
 PG_EXPLORER_MCP_IT=1 PGHOST=localhost PGDATABASE=pg_mcp_test uv run pytest --cov
 ```
+
+`PG_EXPLORER_MCP_IT=0` оставляет скипы, и `PGHOST`, заданный без первой переменной, тоже: своя
+база подключается явно, а не угадывается. Тесты создают и удаляют схемы `mcp_it`,
+`mcp_it_archive`, `mcp_it_role` и роли `mcp_it_agent`, `mcp_it_login`, а тесты стендов — схемы
+`mcp_it_billing`, `mcp_it_orders`, одноимённые роли и вторую базу `mcp_it_stand` (для неё нужен
+суперпользователь), а тест демо-базы — базу `pg_mcp_demo_it` и роль `mcp_demo_it_agent`; тестам роли нужен `psql`, тестам TLS — `openssl` (они ставят перед сервером
+TLS-прослойку со своим сертификатом, самому серверу TLS не нужен). Пулер и psql при собственном
+контейнере прогона не требуют ничего на хосте: pgbouncer поднимается контейнером рядом (образ —
+`PG_EXPLORER_MCP_PGBOUNCER_IMAGE`, по умолчанию `edoburu/pgbouncer:latest`), psql выполняется
+внутри контейнера базы, версией с ней совпадающей; при внешней базе — как раньше, `pgbouncer` и
+`psql` на PATH, иначе скип с объяснением. Имена схем и ролей
+общие для одного прогона; параллельные прогоны по одной базе различает суффикс — свой у
+`PYTEST_XDIST_WORKER` (pytest-xdist) или заданный `PG_EXPLORER_MCP_IT_SUFFIX`; без них имена
+стабильны, как раньше.
 
 CI гоняет то же самое, но на PR — сокращённый набор, а на push в `develop` и `main` и ночью на
 `develop` — полный. На PR: линтеры и типы, тесты на Linux и Windows под Python 3.9 и 3.14,

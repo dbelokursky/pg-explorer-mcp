@@ -75,6 +75,7 @@ class Target:
 
     @property
     def name(self) -> str:
+        """The registry's name of the connection: stand.database.schema."""
         return f"{self.stand}.{self.database}.{self.schema}"
 
     @property
@@ -97,7 +98,7 @@ class Target:
         return split_hosts(self.options["host"], self.options.get("port", "5432"))
 
     def for_schema(self, schema: str) -> Target:
-        """This section's login reading another schema of its database, for a database read as a whole.
+        """The section's login reading another schema of its database, for a database read as a whole.
 
         The login stays fixed, the schema goes first on the search path, and the name changes with it:
         the pool keeps a connection per name, so each schema read this way has one of its own.
@@ -156,6 +157,8 @@ def whole_database(sections: Sequence[Target]) -> Target | None:
 
 @dataclass
 class Registry:
+    """The connections the registry holds: what the tools may reach."""
+
     targets: list[Target] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -168,9 +171,11 @@ class Registry:
         return _state(self.paths) != self.state
 
     def stands(self) -> list[str]:
+        """The stands of the registry, in the order status lists them."""
         return sorted({target.stand for target in self.targets}, key=_natural)
 
     def of_stand(self, stand: str) -> list[Target]:
+        """The targets of one stand, as the registry read them."""
         return [target for target in self.targets if target.stand == stand]
 
     def stand(self, name: Any, argument: str = "stand") -> str:
@@ -464,12 +469,15 @@ class Pool:
 
     @property
     def limit(self) -> int:
+        """How many connections the pool may keep open."""
         return self._limit
 
     def open_count(self) -> int:
+        """How many connections are open now, held ones included."""
         return len(self._open)
 
     def close(self) -> None:
+        """Close every open connection; the pool is done."""
         with self._lock:
             for database in self._open.values():
                 database.close()
@@ -498,18 +506,22 @@ class Pool:
     # The query log reads these, as it does from a single Database.
     @property
     def statements_run(self) -> int:
+        """Statements the pool's connections have run: for the query log."""
         return self._counters.statements
 
     @property
     def rows_read(self) -> int:
+        """Rows they returned."""
         return self._counters.rows
 
     @property
     def settings(self) -> Settings | None:
+        """The login in use: the query log names it."""
         database = self._open.get(self.current.name) if self.current else None
         return database.settings if database else None
 
     def log_context(self) -> dict[str, Any]:
+        """What the query log writes for a call: the stand, or each stand's outcome."""
         if self.outcomes:
             return {"stands": dict(self.outcomes)}  # a call over several stands: how it ended on each
         if self.current is None:

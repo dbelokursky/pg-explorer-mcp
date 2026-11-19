@@ -96,6 +96,7 @@ def _mix_columns(state: list[int], *, inverse: bool) -> list[int]:
 
 
 def encrypt_block(key: bytes, block: bytes) -> bytes:
+    """One 16-byte block through the rounds of AES-128."""
     round_keys = _expand(key)
     state = _add_round_key(list(block), round_keys[0])
     for number in range(1, ROUNDS + 1):
@@ -108,6 +109,7 @@ def encrypt_block(key: bytes, block: bytes) -> bytes:
 
 
 def decrypt_block(key: bytes, block: bytes) -> bytes:
+    """One block back through them."""
     round_keys = _expand(key)
     state = _add_round_key(list(block), round_keys[ROUNDS])
     for number in range(ROUNDS - 1, -1, -1):

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 from collections.abc import Iterator
@@ -20,16 +18,27 @@ import pg8000.exceptions
 import pg8000.native
 import pytest
 
+from pg_explorer_mcp import i18n
 from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
+from pg_explorer_mcp.glossary import Glossary
+from pg_explorer_mcp.queries import SavedQueries
 from pg_explorer_mcp.querylog import QueryLog
-from pg_explorer_mcp.tools import Tool, ToolError, build_tools
-from tests.helpers import ROOT
+from pg_explorer_mcp.tools import (
+    Tool,
+    ToolError,
+    build_tools,
+    describe_table,
+    list_tables,
+    run_saved_query,
+    search_schema,
+)
+from tests.helpers import ROOT, PsqlFile, it_suffix
 
 pytestmark = pytest.mark.integration
 
-SCHEMA = "mcp_it"  # PostgreSQL reserves the pg_ prefix for system schemas
+SCHEMA = f"mcp_it{it_suffix()}"  # PostgreSQL reserves the pg_ prefix for system schemas
 SLOW_STATEMENT = "SELECT count(*) FROM generate_series(1, 1000000000)"  # minutes of work, no pg_sleep needed
-ARCHIVE = "mcp_it_archive"
+ARCHIVE = f"mcp_it_archive{it_suffix()}"
 
 FIXTURES = (
     f"DROP SCHEMA IF EXISTS {SCHEMA}, {ARCHIVE} CASCADE",
@@ -146,8 +155,11 @@ class TestStructure:
         first = f"{SCHEMA}.orders | table | ~1k rows | Заказы клиентов"
         assert lines_of(tools["describe_table"], table=f"{SCHEMA}.orders", schema="no_such_schema")[0] == first
         assert lines_of(tools["sample_rows"], table=f"{SCHEMA}.customers", schema="public")[0] == f"{SCHEMA}.customers:"
-        with pytest.raises(ToolError, match=f"orders.*{SCHEMA}.orders, {ARCHIVE}.orders"):  # two tables of that name
+        with pytest.raises(ToolError, match=r"orders.*several schemas") as caught:  # two tables of that name
             tools["describe_table"].call({"table": "orders", "schema": "no_such_schema"})
+        named = str(caught.value)
+        assert f"{SCHEMA}.orders" in named
+        assert f"{ARCHIVE}.orders" in named
 
     def test_a_system_schema_is_left_out_and_not_called_closed(self, tools: dict[str, Tool]) -> None:
         with pytest.raises(ToolError, match="Schema 'pg_catalog' is a system one"):
@@ -221,22 +233,126 @@ class TestStructure:
         )
 
     @pytest.mark.parametrize(
-        ("arguments", "message"),
+        ("arguments", "expected"),
         [
-            ({"table": "orders"}, f"{SCHEMA}.orders, {ARCHIVE}.orders"),
+            # The names come out in the catalog's COLLATE "C" order, which a run's own schema
+            # suffix can change: the tests take the names, not their order.
+            ({"table": "orders"}, ("several schemas", (f"{SCHEMA}.orders", f"{ARCHIVE}.orders"))),
             (
                 {"table": "order", "schema": SCHEMA},
-                f"Similar names: {SCHEMA}.big_orders, {SCHEMA}.orders, {ARCHIVE}.orders",
+                ("Similar names:", (f"{SCHEMA}.big_orders", f"{SCHEMA}.orders", f"{ARCHIVE}.orders")),
             ),
-            ({"table": "zzz"}, "Call list_tables"),
+            ({"table": "zzz"}, ("Call list_tables", ())),
         ],
         ids=["ambiguous", "similar", "nothing-similar"],
     )
     def test_names_that_do_not_pick_one_table_get_a_hint(
-        self, tools: dict[str, Tool], arguments: dict[str, str], message: str
+        self, tools: dict[str, Tool], arguments: dict[str, str], expected: tuple[str, tuple[str, ...]]
     ) -> None:
-        with pytest.raises(ToolError, match=message):
+        with pytest.raises(ToolError, match=expected[0]) as caught:
             tools["describe_table"].call(arguments)
+        assert all(name in str(caught.value) for name in expected[1])
+
+
+class TestSavedQueries:
+    """The group's own SQL, run by name: the rows come back as run_select's would."""
+
+    @pytest.fixture
+    def saved(self, tmp_path: Path) -> SavedQueries:
+        path = tmp_path / "queries.conf"
+        path.write_text(
+            "[orders_total]\nen = Count of orders\nru = Число заказов\n"
+            f"query = SELECT count(*) AS orders FROM {SCHEMA}.orders\n",
+            encoding="utf-8",
+        )
+        return SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(path)})
+
+    def test_rows_under_the_description_header(self, db: Database, saved: SavedQueries) -> None:
+        lines = run_saved_query(db, saved, "orders_total")
+        assert lines[0] == "orders_total: Count of orders"
+        assert lines[1] == "orders"
+        assert int(lines[2]) == 1000
+        assert lines[3] == "(1 row)"
+
+    def test_the_row_limit_of_run_select_holds(self, db: Database, tmp_path: Path) -> None:
+        path = tmp_path / "many.conf"
+        path.write_text(f"[ids]\nquery = SELECT id FROM {SCHEMA}.orders ORDER BY id\n", encoding="utf-8")
+        lines = run_saved_query(db, SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(path)}), "ids")
+        assert len(lines) == 203  # the header, the column line, 200 rows and the "there are more" line
+        assert "there are more" in lines[-1]
+
+    def test_the_description_follows_the_servers_language(self, db: Database, saved: SavedQueries) -> None:
+        with i18n.speaking("ru"):
+            assert run_saved_query(db, saved, "orders_total")[0] == "orders_total: Число заказов"
+
+    def test_the_query_log_names_the_saved_query_not_the_sql(
+        self, db: Database, saved: SavedQueries, tmp_path: Path
+    ) -> None:
+        log = tmp_path / "queries.jsonl"
+        tools = by_name(build_tools(db, str(ROOT), profile="analyst", saved=saved, query_log=QueryLog(str(log), db)))
+        tools["run_saved_query"].call({"name": "orders_total"})
+        entry = json.loads(log.read_text(encoding="utf-8"))
+        assert (entry["tool"], entry["arguments"]) == ("run_saved_query", {"name": "orders_total"})
+        assert entry["rows"] == 1
+
+    def test_status_names_the_file(self, db: Database, saved: SavedQueries) -> None:
+        tools = by_name(build_tools(db, str(ROOT), saved=saved))
+        assert any(line.startswith("saved queries: 1 query from ") for line in tools["status"].call({}).splitlines())
+
+
+class TestGlossary:
+    """Descriptions from a file beside the database, shown where the database holds no comment."""
+
+    @pytest.fixture
+    def glossary(self, tmp_path: Path) -> Glossary:
+        path = tmp_path / "glossary.conf"
+        path.write_text(
+            f"[table {SCHEMA}.customers]\n"
+            "en = The people who order\n"
+            "ru = Люди, которые заказывают\n"
+            f"[column {SCHEMA}.orders.total]\n"
+            "en = The sum of one order\n"
+            f"[table {SCHEMA}.orders]\n"
+            "en = Orders of the shop\n"
+            "[term average_receipt]\n"
+            "en = Sum of the paid orders of a month\n",
+            encoding="utf-8",
+        )
+        return Glossary.from_env({"PG_EXPLORER_MCP_GLOSSARY_FILE": str(path)})
+
+    def test_describe_shows_glossary_texts_where_comments_are_absent(self, db: Database, glossary: Glossary) -> None:
+        lines = describe_table(db, "orders", SCHEMA, glossary)
+        assert lines[0].startswith(f"{SCHEMA}.orders | table |")
+        assert "Заказы клиентов" in lines[0]  # the database's own comment wins
+        assert any(line.strip().startswith("total") and "The sum of one order" in line for line in lines)
+
+    def test_list_tables_shows_the_glossary_text_of_an_uncommented_table(
+        self, db: Database, glossary: Glossary
+    ) -> None:
+        lines = list_tables(db, "mcp_it", glossary=glossary)
+        customers = next(line for line in lines if line.startswith(f"{SCHEMA}.customers |"))
+        assert "The people who order" in customers
+
+    def test_search_finds_the_groups_own_words_where_the_catalog_has_none(
+        self, db: Database, glossary: Glossary
+    ) -> None:
+        assert search_schema(db, "average receipt", None, glossary=glossary) == [
+            "from the glossary:",
+            "average_receipt: Sum of the paid orders of a month",
+        ]
+
+    def test_search_adds_glossary_matches_but_never_repeats_the_catalogs(
+        self, db: Database, glossary: Glossary
+    ) -> None:
+        lines = search_schema(db, "order", None, glossary=glossary)
+        assert lines.count("from the glossary:") == 1
+        assert any(line.startswith(f"{SCHEMA}.orders |") for line in lines)  # the catalog's match
+        assert f"{SCHEMA}.orders.total  -- The sum of one order" in lines  # the glossary's addition
+        assert len([line for line in lines if line.startswith(f"{SCHEMA}.orders |")]) == 1  # no duplicate
+
+    def test_status_names_the_glossary(self, db: Database, glossary: Glossary) -> None:
+        tools = by_name(build_tools(db, str(ROOT), glossary=glossary))
+        assert any(line.startswith("glossary: 4 entries from ") for line in tools["status"].call({}).splitlines())
 
 
 class TestSearch:
@@ -478,7 +594,7 @@ class TestDefences:
         assert db.server_info()["read_only"] == "on"
 
 
-ROLE, PASSWORD, ROLE_SCHEMA = "mcp_it_agent", "agent-secret-1", "mcp_it_role"
+ROLE, PASSWORD, ROLE_SCHEMA = f"mcp_it_agent{it_suffix()}", "agent-secret-1", f"mcp_it_role{it_suffix()}"
 
 
 def drop_role(admin: pg8000.native.Connection, role: str) -> None:
@@ -488,23 +604,24 @@ def drop_role(admin: pg8000.native.Connection, role: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def agent(admin: pg8000.native.Connection) -> Iterator[Database]:
-    """A role made by docs/role.sql, as a DBA would make it."""
+def agent(admin: pg8000.native.Connection, run_psql_file: PsqlFile | None) -> Iterator[Database]:
+    """A role made by docs/role.sql, run by psql the way a DBA would: in this run's container, or on the host."""
+    if run_psql_file is None:
+        pytest.skip("needs psql: in the run's own container, or on PATH with an external database")
     admin.run(f"DROP SCHEMA IF EXISTS {ROLE_SCHEMA} CASCADE")
     admin.run(f"CREATE SCHEMA {ROLE_SCHEMA}")
     admin.run(f"CREATE TABLE {ROLE_SCHEMA}.items (id int PRIMARY KEY)")
     admin.run(f"INSERT INTO {ROLE_SCHEMA}.items VALUES (1), (2)")
     drop_role(admin, ROLE)
-    subprocess.run(
-        [
-            "psql", "-X", "-q",
-            "-v", f"role={ROLE}", "-v", f"password={PASSWORD}", "-v", f"schemas={ROLE_SCHEMA}",
-            "-v", f"owner={Settings.from_env(os.environ).user}",
-            "-f", str(ROOT / "docs" / "role.sql"),
-        ],
-        check=True,
-        capture_output=True,
-    )  # fmt: skip
+    run_psql_file(
+        ROOT / "docs" / "role.sql",
+        {
+            "role": ROLE,
+            "password": PASSWORD,
+            "schemas": ROLE_SCHEMA,
+            "owner": Settings.from_env(os.environ).user,
+        },
+    )
     database = Database(env_with(PGUSER=ROLE, PGPASSWORD=PASSWORD))
     yield database
     database.close()
@@ -512,7 +629,6 @@ def agent(admin: pg8000.native.Connection) -> Iterator[Database]:
     drop_role(admin, ROLE)
 
 
-@pytest.mark.skipif(shutil.which("psql") is None, reason="needs psql to run docs/role.sql")
 class TestRoleScript:
     """docs/role.sql gives a role that reads the granted schema and cannot write anywhere."""
 

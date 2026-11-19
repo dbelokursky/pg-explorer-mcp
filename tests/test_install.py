@@ -12,6 +12,7 @@ import pytest
 
 import install
 from pg_explorer_mcp import clients, exports, i18n, imports
+from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
 from tests.helpers import ROOT
 from tests.test_imports import data_source, datagrip_files, dbeaver_workspace, postgres, ssh_configs, ssh_properties
 
@@ -95,7 +96,7 @@ def test_check_starts_the_server_and_reports_an_unreachable_database(
     use_env(monkeypatch, unreachable_env, tmp_path)
     assert install.main(["--check"]) == 1
     output = capsys.readouterr().out
-    assert "protocol 2025-06-18" in output
+    assert f"protocol {SUPPORTED_PROTOCOL_VERSIONS[0]}" in output
     assert "database: unavailable" in output
     assert not (tmp_path / ".gigacode").exists()
 
@@ -141,7 +142,7 @@ def test_check_speaks_russian_when_asked(
     use_env(monkeypatch, unreachable_env, tmp_path)
     assert install.main(["--check", "--lang", "ru"]) == 1
     output = capsys.readouterr().out
-    assert "протокол 2025-06-18" in output
+    assert f"протокол {SUPPORTED_PROTOCOL_VERSIONS[0]}" in output
     assert "база: недоступна" in output
 
 

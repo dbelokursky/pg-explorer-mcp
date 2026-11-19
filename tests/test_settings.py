@@ -204,6 +204,15 @@ class FakeConnection:
         pass
 
 
+def test_a_connection_whose_socket_is_elsewhere_still_gets_its_session_set_up() -> None:
+    """A vendored pg8000 that renames _usock costs the longer socket wait, not every connection."""
+    conn = FakeConnection()
+    del conn._usock
+    settings = Settings.from_env({"PGUSER": "app", "PGPASSFILE": os.devnull})
+    assert db._prepared(conn, settings) is conn
+    assert conn.statements[0] == "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"
+
+
 class TestEveryCallIsOneTransaction:
     """A pooler in transaction mode may serve each transaction from another session, or reset the session
     in between: a call pins one session with BEGIN and carries its limits with SET LOCAL."""
@@ -256,8 +265,8 @@ class TestEveryCallIsOneTransaction:
         assert db.read_only("SELECT 1", 5, cursor=True) == (["n"], [[1]], False)
         assert connection.statements[-4:] == [
             'BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 5000; SET LOCAL search_path = "shop", public',
-            "DECLARE pg_mcp_rows NO SCROLL CURSOR FOR SELECT 1",
-            "FETCH FORWARD 6 FROM pg_mcp_rows",
+            "DECLARE pg_explorer_mcp_rows NO SCROLL CURSOR FOR SELECT 1",
+            "FETCH FORWARD 6 FROM pg_explorer_mcp_rows",
             "ROLLBACK",
         ]
 
