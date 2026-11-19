@@ -59,15 +59,19 @@ select = [
     "PT",      # pytest style
     "PL",      # pylint
     "RUF",     # ruff-specific
+    "D",       # pydocstyle: this project is its docstrings
 ]
 ignore = [
     "PLR0911", "PLR0912", "PLR0913",  # long protocol and argument checks read better in one place
     "PLR2004",                       # literal limits are named where they matter
+    "D401",                          # the voice here is descriptive, not imperative
+    "D107",                          # a dataclass __init__ documents itself in its fields
+    "D203", "D213",                  # the opposite pair of the blank-line and summary conventions used
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, start subprocesses, build fixture SQL from constants and speak Russian on purpose.
-"tests/**" = ["S101", "S603", "S607", "S608", "PLR0915", "FBT003", "RUF001"]
+"tests/**" = ["S101", "S603", "S607", "S608", "PLR0915", "FBT003", "RUF001", "D"]  # a test's name is its doc
 "install.py" = ["T201", "S603"]
 # The Russian catalog: Cyrillic letters that look Latin are the point there, not a trick.
 "src/pg_explorer_mcp/i18n.py" = ["RUF001"]

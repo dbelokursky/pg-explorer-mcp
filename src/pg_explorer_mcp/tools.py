@@ -237,6 +237,8 @@ class ToolError(Exception):
 
 @dataclass(frozen=True)
 class Tool:
+    """One tool the agent sees: its name, its schema and the handler that answers."""
+
     name: str
     title: str
     description: str
@@ -249,6 +251,7 @@ class Tool:
     missing_hint: Callable[[dict[str, Any], list[str]], str | None] | None = None
 
     def describe(self) -> dict[str, Any]:
+        """The tool as tools/list tells it: name, description, input schema, hints."""
         schema: dict[str, Any] = {"type": "object", "properties": self.properties, "additionalProperties": False}
         if self.required:
             schema["required"] = list(self.required)
@@ -473,6 +476,7 @@ def status(
     glossary: Glossary | None = None,
     saved: SavedQueries | None = None,
 ) -> list[str]:
+    """The status answer: server, target, profile, language, limits and warnings."""
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
@@ -655,6 +659,7 @@ def _closed_schema(db: Database, schema: str, visible: Sequence[str] | None = No
 
 
 def describe_table(db: Database, table: Any, schema: Any, glossary: Glossary | None = None) -> list[str]:
+    """A table as describe_table answers it: columns, constraints, references, indexes."""
     if glossary is not None:
         glossary.refresh()
     oid, schema_name, relation, kind, estimate, comment = _resolve_relation(db, table, schema)
@@ -678,6 +683,7 @@ def describe_table(db: Database, table: Any, schema: Any, glossary: Glossary | N
 
 
 def sample_rows(db: Database, table: Any, schema: Any, columns: Any, limit: Any) -> list[str]:
+    """A few rows of a table through the cursor, the columns the arguments chose."""
     oid, schema_name, relation = _resolve_relation(db, table, schema)[:3]
     available = [row[0] for row in db.query(COLUMNS_SQL, oid=oid)]
     chosen = _choose_columns(available, columns, f"{schema_name}.{relation}")
@@ -757,12 +763,14 @@ def _visible_schemas(db: Database) -> str:
 
 
 def db_health(db: Database, schema: Any = None, schemas: Sequence[str] | None = None) -> list[str]:
+    """The database's health, as health.report gathers it; the schema narrows the reading."""
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema"))
     return health.report(db, schema.strip().strip('"') if schema else None, schemas)
 
 
 def explain_query(db: Database, query: Any, analyze: Any, schemas: Sequence[str] | None = None) -> list[str]:
+    """The plan of one read-only query, run for real only when the profile allows it."""
     if check_read_only(query) not in ROW_SOURCES:
         raise ToolError(t("error.explain_row_sources"))
     options = "ANALYZE, BUFFERS, FORMAT TEXT" if _flag(analyze, "analyze") else "FORMAT TEXT"
@@ -906,6 +914,7 @@ def _relations_by_name(db: Database, name: str, schema: str | None) -> tuple[str
 
 
 def split_name(table: Any, schema: Any) -> tuple[str, str | None]:
+    """A table argument into its name and schema: "shop.orders" carries its own schema."""
     if not isinstance(table, str) or not table.strip():
         raise ToolError(t("error.table"))
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):

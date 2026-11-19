@@ -338,6 +338,7 @@ def stand_status(
     glossary: Glossary | None = None,
     saved: SavedQueries | None = None,
 ) -> list[str]:
+    """Status of the entry for many stands: every stand, or one that is asked about."""
     registry = pool.registry
     stands = registry.stands()
     lines = [
@@ -464,6 +465,7 @@ def _readable_schemas(pool: Pool, sections: Sequence[Target], down: Down) -> str
 
 
 def stand_list_tables(pool: Pool, args: Arguments, glossary: Glossary | None = None) -> list[str]:
+    """The stand's tables: one schema with its login, or every database from the catalog."""
     target = _optional_target(pool, args)
     if target is not None:
         return [target.label, *list_tables(pool.database(target), target.schema, glossary=glossary)]
@@ -474,6 +476,7 @@ def stand_list_tables(pool: Pool, args: Arguments, glossary: Glossary | None = N
 
 
 def stand_search(pool: Pool, args: Arguments, glossary: Glossary | None = None) -> list[str]:
+    """The search over the stand, or over many stands at once when the argument says so."""
     text = args.get("text")
     if not isinstance(text, str) or not text.strip():
         raise ToolError(t("error.text"))
@@ -511,6 +514,7 @@ def _search_stands(
 
 
 def stand_describe(pool: Pool, args: Arguments, glossary: Glossary | None = None) -> list[str]:
+    """A table of the stand, described under that schema's login."""
     target, table = _table_target(pool, args)
     return [target.label, *describe_table(pool.database(target), table, target.schema, glossary)]
 
@@ -609,12 +613,14 @@ def stand_health(pool: Pool, args: Arguments) -> list[str]:
 
 
 def stand_sample(pool: Pool, args: Arguments) -> list[str]:
+    """Rows of a table of the stand, under its label."""
     target, table = _table_target(pool, args)
     rows = sample_rows(pool.database(target), table, target.schema, args.get("columns"), args.get("limit"))
     return [target.label, *rows]
 
 
 def stand_explain(pool: Pool, args: Arguments, *, analyze: bool) -> list[str]:
+    """The plan of a query on the stand, under its label."""
     target = _required_target(pool, args)
     analyzed = args.get("analyze") if analyze else None
     plan = explain_query(pool.database(target), args.get("query"), analyzed, _database_schemas(pool, target))
@@ -633,6 +639,7 @@ def _saved(pool: Pool, target: Target, args: Arguments, saved: SavedQueries) -> 
 
 
 def stand_run(pool: Pool, args: Arguments) -> list[str]:
+    """One query on the stand, or the same query on many stands at once."""
     stands = _many_stands(pool, args)
     if stands is None:
         target = _required_target(pool, args)
@@ -733,7 +740,7 @@ def _each_stand(pool: Pool, stands: Sequence[str], run: Callable[[str], list[str
 def _ask_stands(
     pool: Pool, stands: Sequence[str], run: Callable[[str], list[str]]
 ) -> tuple[dict[str, list[str]], list[str]]:
-    """run on every stand at the same time, one thread each, for as long as the call may take.
+    """Run on every stand at the same time, one thread each, for as long as the call may take.
 
     The answers of the stands that made it, and the stands that did not: the client waits only so long
     for the call, so the call does not wait for them. Their threads finish the statement they are running,
@@ -807,7 +814,7 @@ def _folded(
 
 
 def _with_login(pool: Pool, stand: str, args: Arguments, run: Callable[[Target], list[str]]) -> list[str]:
-    """run with the schema's login on the stand, under its label; whatever stops it is one line under the label."""
+    """Run with the schema's login on the stand, under its label; whatever stops it is one line under the label."""
     try:
         target = pool.registry.target(stand, args.get("schema"), args.get("database"))
     except StandError as exc:

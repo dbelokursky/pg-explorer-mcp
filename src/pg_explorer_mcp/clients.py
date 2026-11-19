@@ -38,6 +38,7 @@ def app_data(env: Mapping[str, str], home: Path) -> Path:
 
 
 def vscode_user(env: Mapping[str, str], home: Path) -> Path:
+    """The user settings folder of VS Code: the mcp.json of the Copilot agent mode lives there."""
     return app_data(env, home) / "Code" / "User"
 
 
@@ -64,12 +65,14 @@ class Client:
     timeout: bool = False  # whether the client reads "timeout" (milliseconds) from an entry
 
     def path(self, env: Mapping[str, str], home: Path, name: str) -> Path | None:
+        """Where the client's settings live: the file for the block style, the folder for the rest."""
         if self.config is None:
             return None
         path = self.config(env, home)
         return path / f"{name}.yaml" if self.style == CONTINUE else path
 
     def present(self, env: Mapping[str, str], home: Path) -> bool:
+        """Whether this client seems installed: every marker of its folders."""
         return any(marker(env, home).is_dir() for marker in self.markers)
 
 

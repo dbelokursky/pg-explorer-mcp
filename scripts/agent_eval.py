@@ -209,18 +209,23 @@ class Call:
     message: str = ""
 
     def describe(self) -> str:
+        """One call as the report shows it: the tool, the arguments, the outcome."""
         text = f"{self.tool} {json.dumps(self.arguments, ensure_ascii=False)}"
         return text if self.outcome == "ok" else f"{text} -> {self.outcome}: {self.message}".rstrip(": ")
 
 
 @dataclass(frozen=True)
 class Verdict:
+    """Whether a scenario passed, and what to say about it either way."""
+
     passed: bool
     notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class Result:
+    """One scenario run: the calls the model made and the answer it gave."""
+
     scenario: Scenario
     language: str
     calls: tuple[Call, ...]
@@ -349,6 +354,7 @@ def api_url(base_url: str, path: str) -> str:
 
 
 def fetch_json(url: str) -> Any:
+    """A JSON document from the endpoint, with the scheme checked first."""
     if not url.startswith(("http://", "https://")):
         raise CheckError(f"--base-url must start with http:// or https://, not {url!r}")
     with urllib.request.urlopen(url, timeout=10) as reply:  # noqa: S310 (the scheme is checked just above)
@@ -377,6 +383,7 @@ def pick_model(models: Sequence[dict[str, Any]], wanted: str | None) -> str:
 
 
 def choose_model(base_url: str, wanted: str | None) -> str:
+    """The model to ask: the one named, or the first chat model Ollama lists."""
     try:
         models = ollama_models(base_url)
     except urllib.error.HTTPError as exc:  # something answers, but not with Ollama's API
@@ -451,6 +458,7 @@ def home_env(home: Path, environ: dict[str, str], args: argparse.Namespace, mode
 def run(
     command: Sequence[str], env: dict[str, str], cwd: Path, stdin: str = "", timeout: float = 120
 ) -> subprocess.CompletedProcess[str]:
+    """One command in a directory with its own environment, the answer as text."""
     return subprocess.run(
         list(command),
         input=stdin,
@@ -518,6 +526,7 @@ def count_orders(env: dict[str, str]) -> dict[str, int] | None:
 
 
 def copy_database(args: argparse.Namespace) -> str:
+    """The name of the demo database's changed copy, the one that differs from dev7."""
     return f"{args.database}{COPY_SUFFIX}"
 
 
@@ -589,6 +598,7 @@ def ask(scenario: Scenario, language: str, qwen: str, env: dict[str, str], home:
 
 
 def shorten(text: str, limit: int = 300) -> str:
+    """The text on one line, cut at the limit with an ellipsis."""
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
@@ -605,6 +615,7 @@ def report(result: Result, *, verbose: bool) -> None:
 
 
 def warn_small_context(base_url: str, model: str) -> None:
+    """Warn when Ollama's context is too small for Qwen Code's prompt with the tools."""
     context = loaded_context(base_url, model)
     if context is not None and context < SMALL_CONTEXT:
         print(
@@ -666,6 +677,7 @@ def _repeats(value: str) -> int:
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    """The command line: which questions, which model, how many times each."""
     parser = argparse.ArgumentParser(description="Ask a real model the usual questions about the demo database.")
     parser.add_argument("--model", help="model in Ollama (default: the first chat model it lists)")
     parser.add_argument(
@@ -755,6 +767,7 @@ def ask_all(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Ask a real model the usual questions, and report how it did."""
     args = parse_args(argv)
     try:
         scenarios = selected(args.only, args.mode)

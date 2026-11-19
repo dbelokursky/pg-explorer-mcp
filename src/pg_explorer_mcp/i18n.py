@@ -63,6 +63,7 @@ def speaking(language: str) -> Iterator[None]:
 
 
 def current() -> str:
+    """The language the server speaks in this context."""
     return _language.get()
 
 

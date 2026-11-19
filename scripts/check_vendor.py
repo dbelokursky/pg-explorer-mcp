@@ -27,6 +27,7 @@ PIN = re.compile(r"(?P<name>[A-Za-z0-9][\w.-]*)==(?P<version>[\w.!+-]+)")
 
 
 def problems(vendor: Path = VENDOR) -> list[str]:
+    """Ways the vendored packages differ from the wheels they came from; empty when they do not."""
     records = sorted(vendor.glob("*.dist-info/RECORD"))
     if not records:
         return [f"no *.dist-info/RECORD files in {vendor}"]
@@ -84,6 +85,7 @@ def _canonical(name: str) -> str:
 
 
 def main() -> int:
+    """Say every problem, and answer with the exit code."""
     found = problems()
     for problem in found:
         print(problem)

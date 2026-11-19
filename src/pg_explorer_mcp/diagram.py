@@ -91,6 +91,8 @@ _TYPE_UNSAFE = re.compile(r"[^A-Za-z0-9_\-\[\]()]")
 
 @dataclass
 class Column:
+    """One column of a table, as the diagram shows it."""
+
     name: str
     data_type: str
     not_null: bool
@@ -99,6 +101,8 @@ class Column:
 
 @dataclass
 class Table:
+    """One table: where it is and what marks its keys."""
+
     oid: int
     schema: str
     name: str
@@ -108,6 +112,7 @@ class Table:
 
     @property
     def qualified(self) -> str:
+        """The table's name with its schema."""
         return f"{self.schema}.{self.name}"
 
     def identifies(self, columns: Sequence[str]) -> bool:
@@ -118,6 +123,8 @@ class Table:
 
 @dataclass(frozen=True)
 class ForeignKey:
+    """One foreign key: which table refers to which over which columns."""
+
     source: int  # the table with the key
     target: int  # the table it refers to
     columns: tuple[str, ...]

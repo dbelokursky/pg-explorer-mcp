@@ -83,6 +83,7 @@ def run(command: Sequence[str], env: dict[str, str], stdin: str = "") -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Register the server in a throwaway home and ask Qwen Code to connect to it."""
     parser = argparse.ArgumentParser(description="Check pg-explorer-mcp in a real MCP client, Qwen Code.")
     parser.add_argument("--qwen", required=True, help="path to the qwen executable")
     args = parser.parse_args(argv)

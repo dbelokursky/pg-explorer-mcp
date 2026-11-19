@@ -37,6 +37,7 @@ SCHEMA = "shop"
 
 
 def connect(settings: Settings, database: str) -> pg8000.native.Connection:
+    """A connection to one database of the server the PG* variables name."""
     return pg8000.native.Connection(
         user=settings.user,
         password=settings.password,
@@ -48,6 +49,7 @@ def connect(settings: Settings, database: str) -> pg8000.native.Connection:
 
 
 def create(settings: Settings, database: str, role: str, password: str) -> None:
+    """The demo database and its role, made from scratch; an existing pair is left alone."""
     admin = connect(settings, settings.database)
     try:
         if admin.run("SELECT 1 FROM pg_database WHERE datname = :name", name=database):
@@ -75,6 +77,7 @@ def create(settings: Settings, database: str, role: str, password: str) -> None:
 
 
 def drop(settings: Settings, database: str, role: str) -> None:
+    """The demo database and its role, removed."""
     admin = connect(settings, settings.database)
     try:
         admin.run(f'DROP DATABASE IF EXISTS "{database}"')
@@ -101,6 +104,7 @@ def statements(sql: str) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Make the demo database of the README, or remove it with --drop."""
     parser = argparse.ArgumentParser(description="Make the demo database of the README, or remove it.")
     parser.add_argument("--database", default=DATABASE, help=f"database to create (default: {DATABASE})")
     parser.add_argument("--role", default=ROLE, help=f"the agent's role (default: {ROLE})")

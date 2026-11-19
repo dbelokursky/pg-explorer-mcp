@@ -62,13 +62,16 @@ class Connection:
 
     @property
     def label(self) -> str:
+        """Stand / database / schema, as exports name the section."""
         return f"{self.stand} / {self.database} / {self.schema}"
 
     @property
     def key(self) -> str:
+        """The registry's name of the section: stand.database.schema."""
         return f"{self.stand}.{self.database}.{self.schema}"
 
     def uid(self) -> str:
+        """The stable id of this connection in every exported tool."""
         return export_uuid(self.key)
 
 
@@ -86,6 +89,7 @@ def connections(env: Mapping[str, str], patterns: Sequence[str] = ("*",)) -> tup
 
 
 def connection(target: Target) -> Connection:
+    """One registry section as a connection for the exported tools."""
     options = target.options
     (host, port), *more = target.endpoints()
     return Connection(
@@ -127,7 +131,7 @@ def address_key(pairs: Sequence[tuple[str, object]]) -> str:
 
 
 def tls_settings(item: Connection) -> dict[str, str]:
-    """sslmode and sslrootcert where the registry sets them: libpq and pgjdbc both take these names."""
+    """Sslmode and sslrootcert where the registry sets them: libpq and pgjdbc both take these names."""
     settings = {"sslmode": item.sslmode, "sslrootcert": item.sslrootcert}
     return {key: value for key, value in settings.items() if value}
 
@@ -384,6 +388,7 @@ def pgadmin(items: Sequence[Connection], passfile: str) -> str:
 
 
 def quote_ident(name: str) -> str:
+    """An SQL name in double quotes, the quotes inside doubled."""
     return '"' + name.replace('"', '""') + '"'
 
 

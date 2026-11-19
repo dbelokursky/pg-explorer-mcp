@@ -85,6 +85,8 @@ class SqlRejectedError(Exception):
 
 @dataclass(frozen=True)
 class Token:
+    """One piece of the SQL text: a word, a name, a literal, a number or punctuation."""
+
     kind: str  # "word" (lower-cased), "quoted" (identifier), "literal", "number" or "punct"
     text: str
 
