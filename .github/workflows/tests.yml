@@ -31,8 +31,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          persist-credentials: false  # no push follows: the token leaves nothing in .git
-        with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false  # no push follows
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
@@ -63,8 +61,6 @@ jobs:
         python: ["3.9", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no push follows: the token leaves nothing in .git
         with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false  # no push follows
@@ -98,8 +94,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          persist-credentials: false  # no push follows: the token leaves nothing in .git
-        with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false  # no push follows
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
@@ -121,8 +115,6 @@ jobs:
       PGDATABASE: pg_mcp_it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no push follows: the token leaves nothing in .git
         with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false  # no push follows
@@ -174,8 +166,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          persist-credentials: false  # no push follows: the token leaves nothing in .git
-        with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false  # no push follows
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
@@ -203,8 +193,6 @@ jobs:
       PGADMIN_IMAGE: dpage/pgadmin4:9.18
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no push follows: the token leaves nothing in .git
         with:
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
           persist-credentials: false  # no push follows
