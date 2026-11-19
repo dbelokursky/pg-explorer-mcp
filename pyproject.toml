@@ -35,6 +35,7 @@ dev = [
     "mypy>=1.19,<2",
     "pytest>=8.4",
     "pytest-cov>=7.0",
+    "pytest-randomly>=4.0.1",
     "ruff>=0.17",
     "testcontainers[postgres]>=4.13.0",
 ]
@@ -107,9 +108,12 @@ testpaths = ["tests"]
 pythonpath = [".", "scripts"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 filterwarnings = [
+    # A warning is a finding: it becomes an error unless it is one of these, each named with why.
     # testcontainers 4.x still waits the deprecated way inside its own PostgresContainer
     "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers.*",
     "ignore:testcontainers.postgres is deprecated:DeprecationWarning",
+    # the macOS system Python is built with LibreSSL; the developers' machines run it, CI does not
+    "ignore:urllib3 v2 only supports OpenSSL",
 ]
 markers = ["integration: needs a real PostgreSQL (run with PG_EXPLORER_MCP_IT=1 and the usual PG* variables)"]
 xfail_strict = true
