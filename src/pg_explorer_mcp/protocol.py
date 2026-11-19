@@ -94,6 +94,7 @@ class Server:
         }
 
     def handle_line(self, line: bytes) -> bytes | None:
+        """One line in, at most one reply line out."""
         if len(line) > MAX_MESSAGE_BYTES:
             return _encode(_error(None, PARSE_ERROR, f"Parse error: the message exceeds {MAX_MESSAGE_BYTES} bytes"))
         try:
@@ -111,6 +112,7 @@ class Server:
         return None if reply is None else _encode(reply)
 
     def handle(self, message: Any) -> dict[str, Any] | None:
+        """One message: the era's handler answers it, or None needs no reply."""
         if not isinstance(message, dict):
             return _error(None, INVALID_REQUEST, "Invalid request: expected a JSON object")
         method = message.get("method")
@@ -196,8 +198,11 @@ class Server:
 
 
 def _reject_constant(name: str) -> NoReturn:
-    """json.loads accepts NaN and Infinity, which are not JSON; echoing one back would produce a
-    line that is not valid JSON for a strict client, so a message holding one is a parse error."""
+    """json.loads accepts NaN and Infinity, which are not JSON.
+
+    Echoing one back would produce a line that is not valid JSON for a strict client, so a
+    message holding one is a parse error.
+    """
     raise ValueError(f"{name} is not valid JSON")
 
 

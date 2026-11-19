@@ -104,6 +104,7 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """The pgAdmin job of tests.yml: write servers.json, compare the dump."""
     parser = argparse.ArgumentParser(description="The pgAdmin job of tests.yml: write servers.json, compare the dump.")
     commands = parser.add_subparsers(dest="command", required=True)
     write = commands.add_parser("write", help="write servers.json for the connections of the job")

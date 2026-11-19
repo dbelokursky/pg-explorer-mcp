@@ -132,6 +132,7 @@ class Comparison:
 
     @property
     def same(self) -> bool:
+        """Whether the two structures came out the same."""
         return not (self.only_a or self.only_b or self.differing)
 
     def sections(self) -> list[str]:
@@ -166,8 +167,10 @@ class Comparison:
 
 
 def comparison(a: Structure, b: Structure) -> Comparison:
-    """Names are sorted by code point, as COLLATE "C" sorts them, so the answer does not depend
-    on either server's locale. Definitions are compared whole and shortened only for display.
+    """Names are sorted by code point, as COLLATE "C" sorts them.
+
+    The answer does not depend on either server's locale. Definitions are compared whole and
+    shortened only for display.
 
     Every name in the answer carries its schema, as in list_tables: "returns | table" alone reads to a
     model as two words, and a table on one stand only went unreported.
@@ -183,6 +186,7 @@ def comparison(a: Structure, b: Structure) -> Comparison:
 
 
 def same_line(a: Structure) -> str:
+    """The one line a schema without differences gets: what there is, counted."""
     columns = sum(len(relation.columns) for relation in a.relations.values())
     return t(
         "compare.same", tables=plural("compare.tables", len(a.relations)), columns=plural("compare.columns", columns)

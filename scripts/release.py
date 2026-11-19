@@ -138,7 +138,7 @@ def starts(folder: Path) -> list[str]:
 
 
 def vendor_intact(folder: Path) -> list[str]:
-    """git archive converts line endings where attributes ask; the vendored packages must come out untouched."""
+    """Git archive converts line endings where attributes ask; the vendored packages must come out untouched."""
     proc = _run([sys.executable, str(folder / "scripts" / "check_vendor.py")], dict(os.environ), folder.parent)
     return [] if proc.returncode == 0 else ["the vendored packages in the archive differ from their wheels"]
 
@@ -204,6 +204,7 @@ def _check(archive: Path) -> int:
 
 
 def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:
+    """What a release needs: version, notes, the archive — one command per argument."""
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")  # paths in the output may not fit a narrow console code page

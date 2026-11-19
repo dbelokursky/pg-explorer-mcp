@@ -104,9 +104,11 @@ class SavedQueries:
         return True
 
     def names(self) -> list[str]:
+        """The saved queries in the file's order."""
         return [query.name for query in self.queries]
 
     def named(self, name: str) -> SavedQuery | None:
+        """The query of that name, whatever its case; None when there is none."""
         wanted = name.strip().lower()
         for query in self.queries:
             if query.name.lower() == wanted:

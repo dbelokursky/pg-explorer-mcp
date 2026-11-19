@@ -49,13 +49,19 @@ class LogSource(Protocol):
     """Where the queries go: one Database, or the pool of a server with many stands."""
 
     @property
-    def statements_run(self) -> int: ...
+    def statements_run(self) -> int:
+        """Statements the source has run, for the line the log writes."""
+        ...
 
     @property
-    def rows_read(self) -> int: ...
+    def rows_read(self) -> int:
+        """Rows they returned."""
+        ...
 
     @property
-    def settings(self) -> Settings | None: ...
+    def settings(self) -> Settings | None:
+        """Whose login the line names: None when no database answers."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,8 @@ class Mark:
 
 
 class QueryLog:
+    """The journal of tool calls, one JSON line each, when a path names it."""
+
     def __init__(self, path: str | None, db: LogSource | None = None) -> None:
         self.path = path
         self.problem: str | None = None
@@ -79,6 +87,7 @@ class QueryLog:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str], db: LogSource | None = None) -> QueryLog:
+        """The log PG_EXPLORER_MCP_QUERY_LOG asks for, reading the path's ~ and such."""
         raw = env.get("PG_EXPLORER_MCP_QUERY_LOG", "").strip()
         return cls(str(Path(raw).expanduser()) if raw else None, db)
 
@@ -91,10 +100,12 @@ class QueryLog:
         return t("status.query_log", path=self.path)
 
     def start(self) -> Mark:
+        """The moment before a tool runs, to count its statements and rows after."""
         db = self._db
         return Mark(time.monotonic(), db.statements_run if db else 0, db.rows_read if db else 0)
 
     def write(self, mark: Mark, tool: str, arguments: Any, outcome: str, message: str | None = None) -> None:
+        """One line: the tool, its arguments, how it ended. Never raises on a tool's behalf."""
         if self._target is None:
             return
         db = self._db

@@ -67,6 +67,7 @@ class Connection:
 
     @property
     def address(self) -> str:
+        """host:port of every host, as the preview shows them."""
         return ",".join(f"{host}:{port}" for host, port in self.endpoints)
 
 
@@ -401,6 +402,7 @@ def stand_from_name(name: str) -> str | None:
 
 
 def compile_pattern(raw: str) -> re.Pattern[str]:
+    """The stand pattern, case-insensitive; None when it does not compile."""
     try:
         return re.compile(raw, re.IGNORECASE)
     except re.error as exc:
