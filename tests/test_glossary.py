@@ -47,7 +47,8 @@ class TestReading:
         with i18n.speaking("en"):
             assert found.describe("table", "SHOP.Orders") == "Customer orders: status and time"
             assert found.describe("column", "shop.orders.TOTAL") == "Сумма заказа"  # falls back to Russian
-            assert found.describe("term", "Average_Receipt") == "Sum of the paid orders of a month, divided by their count"
+            expected = "Sum of the paid orders of a month, divided by their count"
+            assert found.describe("term", "Average_Receipt") == expected
             assert found.describe("table", "shop.returns") is None
 
     def test_the_servers_language_comes_first_and_the_other_stands_in(self, tmp_path: Path) -> None:
