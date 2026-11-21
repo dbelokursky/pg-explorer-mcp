@@ -800,8 +800,8 @@ ru = Заказы клиентов: статус и время
 [column shop.orders.status]
 en = new, paid, shipped or cancelled
 [term average_receipt]
-en = Sum of the paid orders of a month
-ru = Сумма оплаченных заказов за месяц
+en = Sum of the paid orders of a month, divided by their count
+ru = Сумма оплаченных заказов за месяц, делённая на их количество
 ```
 
 - `table` и `column` принимают полное имя; `term` — слово самой группы. В секции строки `en` и `ru`:
