@@ -80,6 +80,12 @@ def test_an_answer_that_fits_keeps_its_kept_line_where_it_is() -> None:
     assert fit_to_budget(lines, DEFAULT_BUDGET) == lines
 
 
+def test_a_kept_line_survives_beside_a_first_line_too_long_to_fit() -> None:
+    result = fit(["x" * 20000, Keep(LATE)], MIN_BUDGET)
+    assert result[0].endswith("…")
+    assert result[1:-1] == [LATE]
+
+
 def test_shorten_collapses_whitespace_into_one_line() -> None:
     assert shorten("Заказы\n  клиентов\tза год") == "Заказы клиентов за год"
 
