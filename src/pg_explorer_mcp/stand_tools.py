@@ -59,6 +59,7 @@ from .tools import (
     describe_table,
     diagram_properties,
     explain_query,
+    glossary_and_queries_warnings,
     list_tables,
     relations_named,
     run_saved_query,
@@ -373,7 +374,8 @@ def stand_status(
             else []
         ),
     ]
-    lines.extend(t("status.warning", warning=warning) for warning in (*warnings, *registry_warnings(registry)))
+    complained = (*warnings, *glossary_and_queries_warnings(glossary, saved), *registry_warnings(registry))
+    lines.extend(t("status.warning", warning=warning) for warning in complained)
     if not isinstance(stand, str) or not stand.strip():
         lines.append(
             t(

@@ -100,3 +100,13 @@ class TestTheTool:
         tools = {tool.name: tool for tool in build_tools(Database({"PGPORT": "not-a-number"}), str(ROOT), saved=found)}
         with pytest.raises(ToolError, match="name must be a non-empty string"):
             tools["run_saved_query"].call({"name": 7})
+
+    def test_status_tells_of_a_query_refused_after_an_edit(self, tmp_path: Path) -> None:
+        """Status showed the warnings of start-up only: the query was gone, and nothing said why."""
+        path = tmp_path / "queries.conf"
+        found = saved(path, "[one]\nquery = SELECT 1\n")
+        tools = {tool.name: tool for tool in build_tools(Database({"PGPORT": "not-a-number"}), str(ROOT), saved=found)}
+        assert "left out" not in tools["status"].call({})
+        edited = path.read_text(encoding="utf-8") + "[oops]\nquery = DELETE FROM shop.orders\n"
+        path.write_text(edited, encoding="utf-8")
+        assert "warning: Query oops was left out:" in tools["status"].call({})

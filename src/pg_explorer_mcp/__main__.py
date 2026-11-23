@@ -110,10 +110,11 @@ def main(
 
 
 def _surroundings(env: Mapping[str, str], warnings: list[str]) -> tuple[Glossary, SavedQueries, Registry | None]:
-    """The glossary, the saved queries and the stands registry, their warnings already in the list."""
+    """The glossary, the saved queries and the stands registry; the registry's warnings are already in the list.
+
+    The glossary's and the queries' warnings are not: status reads them from the files as they are then.
+    """
     glossary, saved = Glossary.from_env(env), SavedQueries.from_env(env)
-    warnings.extend(glossary.warnings)
-    warnings.extend(saved.warnings)
     registry = load_registry(env)
     if registry is not None and not registry.targets:
         warnings.extend(registry_warnings(registry))  # the single-database tools show why the stands are off

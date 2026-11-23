@@ -463,6 +463,18 @@ def build_tools(
     return [replace(tool, budget=budget, query_log=query_log) for tool in present]
 
 
+def glossary_and_queries_warnings(glossary: Glossary | None, saved: SavedQueries | None) -> list[str]:
+    """The glossary's and the saved queries' warnings, of their files as they are now.
+
+    Both are re-read when they changed, as the tools do before they use them: a warning raised by an
+    edit reaches status without a restart.
+    """
+    for kept in (glossary, saved):
+        if kept is not None:
+            kept.refresh()
+    return [*(glossary.warnings if glossary is not None else []), *(saved.warnings if saved is not None else [])]
+
+
 def status(
     db: Database,
     install_dir: str,
@@ -508,7 +520,8 @@ def status(
             else []
         ),
     ]
-    lines.extend(t("status.warning", warning=warning) for warning in warnings)
+    complained = (*warnings, *glossary_and_queries_warnings(glossary, saved))
+    lines.extend(t("status.warning", warning=warning) for warning in complained)
     try:
         info = db.server_info()
     except DatabaseUnavailableError as exc:

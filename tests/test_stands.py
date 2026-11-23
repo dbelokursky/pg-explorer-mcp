@@ -599,6 +599,15 @@ class TestOfflineTools:
         assert lines[0] == "dev1 / orders / shipping"
         assert lines[1].startswith("  ")  # why the stand did not answer, under its label
 
+    def test_status_tells_of_a_query_refused_after_an_edit(self, pool: Pool, tmp_path: Path) -> None:
+        """Status showed the warnings of start-up only: the query was gone, and nothing said why."""
+        file = write(tmp_path / "queries.conf", "[one]\nquery = SELECT 1\n")
+        found = SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(file)})
+        tools = by_name(build_stand_tools(pool, str(ROOT), saved=found))
+        assert "left out" not in tools["status"].call({})
+        write(file, "[one]\nquery = SELECT 1\n[oops]\nquery = DELETE FROM orders\n")
+        assert "warning: Query oops was left out:" in tools["status"].call({})
+
     def test_the_schema_profile_in_full(self) -> None:
         assert STAND_PROFILES["schema"] == (
             "status",
