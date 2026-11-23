@@ -76,7 +76,8 @@ folder for every project; before SSH configurations, `proxy-host` in the data so
 leaves the connection direct, and it is brought in as usual.
 Writing prepares both files in full, then puts them in place with a dated copy of the old ones; the password file
 is only added to and updated, and the registry is added to or, with `--prune`, replaced; on a failure nothing
-changes. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
+changes, and a registry or password file that cannot be read refuses the import: counted as empty, it would be
+replaced by what the import brings alone. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
 When `install.py` is run by hand in a terminal and finds DBeaver, it offers to show the preview; the agent
 does the same with the `/pg:import` command and writes only after the user confirms.
 

@@ -163,7 +163,9 @@ EN: dict[str, str] = {
     # Saved queries: the group's own SQL, run by name (queries.py).
     "queries.unreadable": "The saved queries {path} cannot be read: {error}",
     "queries.refused": "Query {name} was left out: {message}",
-    "queries.not_rows": "only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)",
+    "queries.not_rows": (
+        "Query {name} was left out: only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)"
+    ),
     "queries.unknown": "No saved query {name!r}. Saved: {known}.",
     "queries.answer": "{name}: {description}",
     "queries.entries.one": "{count} query",
@@ -607,6 +609,7 @@ EN: dict[str, str] = {
         "This was a preview, nothing was written. Add --write to write the files and register pg-stands."
     ),
     "import.cannot_write": "cannot write {path}: {error}. Nothing was changed.",
+    "import.cannot_place": "cannot replace {path}: {error}. It is left as it was.",
     "import.written": "written {path}",
     "import.written_backup": "written {path}; the old file is kept as {backup}",
     "import.no_dbeaver": (
@@ -776,7 +779,9 @@ RU: dict[str, str] = {
     "search.glossary": "из глоссария:",
     "queries.unreadable": "Файл сохранённых запросов {path} не читается: {error}",
     "queries.refused": "Запрос {name} не взят: {message}",
-    "queries.not_rows": "сохранить можно только запрос, возвращающий строки (SELECT, WITH, VALUES, TABLE)",
+    "queries.not_rows": (
+        "Запрос {name} не взят: сохранить можно только запрос, возвращающий строки (SELECT, WITH, VALUES, TABLE)"
+    ),
     "queries.unknown": "Нет сохранённого запроса {name!r}. Сохранены: {known}.",
     "queries.answer": "{name}: {description}",
     "queries.entries.one": "{count} запрос",
@@ -1245,6 +1250,7 @@ RU: dict[str, str] = {
         "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы и зарегистрировать pg-stands."
     ),
     "import.cannot_write": "не удалось записать {path}: {error}. Ничего не изменено.",
+    "import.cannot_place": "не удалось заменить {path}: {error}. Файл остался прежним.",
     "import.written": "записан {path}",
     "import.written_backup": "записан {path}; прежний файл сохранён как {backup}",
     "import.no_dbeaver": (

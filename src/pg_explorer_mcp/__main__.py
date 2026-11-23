@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import BinaryIO
 
@@ -18,7 +18,7 @@ from . import environment, i18n
 from .budget import budget_from_env
 from .db import Database
 from .glossary import Glossary
-from .protocol import Server
+from .protocol import MAX_MESSAGE_BYTES, Server
 from .queries import SavedQueries
 from .querylog import QueryLog
 from .stand_tools import build_stand_tools, registry_warnings
@@ -93,7 +93,7 @@ def main(
         )
         server = Server(tools)
     try:
-        for line in iter(source.readline, b""):
+        for line in _lines(source):
             if not line.strip():
                 continue
             reply = server.handle_line(line)
@@ -110,10 +110,11 @@ def main(
 
 
 def _surroundings(env: Mapping[str, str], warnings: list[str]) -> tuple[Glossary, SavedQueries, Registry | None]:
-    """The glossary, the saved queries and the stands registry, their warnings already in the list."""
+    """The glossary, the saved queries and the stands registry; the registry's warnings are already in the list.
+
+    The glossary's and the queries' warnings are not: status reads them from the files as they are then.
+    """
     glossary, saved = Glossary.from_env(env), SavedQueries.from_env(env)
-    warnings.extend(glossary.warnings)
-    warnings.extend(saved.warnings)
     registry = load_registry(env)
     if registry is not None and not registry.targets:
         warnings.extend(registry_warnings(registry))  # the single-database tools show why the stands are off
@@ -123,6 +124,25 @@ def _surroundings(env: Mapping[str, str], warnings: list[str]) -> tuple[Glossary
 def _whole(env: Mapping[str, str], variable: str, default: int) -> int:
     raw = env.get(variable, "").strip()
     return int(raw) if raw.isdigit() and int(raw) > 0 else default
+
+
+def _lines(source: BinaryIO) -> Iterator[bytes]:
+    """The lines of the input, a longer one cut to MAX_MESSAGE_BYTES and one byte more.
+
+    The rest of such a line is left out a piece at a time, never kept: a client that does not end a
+    line cannot make the server read it into memory. The piece is still too long for the protocol,
+    which answers with its parse error, and what the client sends after the line is read as usual.
+    """
+    while True:
+        line = source.readline(MAX_MESSAGE_BYTES + 1)
+        if not line:
+            return
+        if len(line) > MAX_MESSAGE_BYTES and not line.endswith(b"\n"):
+            while True:
+                rest = source.readline(MAX_MESSAGE_BYTES + 1)
+                if not rest or rest.endswith(b"\n"):
+                    break
+        yield line
 
 
 if __name__ == "__main__":

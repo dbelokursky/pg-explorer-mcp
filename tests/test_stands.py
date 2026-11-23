@@ -22,6 +22,7 @@ import pytest
 
 from pg_explorer_mcp import __main__ as entry
 from pg_explorer_mcp import db, i18n, stand_tools
+from pg_explorer_mcp.budget import DEFAULT_BUDGET, fit_to_budget
 from pg_explorer_mcp.compare import (
     RELATIONS_SQL,
     SCHEMA_CONSTRAINTS_SQL,
@@ -598,6 +599,15 @@ class TestOfflineTools:
         assert lines[0] == "dev1 / orders / shipping"
         assert lines[1].startswith("  ")  # why the stand did not answer, under its label
 
+    def test_status_tells_of_a_query_refused_after_an_edit(self, pool: Pool, tmp_path: Path) -> None:
+        """Status showed the warnings of start-up only: the query was gone, and nothing said why."""
+        file = write(tmp_path / "queries.conf", "[one]\nquery = SELECT 1\n")
+        found = SavedQueries.from_env({"PG_EXPLORER_MCP_QUERIES_FILE": str(file)})
+        tools = by_name(build_stand_tools(pool, str(ROOT), saved=found))
+        assert "left out" not in tools["status"].call({})
+        write(file, "[one]\nquery = SELECT 1\n[oops]\nquery = DELETE FROM orders\n")
+        assert "warning: Query oops was left out:" in tools["status"].call({})
+
     def test_the_schema_profile_in_full(self) -> None:
         assert STAND_PROFILES["schema"] == (
             "status",
@@ -1166,6 +1176,15 @@ class TestParallelStands:
             "  fine",
         ]
         assert pool.outcomes == {"dev2": "error"}
+
+    def test_the_stands_that_did_not_answer_survive_the_cut(self) -> None:
+        """Their line comes last and the budget keeps the start: silent stands used to read as empty ones."""
+        late = stand_tools._not_in_time(["dev1", "dev2", "ift1"])
+        answered = ["dev4 / orders / billing", *(f"  order_id={number}" for number in range(2000))]
+        fitted = fit_to_budget([*answered, *late], DEFAULT_BUDGET)
+        assert len("\n".join(fitted)) <= DEFAULT_BUDGET
+        assert fitted[-1].startswith("…")  # something was cut
+        assert fitted[-2:-1] == late
 
     @pytest.mark.usefixtures("russian")
     def test_the_threads_speak_the_language_of_the_call(self, pool: Pool, tools: dict[str, Tool]) -> None:

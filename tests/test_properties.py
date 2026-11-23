@@ -12,7 +12,7 @@ import string
 from hypothesis import given
 from hypothesis import strategies as st
 
-from pg_explorer_mcp.budget import fit_to_budget, shorten
+from pg_explorer_mcp.budget import Keep, fit_to_budget, shorten
 from pg_explorer_mcp.db import _split_pgpass_line, split_hosts
 from pg_explorer_mcp.diagram import _attribute_name, mermaid_type
 from pg_explorer_mcp.stands import stand_ranges, summarize
@@ -83,11 +83,30 @@ def test_shortened_text_stays_within_the_limit_on_one_line(text: str, limit: int
     assert short.count("\n") == 0
 
 
-@given(st.lists(st.text(min_size=1, max_size=30), min_size=1, max_size=50), st.integers(min_value=500, max_value=8000))
+@given(
+    st.lists(
+        st.one_of(st.text(min_size=1, max_size=30), st.builds(Keep, st.text(min_size=1, max_size=30))),
+        min_size=1,
+        max_size=50,
+    ),
+    st.integers(min_value=500, max_value=8000),
+)
 def test_a_fitted_answer_stays_within_the_budget(lines: list[str], budget: int) -> None:
     fitted = fit_to_budget(lines, budget)
     assert len("\n".join(fitted)) <= budget
     assert all(line in lines for line in fitted[:-1])  # the last line may be the notice of the cut
+
+
+@given(
+    st.lists(st.text(alphabet="ab ", min_size=1, max_size=40), min_size=2, max_size=30),
+    st.text(alphabet="cd ", min_size=1, max_size=60),
+    st.integers(min_value=500, max_value=3000),
+)
+def test_a_kept_line_survives_whatever_is_cut_as_long_as_it_fits(body: list[str], last: str, budget: int) -> None:
+    lines = [*body, Keep(last)]
+    fitted = fit_to_budget(lines, budget)
+    if fitted != lines and len(last) + 1 + len(fitted[-1]) <= budget:
+        assert fitted[-2] == last  # right before the notice, whatever else of the body was cut
 
 
 @given(st.text(min_size=1, max_size=20))

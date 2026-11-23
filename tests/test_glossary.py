@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from pg_explorer_mcp import i18n
+from pg_explorer_mcp.db import Database
 from pg_explorer_mcp.glossary import Glossary, default_file
+from pg_explorer_mcp.tools import build_tools
+from tests.helpers import ROOT
 
 GLOSSARY = """\
 [table shop.orders]
@@ -103,3 +106,15 @@ class TestRefresh:
             assert found.refresh() is True
             assert found.describe("table", "shop.orders") == "Orders, edited"
             assert found.refresh() is False  # nothing changed since
+
+    def test_status_tells_of_a_glossary_that_cannot_be_read_after_an_edit(self, tmp_path: Path) -> None:
+        """Status showed the warnings of start-up only: the descriptions were gone, and nothing said why."""
+        path = tmp_path / "glossary.conf"
+        found = glossary(path)
+        tools = {
+            tool.name: tool for tool in build_tools(Database({"PGPORT": "not-a-number"}), str(ROOT), glossary=found)
+        }
+        assert "cannot be read" not in tools["status"].call({})
+        path.unlink()
+        path.mkdir()
+        assert f"warning: The glossary {path} cannot be read" in tools["status"].call({})

@@ -10,10 +10,7 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import re
-import stat
-import sys
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -25,6 +22,7 @@ from .clients import app_data
 from .db import pgpass_path, split_hosts
 from .i18n import t
 from .stands import Target, export_uuid, exported_sections, parse_service_file, registry_files
+from .user_files import Staged, discard, place, stage
 
 # DBeaver encrypts credentials-config.json with this key unless the user turned on its secure storage.
 DBEAVER_KEY = bytes.fromhex("babb4a9f774ab853c96c2d653dfe544a")
@@ -36,7 +34,6 @@ DEFAULT_STAND_PATTERN = r"(dev|ift)[-_ ]?\d+"  # letters, then a number, with or
 _NAME = re.compile(r"[A-Za-z0-9_$-]+")  # what a part of a stand.database.schema section may hold
 _SEPARATORS = re.compile(r"[-_ ]+")  # what a stand the pattern found loses: DEV-27 is the stand dev27
 _NAME_WORD = re.compile(r"[a-z0-9_$]+")  # the words of a connection name that may make a stand name
-_FILE_MODE = 0o600
 
 
 class ImportRefusedError(Exception):
@@ -489,22 +486,29 @@ def preview(result: Plan, registry_file: Path, passfile: Path) -> list[str]:
 
 
 def write(result: Plan, registry_file: Path, passfile: Path, *, prune: bool = False) -> list[str]:
-    """Put the registry and the password file in place; both are prepared in full before either is."""
+    """Put the registry and the password file in place; both are prepared in full before either is.
+
+    Both are install.py's own and may hold passwords: what is written is readable by its owner alone.
+    """
     if not result.targets:
         raise ImportRefusedError(t("import.nothing"))
     registry_text = _registry_text(registry_file, result.targets, prune=prune)
     passfile_text = _passfile_text(passfile, result.passwords)
     prepared = ((registry_file, registry_text), (passfile, passfile_text))
+    staged: list[Staged] = []
     try:
         for path, text in prepared:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            _prepare(path, text)
+            staged.append(stage(path, text))
     except OSError as exc:
-        _discard(registry_file, passfile)
+        discard(staged)
         raise ImportRefusedError(t("import.cannot_write", path=exc.filename or registry_file, error=exc)) from exc
-    lines = []
-    for path, _ in prepared:
-        backup = _place(path)
+    lines: list[str] = []
+    for number, (path, real, temporary) in enumerate(staged):
+        try:
+            backup = place((path, real, temporary), owner_only=True)
+        except OSError as exc:
+            discard(staged[number:])
+            raise ImportRefusedError("\n".join([*lines, t("import.cannot_place", path=path, error=exc)])) from exc
         lines.append(
             t("import.written", path=path) if backup is None else t("import.written_backup", path=path, backup=backup)
         )
@@ -516,8 +520,11 @@ def _registry_text(registry_file: Path, targets: Sequence[Target], *, prune: boo
     if not prune:
         try:
             sections, _ = parse_service_file(registry_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
-            sections = {}
+        except (FileNotFoundError, NotADirectoryError):
+            pass  # no registry yet, not even its folder: there is nothing to keep
+        except (OSError, UnicodeDecodeError) as exc:
+            # Counted as empty, the registry would be replaced by the imported stands alone.
+            raise ImportRefusedError(t("import.unreadable", path=registry_file, error=exc)) from exc
     for target in targets:
         sections[target.name] = dict(target.options)
     when = datetime.date.today().isoformat()
@@ -541,8 +548,11 @@ def _passfile_text(passfile: Path, passwords: Mapping[tuple[str, str, str, str],
     """The password file with these logins added or updated and everything else kept as it was."""
     try:
         existing = passfile.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        existing = []
+    except (FileNotFoundError, NotADirectoryError):
+        existing = []  # no password file yet, not even its folder: the imported logins start one
+    except (OSError, UnicodeDecodeError) as exc:
+        # Counted as empty, every other password of the user would be gone from the new file.
+        raise ImportRefusedError(t("import.unreadable", path=passfile, error=exc)) from exc
     pending = dict(passwords)
     out = []
     for line in existing:
@@ -585,43 +595,6 @@ def _passfile_line(key: tuple[str, str, str, str], password: str) -> str:
 
 def _escape(part: str) -> str:
     return part.replace("\\", "\\\\").replace(":", "\\:")
-
-
-def _temporary(path: Path) -> Path:
-    return path.with_name(path.name + ".pg-explorer-mcp-new")
-
-
-def _prepare(path: Path, text: str) -> None:
-    """Write the new content next to the file, readable by its owner only, flushed to disk."""
-    temporary = _temporary(path)
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _FILE_MODE)
-    try:
-        os.write(descriptor, text.encode("utf-8"))
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    if sys.platform != "win32":
-        temporary.chmod(_FILE_MODE)
-
-
-def _place(path: Path) -> Path | None:
-    """Move the prepared content over the file, keeping the old file as a dated backup."""
-    backup = None
-    if path.exists():
-        when = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
-        backup = path.with_name(f"{path.name}.bak-{when}")
-        path.replace(backup)
-        if sys.platform != "win32" and stat.S_IMODE(backup.stat().st_mode) & 0o077:
-            backup.chmod(_FILE_MODE)  # a backup of passwords should be no more readable than the file
-    _temporary(path).replace(path)
-    return backup
-
-
-def _discard(*paths: Path) -> None:
-    for path in paths:
-        temporary = _temporary(path)
-        if temporary.exists():
-            temporary.unlink()
 
 
 def default_files(env: Mapping[str, str]) -> tuple[Path, Path]:

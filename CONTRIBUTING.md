@@ -135,9 +135,9 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 
 ## Выпуск
 
-1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_explorer_mcp/__init__.py` и
-   обоих манифестах расширения, раздел «Не выпущено» в `CHANGELOG.md` становится `## X.Y.Z — дата`.
-   `python3 scripts/release.py version` печатает версию, когда все файлы согласны.
+1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_explorer_mcp/__init__.py`,
+   обоих манифестах расширения и в примере `status` обоих README, раздел «Не выпущено» в `CHANGELOG.md`
+   становится `## X.Y.Z — дата`. `python3 scripts/release.py version` печатает версию, когда все файлы согласны.
 2. PR в `develop`, затем PR `develop` → `main`. Если с прошлого выпуска менялась выгрузка в
    инструменты БД (`src/pg_explorer_mcp/exports.py`), откройте её результат в DataGrip и в VS Code с
    расширениями PostgreSQL и SQLTools на машине, где они есть: CI проверяет только psql и pgAdmin.
@@ -189,8 +189,8 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
   `tests/test_i18n.py` сверяет ключи, формы множественного числа и плейсхолдеры. Журнал и ошибки
   JSON-RPC остаются английскими (ADR 0004).
 - **Версия в нескольких файлах.** `pyproject.toml`, `src/pg_explorer_mcp/__init__.py`, оба манифеста
-  расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`, а тег
-  выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
+  расширения, заголовок в `CHANGELOG.md` и пример `status` в обоих README; за совпадением следит
+  `tests/test_version.py`, а тег выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
 - **ruff одной версии.** Хук pre-commit берёт его из `rev` в `.pre-commit-config.yaml`, CI — из
   `uv.lock`, а Dependabot обновляет только lock; за совпадением следит `tests/test_tool_versions.py`.
 - **Почему так.** Решения про стек и инструменты описаны в [docs/adr/](docs/adr/); прежде чем

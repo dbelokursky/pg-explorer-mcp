@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import json
 import logging
+from typing import BinaryIO, cast
 
 import pytest
 
 from pg_explorer_mcp import __main__ as entry
+from pg_explorer_mcp.protocol import MAX_MESSAGE_BYTES
 from tests.helpers import ROOT, rpc
 
 
@@ -71,3 +73,27 @@ def test_settings_written_by_pg_mcp_0_7_still_work_and_the_log_says_so(
 def test_a_new_setting_name_wins_over_its_old_twin(unreachable_env: dict[str, str]) -> None:
     text = status_from_main(dict(unreachable_env, PG_MCP_NAME="pg-old", PG_EXPLORER_MCP_NAME="pg-new"))
     assert "server name: pg-new" in text.splitlines()
+
+
+class Flood:
+    """What a client sends, counting the longest line read back: one far past the limit, then a request."""
+
+    def __init__(self, request: bytes) -> None:
+        self.sent = io.BytesIO(b"x" * (MAX_MESSAGE_BYTES + 50_000) + b"\n" + request + b"\n")
+        self.longest = 0
+
+    def readline(self, size: int = -1) -> bytes:
+        line = self.sent.readline(size)
+        self.longest = max(self.longest, len(line))
+        return line
+
+
+def test_a_line_past_the_limit_is_never_read_whole(unreachable_env: dict[str, str]) -> None:
+    """The limit was checked after the line was read in: it bounded the answer, not the memory."""
+    flood = Flood(json.dumps(rpc(1, "tools/call", {"name": "status", "arguments": {}})).encode())
+    stdout = io.BytesIO()
+    assert entry.main(cast(BinaryIO, flood), stdout, env=unreachable_env) == 0
+    assert flood.longest == MAX_MESSAGE_BYTES + 1
+    too_long, status = (json.loads(line) for line in stdout.getvalue().splitlines())
+    assert "exceeds" in too_long["error"]["message"]
+    assert "database: unavailable" in status["result"]["content"][0]["text"]
