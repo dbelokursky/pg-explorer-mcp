@@ -163,7 +163,9 @@ EN: dict[str, str] = {
     # Saved queries: the group's own SQL, run by name (queries.py).
     "queries.unreadable": "The saved queries {path} cannot be read: {error}",
     "queries.refused": "Query {name} was left out: {message}",
-    "queries.not_rows": "only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)",
+    "queries.not_rows": (
+        "Query {name} was left out: only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)"
+    ),
     "queries.unknown": "No saved query {name!r}. Saved: {known}.",
     "queries.answer": "{name}: {description}",
     "queries.entries.one": "{count} query",
@@ -777,7 +779,9 @@ RU: dict[str, str] = {
     "search.glossary": "из глоссария:",
     "queries.unreadable": "Файл сохранённых запросов {path} не читается: {error}",
     "queries.refused": "Запрос {name} не взят: {message}",
-    "queries.not_rows": "сохранить можно только запрос, возвращающий строки (SELECT, WITH, VALUES, TABLE)",
+    "queries.not_rows": (
+        "Запрос {name} не взят: сохранить можно только запрос, возвращающий строки (SELECT, WITH, VALUES, TABLE)"
+    ),
     "queries.unknown": "Нет сохранённого запроса {name!r}. Сохранены: {known}.",
     "queries.answer": "{name}: {description}",
     "queries.entries.one": "{count} запрос",

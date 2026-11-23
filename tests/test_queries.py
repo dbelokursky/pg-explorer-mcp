@@ -47,6 +47,14 @@ class TestReading:
         assert found.warnings[0].startswith("Query delete_orders was left out:")
         assert "DELETE is not allowed" in found.warnings[0]
 
+    def test_a_query_that_returns_no_rows_is_a_warning_naming_it(self, tmp_path: Path) -> None:
+        """The text used to forget the name: a query was left out, and nobody said which."""
+        found = saved(tmp_path / "queries.conf", "[explain]\nquery = EXPLAIN SELECT 1\n")
+        assert found.names() == []
+        assert found.warnings == [
+            "Query explain was left out: only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)"
+        ]
+
     def test_an_unreadable_file_is_a_warning(self, tmp_path: Path) -> None:
         folder = tmp_path / "folder.conf"
         folder.mkdir()
