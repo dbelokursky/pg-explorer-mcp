@@ -22,6 +22,7 @@ import pytest
 
 from pg_explorer_mcp import __main__ as entry
 from pg_explorer_mcp import db, i18n, stand_tools
+from pg_explorer_mcp.budget import DEFAULT_BUDGET, fit_to_budget
 from pg_explorer_mcp.compare import (
     RELATIONS_SQL,
     SCHEMA_CONSTRAINTS_SQL,
@@ -1166,6 +1167,15 @@ class TestParallelStands:
             "  fine",
         ]
         assert pool.outcomes == {"dev2": "error"}
+
+    def test_the_stands_that_did_not_answer_survive_the_cut(self) -> None:
+        """Their line comes last and the budget keeps the start: silent stands used to read as empty ones."""
+        late = stand_tools._not_in_time(["dev1", "dev2", "ift1"])
+        answered = ["dev4 / orders / billing", *(f"  order_id={number}" for number in range(2000))]
+        fitted = fit_to_budget([*answered, *late], DEFAULT_BUDGET)
+        assert len("\n".join(fitted)) <= DEFAULT_BUDGET
+        assert fitted[-1].startswith("…")  # something was cut
+        assert fitted[-2:-1] == late
 
     @pytest.mark.usefixtures("russian")
     def test_the_threads_speak_the_language_of_the_call(self, pool: Pool, tools: dict[str, Tool]) -> None:

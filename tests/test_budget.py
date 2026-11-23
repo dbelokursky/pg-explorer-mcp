@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from pg_explorer_mcp.budget import DEFAULT_BUDGET, MIN_BUDGET, budget_from_env, fit_to_budget, shorten
+from pg_explorer_mcp.budget import DEFAULT_BUDGET, MIN_BUDGET, Keep, budget_from_env, fit_to_budget, shorten
 
 HEADER = "sales.orders | table | ~1.2k rows | Заказы клиентов"
 
@@ -21,9 +21,11 @@ def fit(lines: list[str], budget: int) -> list[str]:
         assert result, "a cut answer needs at least the notice"
         assert result[-1].startswith("…"), f"no notice at the end: {result[-1]}"
         kept = result[:-1]
-        if kept:
-            assert kept[:-1] == lines[: len(kept) - 1], "kept lines must be the input's first lines"
-            assert lines[len(kept) - 1].startswith(kept[-1].rstrip("…")), "the last kept line may only be shortened"
+        must = [line for line in kept if isinstance(line, Keep)]
+        if len(kept) > len(must):  # more than the lines that must survive
+            head = kept[: len(kept) - len(must)]
+            assert head[:-1] == lines[: len(head) - 1], "kept lines must be the input's first lines"
+            assert lines[len(head) - 1].startswith(head[-1].rstrip("…")), "the last kept line may only be shortened"
     return result
 
 
@@ -53,6 +55,29 @@ def test_one_huge_line_still_fits() -> None:
 
 def test_empty_answer_stays_empty() -> None:
     assert fit_to_budget([], MIN_BUDGET) == []
+
+
+LATE = "dev47, dev48, dev49: no answer within the 25 seconds of the call"
+
+
+@pytest.mark.parametrize("budget", [MIN_BUDGET, 1000, DEFAULT_BUDGET])
+def test_a_kept_line_survives_the_cut_right_before_the_notice(budget: int) -> None:
+    """The line comes last and the budget keeps the start: silent stands used to read as empty ones."""
+    lines = [*answer(500), Keep(LATE)]
+    result = fit(lines, budget)
+    assert result[-2:-1] == [LATE]
+    assert isinstance(result[-2], Keep)
+
+
+def test_a_kept_line_that_cannot_fit_is_cut_like_any_other() -> None:
+    lines = ["a header", Keep("x" * 600)]
+    result = fit(lines, MIN_BUDGET)
+    assert not any(isinstance(line, Keep) for line in result)
+
+
+def test_an_answer_that_fits_keeps_its_kept_line_where_it_is() -> None:
+    lines = [HEADER, Keep(LATE), "columns:"]  # the class moves a line only when something is cut
+    assert fit_to_budget(lines, DEFAULT_BUDGET) == lines
 
 
 def test_shorten_collapses_whitespace_into_one_line() -> None:

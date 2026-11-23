@@ -22,7 +22,7 @@ from dataclasses import replace
 from typing import Any, Optional
 
 from . import __version__, health
-from .budget import DEFAULT_BUDGET
+from .budget import DEFAULT_BUDGET, Keep
 from .compare import Structure, compare_schema, comparison, read_structure
 from .db import Database, DatabaseUnavailableError, OverdueError, QueryFailedError, answer_by, overdue, time_budget
 from .glossary import Glossary
@@ -786,7 +786,10 @@ def _ask_stands(
 
 
 def _not_in_time(late: Sequence[str]) -> list[str]:
-    return [t("stands.out_of_time", stands=summarize(late), budget=CALL_TIME_BUDGET_S)] if late else []
+    """The stands that did not answer in time, kept whatever the budget cuts: read without them, a stand looks empty."""
+    if not late:
+        return []
+    return [Keep(t("stands.out_of_time", stands=summarize(late), budget=CALL_TIME_BUDGET_S))]
 
 
 def _folded(
