@@ -1,6 +1,6 @@
 name: audit
 
-# The development dependencies are many and update by themselves (Depabot); a known hole in one
+# The development dependencies are many and update by themselves (Dependabot); a known hole in one
 # of them is worth a red run even when the lock is a week old. The runtime has no dependencies
 # at all: everything the server itself needs is vendored and covered by Dependabot alerts.
 on:
@@ -13,9 +13,37 @@ permissions:
 
 jobs:
   dependencies:
-    name: pip-audit over the lock
+    name: pip-audit over the lock, Python ${{ matrix.python }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # uv.lock resolves some packages per Python, and pip-audit reads the versions of the
+          # interpreter it runs on: each Python the lock names gets a run. pip-audit is pinned per
+          # Python: 2.9.0 is its last release for 3.9.
+          - python: "3.9"
+            pip-audit: "2.9.0"
+            # The holes of the 3.9 branch that have no fix on 3.9: every fixed release needs
+            # Python 3.10 (pytest 9.0.3, python-dotenv 1.2.2, requests 2.33.0, urllib3 2.7.0 and
+            # 2.8.0). Development-only packages, on a developer's machine. A new finding still
+            # fails the run: these eight are ignored by their IDs, and nothing else is.
+            unfixed: >-
+              --ignore-vuln PYSEC-2026-1845
+              --ignore-vuln PYSEC-2026-2270
+              --ignore-vuln PYSEC-2026-2275
+              --ignore-vuln PYSEC-2026-142
+              --ignore-vuln PYSEC-2026-141
+              --ignore-vuln PYSEC-2026-4175
+              --ignore-vuln PYSEC-2026-4176
+              --ignore-vuln PYSEC-2026-4177
+          - python: "3.10"
+            pip-audit: "2.10.1"
+            unfixed: ""
+          - python: "3.14"
+            pip-audit: "2.10.1"
+            unfixed: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -26,4 +54,9 @@ jobs:
       - name: every locked package, one line each
         run: uv export --locked --all-groups --no-emit-project -o requirements.txt
       - name: known holes in them
-        run: uvx pip-audit --no-deps -r requirements.txt
+        # The list is complete and hashed, so nothing is resolved: pip-audit reads it as it is. Its
+        # other way is to build a virtual environment, which needs ensurepip, and a Python installed
+        # by uv has none.
+        run: >-
+          uvx --python "${{ matrix.python }}" --from "pip-audit==${{ matrix.pip-audit }}"
+          pip-audit --no-deps --disable-pip ${{ matrix.unfixed }} -r requirements.txt
