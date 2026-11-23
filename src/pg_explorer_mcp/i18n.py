@@ -607,6 +607,7 @@ EN: dict[str, str] = {
         "This was a preview, nothing was written. Add --write to write the files and register pg-stands."
     ),
     "import.cannot_write": "cannot write {path}: {error}. Nothing was changed.",
+    "import.cannot_place": "cannot replace {path}: {error}. It is left as it was.",
     "import.written": "written {path}",
     "import.written_backup": "written {path}; the old file is kept as {backup}",
     "import.no_dbeaver": (
@@ -1245,6 +1246,7 @@ RU: dict[str, str] = {
         "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы и зарегистрировать pg-stands."
     ),
     "import.cannot_write": "не удалось записать {path}: {error}. Ничего не изменено.",
+    "import.cannot_place": "не удалось заменить {path}: {error}. Файл остался прежним.",
     "import.written": "записан {path}",
     "import.written_backup": "записан {path}; прежний файл сохранён как {backup}",
     "import.no_dbeaver": (

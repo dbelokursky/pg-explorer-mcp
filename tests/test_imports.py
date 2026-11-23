@@ -12,7 +12,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 import pytest
 
-from pg_explorer_mcp import exports, imports
+from pg_explorer_mcp import exports, imports, user_files
 from pg_explorer_mcp.aes import encrypt_cbc
 from pg_explorer_mcp.db import read_pgpass
 from pg_explorer_mcp.imports import (
@@ -858,6 +858,88 @@ class TestWrite:
             write(plan([connection()], PATTERN), registry_file, passfile)
         assert registry_file.read_text(encoding="utf-8") == "[dev1.orders.billing]\nhost=old-db\n"
         assert list(tmp_path.glob("*.pg-explorer-mcp-new")) == []
+
+    def test_a_password_file_that_cannot_be_read_refuses_the_import(self, tmp_path: Path) -> None:
+        """Counted as empty, every other password of the user would be gone from the new file."""
+        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
+        kept = b"other:5432:*:me:p\xe1ssword\n"  # a password typed in a national encoding
+        passfile.write_bytes(kept)
+        with pytest.raises(ImportRefusedError, match=re.escape(f"cannot read {passfile}")):
+            write(plan([connection()], PATTERN), registry_file, passfile)
+        assert passfile.read_bytes() == kept
+        assert [child.name for child in tmp_path.iterdir()] == ["pgpass"]
+
+    def test_a_registry_that_cannot_be_read_refuses_the_import(self, tmp_path: Path) -> None:
+        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
+        kept = b"[dev1.orders.billing]\nhost=caf\xe9-db\n"
+        registry_file.write_bytes(kept)
+        with pytest.raises(ImportRefusedError, match=re.escape(f"cannot read {registry_file}")):
+            write(plan([connection()], PATTERN), registry_file, passfile)
+        assert registry_file.read_bytes() == kept
+        assert not passfile.exists()
+
+    def test_a_pruned_registry_is_replaced_without_being_read(self, tmp_path: Path) -> None:
+        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
+        registry_file.write_bytes(b"[dev1.orders.billing]\nhost=caf\xe9-db\n")
+        write(plan([connection()], PATTERN), registry_file, passfile, prune=True)
+        assert "[dev7.orders.billing]" in registry_file.read_text(encoding="utf-8")
+
+    def test_a_file_that_cannot_be_replaced_stays_as_it_was(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
+        passfile.write_text("other:5432:*:me:keep\n", encoding="utf-8")
+        real_passfile = passfile.resolve()
+        replace = Path.replace
+
+        def busy(self: Path, target: Path) -> Path:
+            if Path(target) == real_passfile and self.name.endswith(".pg-explorer-mcp-new"):
+                raise PermissionError("the file is in use")
+            return replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", busy)
+        with pytest.raises(ImportRefusedError) as caught:
+            write(plan([connection()], PATTERN), registry_file, passfile)
+        assert str(caught.value).splitlines() == [
+            f"written {registry_file}",
+            f"cannot replace {passfile}: the file is in use. It is left as it was.",
+        ]
+        assert passfile.read_text(encoding="utf-8") == "other:5432:*:me:keep\n"
+        assert sorted(child.name for child in tmp_path.iterdir()) == ["pgpass", "stands.conf"]
+
+    def test_two_imports_within_a_second_keep_both_copies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(user_files, "_now", lambda: "20261023-120000")
+        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
+        for password in ("first", "second", "third"):
+            write(plan([connection(password=password)], PATTERN), registry_file, passfile)
+        first, second = (tmp_path / f"pgpass.bak-20261023-120000{suffix}" for suffix in ("", "-2"))
+        line = "db.example:5432:orders:billing:{}\n"
+        assert passfile.read_text(encoding="utf-8") == line.format("third")
+        assert second.read_text(encoding="utf-8") == line.format("second")
+        assert first.read_text(encoding="utf-8") == line.format("first")
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need extra rights on Windows")
+    def test_a_link_to_the_password_file_stays_a_link(self, tmp_path: Path) -> None:
+        kept = tmp_path / "real-pgpass"
+        kept.write_text("other:5432:*:me:keep\n", encoding="utf-8")
+        link = tmp_path / "pgpass"
+        link.symlink_to(kept)
+        write(plan([connection()], PATTERN), tmp_path / "stands.conf", link)
+        [backup] = tmp_path.glob("real-pgpass.bak-*")
+        assert link.is_symlink()
+        assert kept.read_text(encoding="utf-8") == "other:5432:*:me:keep\ndb.example:5432:orders:billing:s3cret\n"
+        assert backup.read_text(encoding="utf-8") == "other:5432:*:me:keep\n"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="permissions are not POSIX on Windows")
+    def test_an_open_password_file_is_closed_with_its_copy(self, tmp_path: Path) -> None:
+        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
+        passfile.write_text("other:5432:*:me:keep\n", encoding="utf-8")
+        passfile.chmod(0o644)
+        write(plan([connection()], PATTERN), registry_file, passfile)
+        [backup] = tmp_path.glob("pgpass.bak-*")
+        assert stat.S_IMODE(passfile.stat().st_mode) == stat.S_IMODE(backup.stat().st_mode) == 0o600
 
     def test_nothing_to_write_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ImportRefusedError, match="nothing to import"):
