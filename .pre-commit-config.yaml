@@ -14,7 +14,7 @@ repos:
       - id: check-json
       - id: check-merge-conflict
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.3  # the same version uv.lock pins for CI
+    rev: v0.17.5  # the same version uv.lock pins for CI; tests/test_tool_versions.py keeps it so
     hooks:
       - id: ruff-check
         args: [--fix]

@@ -189,5 +189,7 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 - **Версия в нескольких файлах.** `pyproject.toml`, `src/pg_explorer_mcp/__init__.py`, оба манифеста
   расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`, а тег
   выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
+- **ruff одной версии.** Хук pre-commit берёт его из `rev` в `.pre-commit-config.yaml`, CI — из
+  `uv.lock`, а Dependabot обновляет только lock; за совпадением следит `tests/test_tool_versions.py`.
 - **Почему так.** Решения про стек и инструменты описаны в [docs/adr/](docs/adr/); прежде чем
   менять принятое, допишите новый ADR.
