@@ -41,4 +41,7 @@ does today without breaking the main rule: a clone of the repository runs on bar
 - Working on the project needs uv; running the server still needs only Python.
 - While Python 3.9 is supported, mypy is pinned below 2, and pytest and coverage in the 3.9 environment
   stay on the last versions that support 3.9. The lock file holds both branches of versions.
+- Those last versions carry known vulnerabilities whose fixes need Python 3.10: eight in pytest,
+  python-dotenv, requests and urllib3 on 2026-11-23, all packages of development only. The weekly audit
+  (`.github/workflows/audit.yml`) names them by ID and ignores exactly those; a new one fails the run.
 - All checks except the integration ones work without a database and without a network.

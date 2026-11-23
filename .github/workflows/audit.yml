@@ -25,10 +25,25 @@ jobs:
           # Python: 2.9.0 is its last release for 3.9.
           - python: "3.9"
             pip-audit: "2.9.0"
+            # The holes of the 3.9 branch that have no fix on 3.9: every fixed release needs
+            # Python 3.10 (pytest 9.0.3, python-dotenv 1.2.2, requests 2.33.0, urllib3 2.7.0 and
+            # 2.8.0). Development-only packages, on a developer's machine. A new finding still
+            # fails the run: these eight are ignored by their IDs, and nothing else is.
+            unfixed: >-
+              --ignore-vuln PYSEC-2026-1845
+              --ignore-vuln PYSEC-2026-2270
+              --ignore-vuln PYSEC-2026-2275
+              --ignore-vuln PYSEC-2026-142
+              --ignore-vuln PYSEC-2026-141
+              --ignore-vuln PYSEC-2026-4175
+              --ignore-vuln PYSEC-2026-4176
+              --ignore-vuln PYSEC-2026-4177
           - python: "3.10"
             pip-audit: "2.10.1"
+            unfixed: ""
           - python: "3.14"
             pip-audit: "2.10.1"
+            unfixed: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -44,4 +59,4 @@ jobs:
         # by uv has none.
         run: >-
           uvx --python "${{ matrix.python }}" --from "pip-audit==${{ matrix.pip-audit }}"
-          pip-audit --no-deps --disable-pip -r requirements.txt
+          pip-audit --no-deps --disable-pip ${{ matrix.unfixed }} -r requirements.txt
