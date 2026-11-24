@@ -187,8 +187,9 @@ jobs:
 
   keyring:
     # The password store of a Linux desktop (ADR 0012): secret-tool is the real one, gnome-keyring plays
-    # the keyring of the desktop on a D-Bus session of its own, unlocked with an empty password. A runner
-    # has neither a desktop nor a session, so everywhere else the test of the real keyring skips.
+    # the keyring of the desktop on a D-Bus session of its own. A runner has no login keyring (the login
+    # to a desktop makes it), so the test writes into the session collection; and it has no desktop, so
+    # everywhere else the test of the real keyring skips.
     name: password store (Linux keyring)
     runs-on: ubuntu-latest
     timeout-minutes: 10

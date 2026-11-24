@@ -718,12 +718,18 @@ class TestSecretService:
         assert (items_of(folder), SecretService().read()) == ({}, "")
 
     @pytest.mark.usefixtures("folder")
+    def test_a_collection_named_is_an_option_of_the_store(self, folder: Path) -> None:
+        SecretService(collection=SESSION_COLLECTION).write("one\n")
+        store = next(args for args, _ in calls_of(folder) if args[0] == "store")
+        assert store[store.index("--label=pg-explorer-mcp passwords") + 1] == f"--collection={SESSION_COLLECTION}"
+
     def test_the_label_names_the_record(self) -> None:
         label = "the keyring of the desktop, record pg-explorer-mcp/passwords (Secret Service)"
         assert SecretService().label == label
 
 
 KEYRING_TEST = "PG_EXPLORER_MCP_TEST_KEYRING"
+SESSION_COLLECTION = "/org/freedesktop/secrets/collection/session"
 
 
 @pytest.mark.skipif(
@@ -736,11 +742,17 @@ def test_the_keyring_of_this_linux_keeps_the_record() -> None:
     assert tool is not None
     account = f"passwords-test-{os.getpid()}"
     record = "".join(line_of((f"host{n}", "5432", "orders", "billing"), f"пароль-{n}") + "\n" for n in range(700))
+
+    def keyring() -> SecretService:
+        # The session collection is always there. The login one is made by the login to the desktop,
+        # which a machine without a desktop never went through.
+        return SecretService(tool, passwords.SERVICE, account, SESSION_COLLECTION)
+
     try:
-        SecretService(tool, passwords.SERVICE, account).write(record)
-        assert SecretService(tool, passwords.SERVICE, account).read() == record
-        SecretService(tool, passwords.SERVICE, account).write("one\n")
-        assert SecretService(tool, passwords.SERVICE, account).read() == "one\n"  # the head updated in place
+        keyring().write(record)
+        assert keyring().read() == record
+        keyring().write("one\n")
+        assert keyring().read() == "one\n"  # the head updated in place, not duplicated
     finally:
-        SecretService(tool, passwords.SERVICE, account).forget()
-    assert SecretService(tool, passwords.SERVICE, account).read() == ""
+        keyring().forget()
+    assert keyring().read() == ""

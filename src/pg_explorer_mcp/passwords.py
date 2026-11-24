@@ -412,10 +412,22 @@ class SecretService:
     never as an argument.
     """
 
-    def __init__(self, tool: str = SECRET_TOOL, service: str = SERVICE, account: str = ACCOUNT) -> None:
+    def __init__(
+        self,
+        tool: str = SECRET_TOOL,
+        service: str = SERVICE,
+        account: str = ACCOUNT,
+        collection: str | None = None,
+    ) -> None:
+        """The record under this service and account, written by this tool.
+
+        collection, when given, is the object path of a collection of the keyring to write into, the
+        default one otherwise: the tests of a machine without a login keyring name the session collection.
+        """
         self._tool = tool
         self._service = service
         self._account = account
+        self._collection = collection
 
     @property
     def label(self) -> str:
@@ -481,7 +493,12 @@ class SecretService:
     def _store(self, secret: str, *attributes: Pair) -> None:
         encoded = base64.b64encode(secret.encode("utf-8")).decode("ascii")
         code, _, err = _secret_tool(
-            self._tool, "store", f"--label={KEYRING_LABEL}", *self._arguments(*attributes), secret=encoded
+            self._tool,
+            "store",
+            f"--label={KEYRING_LABEL}",
+            *([f"--collection={self._collection}"] if self._collection else []),
+            *self._arguments(*attributes),
+            secret=encoded,
         )
         if code != 0:
             raise PasswordStoreError(self._failed(err))
