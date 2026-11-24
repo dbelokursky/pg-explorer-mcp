@@ -54,6 +54,10 @@ jobs:
     name: unit (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      # The macOS runner has a login keychain: the test of the real one runs there, on a record of its
+      # own that it deletes. Everywhere else the tests keep to a store in memory (ADR 0012).
+      PG_EXPLORER_MCP_TEST_KEYCHAIN: ${{ matrix.os == 'macos-latest' && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:

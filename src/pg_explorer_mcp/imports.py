@@ -19,8 +19,9 @@ from urllib.parse import parse_qsl, unquote_plus
 
 from .aes import decrypt_cbc
 from .clients import app_data
-from .db import pgpass_path, split_hosts
+from .db import split_hosts
 from .i18n import t
+from .passwords import pgpass_path
 from .stands import Target, export_uuid, exported_sections, parse_service_file, registry_files
 from .user_files import Staged, discard, place, stage
 

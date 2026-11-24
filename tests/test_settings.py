@@ -12,8 +12,9 @@ from typing import Any
 import pg8000.exceptions
 import pytest
 
-from pg_explorer_mcp import db
-from pg_explorer_mcp.db import Database, DatabaseUnavailableError, Settings, read_pgpass
+from pg_explorer_mcp import db, passwords
+from pg_explorer_mcp.db import Database, DatabaseUnavailableError, Settings
+from pg_explorer_mcp.passwords import read_pgpass
 
 
 def settings(**overrides: str) -> Settings:
@@ -105,11 +106,11 @@ class TestPgpass:
         assert read_pgpass(path, "db", 5432, "sales", "app") is None
 
     def test_password_file_location_follows_libpq(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        assert db.pgpass_path({"PGPASSFILE": "/etc/custom"}) == "/etc/custom"
+        assert passwords.pgpass_path({"PGPASSFILE": "/etc/custom"}) == "/etc/custom"
         monkeypatch.setattr(sys, "platform", "win32")
-        assert db.pgpass_path({"APPDATA": "C:/Users/a/AppData/Roaming"}).endswith("pgpass.conf")
+        assert passwords.pgpass_path({"APPDATA": "C:/Users/a/AppData/Roaming"}).endswith("pgpass.conf")
         monkeypatch.setattr(sys, "platform", "linux")
-        assert db.pgpass_path({}).endswith(".pgpass")
+        assert passwords.pgpass_path({}).endswith(".pgpass")
 
 
 def failure(message: object, cause: BaseException | None = None) -> pg8000.exceptions.Error:
@@ -124,7 +125,7 @@ def failure(message: object, cause: BaseException | None = None) -> pg8000.excep
         (failure("x", ConnectionRefusedError()), "Nothing accepts connections at localhost:5432"),
         (failure("x", socket.gaierror()), "cannot be resolved"),
         (failure("x", TimeoutError()), "timed out"),
-        (failure({"C": "28P01", "M": "password authentication failed"}), "Put the password into"),
+        (failure({"C": "28P01", "M": "password authentication failed"}), "Set the password with"),
         (failure({"C": "3D000", "M": "database does not exist"}), "Database 'app' does not exist"),
         (failure({"C": "28000", "M": "no pg_hba.conf entry"}), "Check the role and pg_hba.conf"),
         (failure("Server refuses SSL"), "Check PGSSLMODE"),
@@ -139,7 +140,7 @@ def test_connection_failures_become_hints(error: pg8000.exceptions.Error, hint: 
 def test_a_login_the_server_dropped_points_at_the_password_and_pg_hba(error: Exception) -> None:
     text = explain(error, settings(PGPASSWORD="x"))
     assert "localhost:5432 accepted the connection, then closed it during the login of 'app'" in text
-    assert "check the password file, then ask the DBA" in text
+    assert "set the password again" in text
 
 
 def test_no_route_to_the_host_points_at_the_vpn() -> None:
@@ -167,7 +168,7 @@ def test_only_a_silent_host_counts_as_down(error: Exception, down: bool) -> None
     assert db._host_down(error) is down
 
 
-def test_scram_login_without_a_password_gets_the_password_file_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scram_login_without_a_password_gets_the_hint_of_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
     def scram_without_password(**kwargs: object) -> None:  # noqa: ARG001
         # pg8000 1.31 fails on None.decode() when a SCRAM server asks for a password that is not set.
         raise AttributeError("'NoneType' object has no attribute 'decode'")
@@ -175,7 +176,7 @@ def test_scram_login_without_a_password_gets_the_password_file_hint(monkeypatch:
     monkeypatch.setattr("pg8000.native.Connection", scram_without_password)
     with pytest.raises(DatabaseUnavailableError, match="none is set") as caught:
         Database({"PGUSER": "app", "PGPASSFILE": os.devnull}).server_info()
-    assert "Put the password into" in str(caught.value)
+    assert "Set the password with" in str(caught.value)
 
 
 class FakeConnection:

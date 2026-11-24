@@ -13,8 +13,9 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from pg_explorer_mcp.budget import Keep, fit_to_budget, shorten
-from pg_explorer_mcp.db import _split_pgpass_line, split_hosts
+from pg_explorer_mcp.db import split_hosts
 from pg_explorer_mcp.diagram import _attribute_name, mermaid_type
+from pg_explorer_mcp.passwords import split_line
 from pg_explorer_mcp.stands import stand_ranges, summarize
 from pg_explorer_mcp.tools import _like_escape
 
@@ -27,7 +28,7 @@ name = st.from_regex(r"[a-z]{1,3}[1-9][0-9]{0,2}", fullmatch=True)
 @given(st.lists(field, min_size=1, max_size=6))
 def test_a_pgpass_line_splits_into_the_fields_it_was_written_from(fields: list[str]) -> None:
     line = ":".join(fields)
-    assert _split_pgpass_line(line) == fields
+    assert split_line(line) == fields
 
 
 @given(st.lists(field.filter(str), min_size=1, max_size=5), st.lists(field, min_size=1, max_size=5))
@@ -35,7 +36,7 @@ def test_an_escaped_colon_stays_inside_its_field(plain: list[str], inner: list[s
     # A password with colons is the reason the escapes exist: none of them may open a new field.
     value = "\\:".join(inner)
     fields = [value if index == len(plain) // 2 else part for index, part in enumerate(plain)]
-    assert len(_split_pgpass_line(":".join(fields))) == len(fields)
+    assert len(split_line(":".join(fields))) == len(fields)
 
 
 @given(st.lists(st.text(alphabet="ab", min_size=1, max_size=8), min_size=1, max_size=4))

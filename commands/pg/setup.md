@@ -21,7 +21,10 @@ Set up or repair the read-only PostgreSQL MCP server `pg` from the pg-explorer-m
    `~/.pg_service.conf` (see the README).
 4. If the status says the database is unavailable, follow its hint. Connection settings go into the
    `env` block of `mcpServers.pg` (or `pg-<name>`): PGHOST, PGPORT, PGDATABASE, PGUSER, PGSSLMODE.
-   The password goes into `~/.pgpass`, which the user edits themselves. Then run
+   The password goes into the server's password store: tell the user to run
+   `<python> <pg-explorer-mcp folder>/install.py password` in a terminal (with `--host`, `--port`,
+   `--database` and `--user` when that shell does not name the database); it asks for the password
+   there. Never ask for the password in the chat. Then run
    `<python> <pg-explorer-mcp folder>/install.py --check` again.
 5. If the output says DBeaver connections or the data sources of a JetBrains IDE were found
    ("DBeaver connections found", "Data sources of DataGrip or another JetBrains IDE found", in Russian

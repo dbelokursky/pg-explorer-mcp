@@ -658,8 +658,9 @@ class TestOfflineTools:
     def test_status_with_a_stand_lists_its_schemas_and_checks_one_login(self, tools: dict[str, Tool]) -> None:
         lines = tools["status"].call({"stand": "dev1"}).splitlines()
         # archive is read as a whole: its schemas come from the catalog, which is out of reach here
-        assert lines[-4].startswith("dev1 / archive: Nothing accepts connections at 127.0.0.1:")
-        assert lines[-3:-1] == ["dev1 / orders: billing, shipping", "checked with dev1 / archive / billing"]
+        assert lines[-5].startswith("dev1 / archive: Nothing accepts connections at 127.0.0.1:")
+        assert lines[-4:-2] == ["dev1 / orders: billing, shipping", "checked with dev1 / archive / billing"]
+        assert lines[-2] == "password: not set. Put it into the password store: python3 install.py password"
         assert lines[-1].startswith("database: unavailable. Nothing accepts connections at 127.0.0.1:")
 
     def test_a_login_the_server_turned_down_is_followed_by_the_next_one(
@@ -1748,13 +1749,17 @@ class TestReload:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="no mode bits on Windows")
-def test_a_registry_with_a_password_that_others_can_read_is_a_warning(tmp_path: Path) -> None:
+def test_a_registry_with_a_password_is_a_warning(tmp_path: Path) -> None:
     own = write(tmp_path / "stands.conf", "[dev1.orders.billing]\nhost=db\npassword=secret\n")
     own.chmod(0o644)
     registry = loaded(STANDS_ON, [own])
     assert registry.warnings == [f"{own} holds a password, and other users can read it: chmod 600 {own}"]
     own.chmod(0o600)
-    assert loaded(STANDS_ON, [own]).warnings == []
+    # Clear text is warned about whoever can read it (ADR 0012): the password belongs in the store.
+    assert loaded(STANDS_ON, [own]).warnings == [
+        f"{own} holds a password in clear text: move it into the password store with "
+        "python3 install.py password and drop the line"
+    ]
     plain = write(tmp_path / "plain.conf", "[dev1.orders.billing]\nhost=db\n")
     plain.chmod(0o644)
     assert loaded(STANDS_ON, [plain]).warnings == []  # no password, nothing to protect
