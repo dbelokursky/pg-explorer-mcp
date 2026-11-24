@@ -11,22 +11,23 @@ Bring the user's stand connections into pg-explorer-mcp: from DBeaver, from Data
    JetBrains IDEs; `install.py import pg-service <file>` for a service file; `--workspace <folder>` when
    DBeaver keeps its `data-sources.json` elsewhere). The output lists the connections that would go
    into the stands registry as `[stand.database.schema]`, how many passwords would go into the password
-   file, and what is left out and why. The schema part is the connection's login; when that login reads
+   store of the system, and what is left out and why. The schema part is the connection's login; when that login reads
    many schemas, the server reads the whole database through it, so such a section needs no editing by
    hand. Passwords are never printed; do not try to print them either. `import datagrip` reads the
    global data sources of the IDEs and DataGrip's projects in `~/DataGripProjects`; when the stands are
    data sources of a project of code, add `--project <project folder>`. The IDEs keep passwords in the
-   system keychain or KeePass, which the import never reads: the preview marks those connections, and
-   the user adds their lines to `~/.pgpass` by hand, never in the chat.
+   system keychain or KeePass, which the import never reads: the preview marks those connections and
+   names the `install.py password` command for each. The user runs it in a terminal, never in the chat.
 3. Show the user the preview and ask whether to write it. A connection whose folder, name and host
    match no stand pattern gets its own name as the stand (`IFT-Caldera` becomes `ift-caldera`), and the
    preview marks such lines; if the user wants a numbered stand instead, ask how the stand is named in
    their folders or connection names and retry with `--stand-pattern '<regular expression>'`; the
    default is `(dev|ift)[-_ ]?\d+`, and a separator between the letters and the number is dropped.
 4. Only after the user says yes, run the same command with `--write`. It writes the registry
-   (`~/.pg-explorer-mcp/stands.conf`) and adds the passwords to the password file (`~/.pgpass`), keeping backups
-   of both, and registers the `pg-stands` entry next to `pg` with `PG_EXPLORER_MCP_STANDS=*`. With `--prune` the
-   registry is replaced instead of added to; the password file is only ever added to.
+   (`~/.pg-explorer-mcp/stands.conf`), keeping a dated copy, puts the passwords into the password store of
+   the system, and registers the `pg-stands` entry next to `pg` with `PG_EXPLORER_MCP_STANDS=*`. With
+   `--prune` the registry is replaced instead of added to. Where the system has no password store, an
+   import with passwords is refused and says so; tell the user what it printed.
 5. Tell the user to restart the agent, then check with the `status` tool of `pg-stands`: it lists the
    stands and warns about anything the registry could not read. A stand the user sees in DBeaver or
    DataGrip but not here was left out in step 2 for a reason the preview named.
@@ -35,5 +36,6 @@ Bring the user's stand connections into pg-explorer-mcp: from DBeaver, from Data
    `<python> <pg-explorer-mcp folder>/install.py export <tool>` previews, with `<tool>` one of `datagrip`,
    `pgadmin`, `pg-service`, `vscode-pgsql`, `sqltools` or `dbeaver` (connections DBeaver has already are
    left out). Run the same command with `--write` only after the user confirms, and pass on its last
-   line, which says what to do in the tool. No password goes into the tools: they log in with the
-   password file.
+   line, which says what to do in the tool. No password goes into the tools: each asks for the password
+   once and keeps it itself. For psql the user may add `--pgpass`, which writes the passwords into the
+   password file in clear: the user's decision, made in a terminal.

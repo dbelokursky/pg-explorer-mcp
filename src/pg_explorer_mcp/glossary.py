@@ -13,7 +13,7 @@ The file uses the pg_service.conf format, a section per thing described:
     [column shop.orders.status]
     en = new, paid, shipped or cancelled
     [term average_receipt]
-    ru = Сумма заказов со статусом paid за месяц
+    ru = Сумма оплаченных заказов за месяц, делённая на их количество
 
 Only en and ru texts are read, in that spirit: whichever the server speaks comes
 first, the other stands in when it is missing. The file is re-read when it changes

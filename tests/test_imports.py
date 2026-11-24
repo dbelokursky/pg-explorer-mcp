@@ -12,9 +12,8 @@ from xml.sax.saxutils import escape, quoteattr
 
 import pytest
 
-from pg_explorer_mcp import exports, imports
+from pg_explorer_mcp import exports, imports, passwords, user_files
 from pg_explorer_mcp.aes import encrypt_cbc
-from pg_explorer_mcp.db import read_pgpass
 from pg_explorer_mcp.imports import (
     Connection,
     ImportRefusedError,
@@ -29,7 +28,9 @@ from pg_explorer_mcp.imports import (
     stand_of,
     write,
 )
+from pg_explorer_mcp.passwords import Passwords, line_of
 from pg_explorer_mcp.stands import load_registry
+from tests.helpers import Memory
 
 PATTERN = compile_pattern(imports.DEFAULT_STAND_PATTERN)
 
@@ -403,10 +404,10 @@ class TestDataGrip:
         assert [(c.name, reason) for c, reason in result.skipped] == [
             ("nobody on dev8", "no user: pg-explorer-mcp reads a schema with the login of the same name")
         ]
-        lines = preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")
-        assert (
-            lines[1]
-            == "  [dev7.orders.billing]  dev7-db.example:5432  no saved password: add a line to the password file"
+        lines = preview(result, tmp_path / "stands.conf", store())
+        assert lines[1] == (
+            "  [dev7.orders.billing]  dev7-db.example:5432  no saved password: put it in with "
+            "`python3 install.py password --stand dev7 --schema billing`"
         )
 
     def test_several_hosts_in_the_url_keep_their_ports(self, tmp_path: Path) -> None:
@@ -453,7 +454,7 @@ class TestDataGrip:
             "sslrootcert": "/etc/pg/ca.pem",
         }
         assert result.passwords == {("dev3-db.example", "5432", "sales_db", "reporter"): "p:w x"}
-        assert "p:w x" not in "\n".join(preview(result, tmp_path / "stands.conf", tmp_path / "pgpass"))
+        assert "p:w x" not in "\n".join(preview(result, tmp_path / "stands.conf", store()))
 
     def test_a_url_without_a_host_or_a_database_is_left_out(self, tmp_path: Path) -> None:
         datagrip_files(
@@ -735,13 +736,11 @@ class TestPlan:
         assert [(c.name, reason) for c, reason in result.skipped] == [
             ("odd on ift1", "PGPORT='1,2,3' lists 3 ports for 2 hosts: give one port for all of them, or one for each")
         ]
-        assert preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")[1] == (
-            "  [dev7.orders.billing]  h1:6544,h2:6544"
-        )
+        assert preview(result, tmp_path / "stands.conf", store())[1] == ("  [dev7.orders.billing]  h1:6544,h2:6544")
 
     def test_a_connection_through_an_ssh_tunnel_is_left_out_and_takes_no_section(self, tmp_path: Path) -> None:
         """Its host is the database's as the SSH server sees it, often the server's own localhost: its section would
-        point at the user's localhost, and its password would go into the password file under it."""
+        point at the user's localhost, and its password would be kept for that host."""
         result = plan(
             [
                 connection(name="orders via bastion on dev7", host="localhost", tunnel="bastion.example:22"),
@@ -752,7 +751,7 @@ class TestPlan:
         )
         assert [target.name for target in result.targets] == ["dev7.orders.billing"]
         assert result.passwords == {("db.example", "5432", "orders", "billing"): "s3cret"}
-        assert preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")[-3:] == [
+        assert preview(result, tmp_path / "stands.conf", store())[-3:] == [
             "left out: 2",
             "  test: orders via bastion on dev7  through an SSH tunnel via bastion.example:22: "
             "pg-explorer-mcp opens no tunnels",
@@ -769,12 +768,15 @@ class TestPlan:
             ],
             PATTERN,
         )
-        lines = preview(result, tmp_path / "stands.conf", tmp_path / "pgpass")
+        lines = preview(result, tmp_path / "stands.conf", store())
         assert lines[0] == f"3 connections go into {tmp_path / 'stands.conf'}:"
         assert lines[1] == "  [dev7.orders.billing]  db.example:5432"
-        assert lines[2] == "  [dev7.shop.shop]  db.example:5432  no saved password: add a line to the password file"
+        assert lines[2] == (
+            "  [dev7.shop.shop]  db.example:5432  no saved password: put it in with "
+            "`python3 install.py password --stand dev7 --schema shop`"
+        )
         assert lines[3] == "  [x.orders.billing]  db.example:5432  stand from the connection name"
-        assert lines[4] == f"1 passwords go into {tmp_path / 'pgpass'}"
+        assert lines[4] == "1 passwords go into the password store (the memory of the tests)"
         assert lines[5:] == [
             "left out: 1",
             "  test: Заказы  no stand: the pattern matched nothing, and the name has no Latin letters to be one",
@@ -782,96 +784,216 @@ class TestPlan:
         assert "s3cret" not in "\n".join(lines)
 
 
+def store() -> Passwords:
+    """A password store for one call: in memory, and saying so where it is named."""
+    return Passwords(Memory())
+
+
+BILLING = ("db.example", "5432", "orders", "billing")
+
+
+class Sealed(Memory):
+    """A password store that cannot be written to."""
+
+    def write(self, _text: str) -> None:
+        raise passwords.PasswordStoreError("sealed")
+
+
 class TestWrite:
-    def test_writes_the_registry_and_the_password_file_the_server_can_read(self, tmp_path: Path) -> None:
-        registry_file, passfile = tmp_path / "pg-explorer-mcp" / "stands.conf", tmp_path / "pgpass"
+    """What the import writes: the registry file, and the passwords into the password store (ADR 0012)."""
+
+    def test_the_passwords_go_into_the_store_and_the_registry_is_a_file_of_its_own(self, tmp_path: Path) -> None:
+        registry_file = tmp_path / "pg-explorer-mcp" / "stands.conf"
         odd = connection(name="ift1 orders", host="ift1-db", password="p:w\\d")  # noqa: S106
         result = plan([connection(), odd], PATTERN)
-        lines = write(result, registry_file, passfile)
-        assert lines == [f"written {registry_file}", f"written {passfile}"]
+        memory = Memory()
+        lines = write(result, registry_file, Passwords(memory))
+        assert lines == [
+            f"written {registry_file}",
+            "2 passwords are in the password store (the memory of the tests)",
+        ]
+        assert memory.text == (
+            line_of(BILLING, "s3cret") + "\n" + line_of(("ift1-db", "5432", "orders", "billing"), "p:w\\d") + "\n"
+        )
         text = registry_file.read_text(encoding="utf-8")
         assert "[dev7.orders.billing]\nhost=db.example\n" in text
         assert "[ift1.orders.billing]\nhost=ift1-db\n" in text
-        assert (
-            passfile.read_text(encoding="utf-8")
-            == "db.example:5432:orders:billing:s3cret\nift1-db:5432:orders:billing:p\\:w\\\\d\n"
-        )
-        assert read_pgpass(str(passfile), "ift1-db", 5432, "orders", "billing") == "p:w\\d"
+        assert "Passwords belong in the password store." in text
+        assert "s3cret" not in text  # the registry holds no password, ever
+        assert "password=" not in text
         if sys.platform != "win32":
-            assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
             assert stat.S_IMODE(registry_file.stat().st_mode) == 0o600
         registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [registry_file])
         assert registry is not None
         assert [target.name for target in registry.targets] == ["dev7.orders.billing", "ift1.orders.billing"]
+        assert [child.name for child in tmp_path.iterdir()] == ["pg-explorer-mcp"]  # and no file of passwords
 
-    def test_a_stand_with_several_hosts_is_read_back_by_the_server(self, tmp_path: Path) -> None:
-        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
-        write(plan([connection(host="h1,h2", port="6544,6545")], PATTERN), registry_file, passfile)
+    def test_a_stand_with_several_hosts_gets_a_password_of_its_own_per_host(self, tmp_path: Path) -> None:
+        registry_file = tmp_path / "stands.conf"
+        memory = Memory()
+        write(plan([connection(host="h1,h2", port="6544,6545")], PATTERN), registry_file, Passwords(memory))
         assert "[dev7.orders.billing]\nhost=h1,h2\nport=6544,6545\n" in registry_file.read_text(encoding="utf-8")
-        assert passfile.read_text(encoding="utf-8") == (
-            "h1:6544:orders:billing:s3cret\nh2:6545:orders:billing:s3cret\n"
+        assert memory.text == (
+            line_of(("h1", "6544", "orders", "billing"), "s3cret")
+            + "\n"
+            + line_of(("h2", "6545", "orders", "billing"), "s3cret")
+            + "\n"
         )
-        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [registry_file])
-        assert registry is not None
-        assert registry.targets[0].address == "h1:6544,h2:6545"
-        assert read_pgpass(str(passfile), "h2", 6545, "orders", "billing") == "s3cret"
 
-    def test_adds_to_what_is_there_and_keeps_backups(self, tmp_path: Path) -> None:
-        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
-        registry_file.write_text("[dev1.orders.billing]\nhost=old-db\n\n[reports]\nhost=rep\n", encoding="utf-8")
-        passfile.write_text("# mine\ndb.example:5432:orders:billing:old\nother:5432:*:me:keep\n", encoding="utf-8")
-        passfile.chmod(0o600)
-        result = plan([connection()], PATTERN)
-        lines = write(result, registry_file, passfile)
-        assert all(line.startswith("written ") and ".bak-" in line for line in lines)
+    def test_adds_to_what_is_there_and_keeps_a_dated_copy_of_the_registry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(user_files, "_now", lambda: "20261023-120000")
+        registry_file = tmp_path / "stands.conf"
+        before = "[dev1.orders.billing]\nhost=old-db\n\n[reports]\nhost=rep\n"
+        registry_file.write_text(before, encoding="utf-8")
+        memory = Memory()
+        other = line_of(("other", "5432", "*", "me"), "keep") + "\n"
+        memory.text = line_of(BILLING, "old") + "\n" + other
+        lines = write(plan([connection()], PATTERN), registry_file, Passwords(memory))
+        backup = tmp_path / "stands.conf.bak-20261023-120000"
+        assert lines == [
+            f"written {registry_file}; the old file is kept as {backup}",
+            "1 passwords are in the password store (the memory of the tests)",
+        ]
         text = registry_file.read_text(encoding="utf-8")
         assert "[dev1.orders.billing]\nhost=old-db\n" in text
         assert "[reports]\nhost=rep\n" in text
         assert "[dev7.orders.billing]\nhost=db.example\n" in text
-        assert (
-            passfile.read_text(encoding="utf-8")
-            == "# mine\ndb.example:5432:orders:billing:s3cret\nother:5432:*:me:keep\n"
-        )
-        backups = sorted(tmp_path.glob("*.bak-*"))
-        assert [path.name.split(".bak-")[0] for path in backups] == ["pgpass", "stands.conf"]
+        assert memory.text == line_of(BILLING, "s3cret") + "\n" + other  # the other login's line stays
+        assert backup.read_text(encoding="utf-8") == before
         if sys.platform != "win32":
-            assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups)
+            assert stat.S_IMODE(backup.stat().st_mode) == 0o600
 
-    def test_prune_replaces_the_registry_but_never_the_password_file(self, tmp_path: Path) -> None:
-        registry_file, passfile = tmp_path / "stands.conf", tmp_path / "pgpass"
-        registry_file.write_text("[dev1.orders.billing]\nhost=old-db\n", encoding="utf-8")
-        passfile.write_text("other:5432:*:me:keep\n", encoding="utf-8")
-        write(plan([connection()], PATTERN), registry_file, passfile, prune=True)
-        assert "dev1" not in registry_file.read_text(encoding="utf-8")
-        assert passfile.read_text(encoding="utf-8").splitlines() == [
-            "other:5432:*:me:keep",
-            "db.example:5432:orders:billing:s3cret",
-        ]
-
-    def test_a_failure_leaves_both_files_as_they_were(self, tmp_path: Path) -> None:
+    def test_prune_replaces_the_registry_but_never_the_passwords(self, tmp_path: Path) -> None:
         registry_file = tmp_path / "stands.conf"
         registry_file.write_text("[dev1.orders.billing]\nhost=old-db\n", encoding="utf-8")
-        blocker = tmp_path / "blocker"
-        blocker.write_text("a file where the password folder should be", encoding="utf-8")
-        passfile = blocker / "pgpass"
+        memory = Memory()
+        other = line_of(("other", "5432", "*", "me"), "keep") + "\n"
+        memory.text = other
+        write(plan([connection()], PATTERN), registry_file, Passwords(memory), prune=True)
+        assert "dev1" not in registry_file.read_text(encoding="utf-8")
+        assert memory.text == other + line_of(BILLING, "s3cret") + "\n"
+
+    def test_a_registry_that_cannot_be_written_leaves_it_unwritten_and_the_store_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        registry_file = tmp_path / "stands.conf"
+        (tmp_path / "stands.conf.pg-explorer-mcp-new").mkdir()  # where the new registry would go
+        memory = Memory()
         with pytest.raises(ImportRefusedError, match="Nothing was changed"):
-            write(plan([connection()], PATTERN), registry_file, passfile)
+            write(plan([connection()], PATTERN), registry_file, Passwords(memory))
+        assert not registry_file.exists()
+        assert (memory.text, memory.readings) == ("", 0)
+
+    def test_a_registry_that_cannot_be_replaced_stays_as_it_was_and_the_store_untouched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        registry_file = tmp_path / "stands.conf"
+        registry_file.write_text("[dev1.orders.billing]\nhost=old-db\n", encoding="utf-8")
+        real_registry = registry_file.resolve()
+        replace = Path.replace
+
+        def busy(self: Path, target: Path) -> Path:
+            if Path(target) == real_registry and self.name.endswith(".pg-explorer-mcp-new"):
+                raise PermissionError("the file is in use")
+            return replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", busy)
+        memory = Memory()
+        with pytest.raises(ImportRefusedError) as caught:
+            write(plan([connection()], PATTERN), registry_file, Passwords(memory))
+        assert str(caught.value) == f"cannot replace {registry_file}: the file is in use. It is left as it was."
         assert registry_file.read_text(encoding="utf-8") == "[dev1.orders.billing]\nhost=old-db\n"
-        assert list(tmp_path.glob("*.pg-explorer-mcp-new")) == []
+        assert sorted(child.name for child in tmp_path.iterdir()) == ["stands.conf"]
+        assert (memory.text, memory.readings) == ("", 0)
+
+    def test_when_the_passwords_cannot_be_kept_the_registry_goes_back_to_what_it_was(self, tmp_path: Path) -> None:
+        registry_file = tmp_path / "stands.conf"
+        before = "[dev1.orders.billing]\nhost=old-db\n"
+        registry_file.write_text(before, encoding="utf-8")
+        with pytest.raises(ImportRefusedError) as caught:
+            write(plan([connection()], PATTERN), registry_file, Passwords(Sealed()))
+        assert str(caught.value) == (
+            "the passwords did not go into the password store (sealed), and the registry is as it was: "
+            "nothing was written"
+        )
+        assert registry_file.read_text(encoding="utf-8") == before
+        assert [child.name for child in tmp_path.iterdir()] == ["stands.conf"]  # the dated copy went back too
+
+    def test_a_first_registry_is_taken_away_when_the_passwords_cannot_be_kept(self, tmp_path: Path) -> None:
+        registry_file = tmp_path / "stands.conf"
+        with pytest.raises(ImportRefusedError, match="nothing was written"):
+            write(plan([connection()], PATTERN), registry_file, Passwords(Sealed()))
+        assert not registry_file.exists()
+
+    def test_where_there_is_no_password_store_an_import_with_passwords_is_refused_before_anything_is_written(
+        self, tmp_path: Path
+    ) -> None:
+        registry_file = tmp_path / "stands.conf"
+        with pytest.raises(ImportRefusedError, match="the passwords of the import would go nowhere"):
+            write(plan([connection()], PATTERN), registry_file, None)
+        assert not registry_file.exists()
+
+    def test_where_there_is_no_password_store_an_import_without_passwords_needs_none(self, tmp_path: Path) -> None:
+        registry_file = tmp_path / "stands.conf"
+        lines = write(plan([connection(password=None)], PATTERN), registry_file, None)
+        assert lines == [f"written {registry_file}"]
+        assert preview(plan([connection(password=None)], PATTERN), registry_file, None)[1] == (
+            "  [dev7.orders.billing]  db.example:5432  no saved password: put it in with "
+            "`python3 install.py password --stand dev7 --schema billing`"
+        )
+
+    def test_a_registry_that_cannot_be_read_refuses_the_import(self, tmp_path: Path) -> None:
+        registry_file = tmp_path / "stands.conf"
+        kept = b"[dev1.orders.billing]\nhost=caf\xe9-db\n"
+        registry_file.write_bytes(kept)
+        memory = Memory()
+        with pytest.raises(ImportRefusedError, match=re.escape(f"cannot read {registry_file}")):
+            write(plan([connection()], PATTERN), registry_file, Passwords(memory))
+        assert registry_file.read_bytes() == kept
+        assert (memory.text, memory.readings) == ("", 0)
+
+    def test_a_pruned_registry_is_replaced_without_being_read(self, tmp_path: Path) -> None:
+        registry_file = tmp_path / "stands.conf"
+        registry_file.write_bytes(b"[dev1.orders.billing]\nhost=caf\xe9-db\n")
+        write(plan([connection()], PATTERN), registry_file, store(), prune=True)
+        assert "[dev7.orders.billing]" in registry_file.read_text(encoding="utf-8")
+
+    def test_two_imports_within_a_second_keep_both_copies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(user_files, "_now", lambda: "20261023-120000")
+        registry_file = tmp_path / "stands.conf"
+        for password in ("first", "second", "third"):
+            write(plan([connection(password=password)], PATTERN), registry_file, store())
+        first, second = (tmp_path / f"stands.conf.bak-20261023-120000{suffix}" for suffix in ("", "-2"))
+        written = registry_file.read_text(encoding="utf-8")
+        assert (first.read_text(encoding="utf-8"), second.read_text(encoding="utf-8")) == (written, written)
 
     def test_nothing_to_write_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ImportRefusedError, match="nothing to import"):
-            write(plan([], PATTERN), tmp_path / "stands.conf", tmp_path / "pgpass")
+            write(plan([], PATTERN), tmp_path / "stands.conf", store())
 
-    def test_the_default_files_follow_the_environment(self, tmp_path: Path) -> None:
-        env = {"PG_EXPLORER_MCP_STANDS_FILE": str(tmp_path / "s.conf"), "PGPASSFILE": str(tmp_path / "p")}
-        assert imports.default_files(env) == (tmp_path / "s.conf", tmp_path / "p")
+    def test_the_preview_names_the_database_when_the_schema_repeats_on_a_stand(self, tmp_path: Path) -> None:
+        result = plan(
+            [connection(database="orders", password=None), connection(database="archive", password=None)],
+            PATTERN,
+        )
+        lines = preview(result, tmp_path / "stands.conf", store())
+        notes = [line.split("  ")[-1] for line in lines if line.startswith("  [")]
+        assert notes == [
+            "no saved password: put it in with `python3 install.py password --stand dev7 --schema billing "
+            "--database orders`",
+            "no saved password: put it in with `python3 install.py password --stand dev7 --schema billing "
+            "--database archive`",
+        ]
 
 
 def test_the_registry_text_sorts_stands_naturally(tmp_path: Path) -> None:
     result = plan(
         [connection(name=f"orders on {stand}", host=f"{stand}-db") for stand in ("dev10", "dev2", "ift1")], PATTERN
     )
-    write(result, tmp_path / "stands.conf", tmp_path / "pgpass")
+    write(result, tmp_path / "stands.conf", store())
     names = re.findall(r"^\[(.+)\]$", (tmp_path / "stands.conf").read_text(encoding="utf-8"), re.MULTILINE)
     assert names == ["dev2.orders.billing", "dev10.orders.billing", "ift1.orders.billing"]

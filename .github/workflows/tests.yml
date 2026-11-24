@@ -39,7 +39,7 @@ jobs:
       - run: uv sync --locked
       # The hygiene hooks the pre-commit config promises (whitespace, YAML, JSON, merge conflicts):
       # CI runs them too, so a contributor without the hooks installed cannot drift past them.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -54,6 +54,10 @@ jobs:
     name: unit (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      # The macOS runner has a login keychain: the test of the real one runs there, on a record of its
+      # own that it deletes. Everywhere else the tests keep to a store in memory (ADR 0012).
+      PG_EXPLORER_MCP_TEST_KEYCHAIN: ${{ matrix.os == 'macos-latest' && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -180,6 +184,32 @@ jobs:
       - name: integration tests
         if: matrix.postgres != '16'
         run: uv run pytest -m integration
+
+  keyring:
+    # The password store of a Linux desktop (ADR 0012): secret-tool is the real one, gnome-keyring plays
+    # the keyring of the desktop on a D-Bus session of its own. A runner has no login keyring (the login
+    # to a desktop makes it), so the test writes into the session collection; and it has no desktop, so
+    # everywhere else the test of the real keyring skips.
+    name: password store (Linux keyring)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PG_EXPLORER_MCP_TEST_KEYRING: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          persist-credentials: false  # no push follows
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: sudo apt-get update -q && sudo apt-get install -y -q gnome-keyring libsecret-tools
+      - name: the real secret-tool, against gnome-keyring
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            echo -n "" | gnome-keyring-daemon --unlock --components=secrets
+            uv run pytest tests/test_passwords.py'
 
   pgadmin:
     # What install.py export pgadmin writes, loaded by pgAdmin itself on its first start and read

@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from pg_explorer_mcp import i18n
+from pg_explorer_mcp.db import Database
 from pg_explorer_mcp.glossary import Glossary, default_file
+from pg_explorer_mcp.tools import build_tools
+from tests.helpers import ROOT
 
 GLOSSARY = """\
 [table shop.orders]
@@ -17,8 +20,8 @@ ru = Заказы клиентов: статус и время
 [column shop.orders.total]
 ru = Сумма заказа
 [term average_receipt]
-en = Sum of the paid orders of a month
-ru = Сумма оплаченных заказов за месяц
+en = Sum of the paid orders of a month, divided by their count
+ru = Сумма оплаченных заказов за месяц, делённая на их количество
 [table shop.customers]
 en = The people who order
 [weird section]
@@ -47,7 +50,8 @@ class TestReading:
         with i18n.speaking("en"):
             assert found.describe("table", "SHOP.Orders") == "Customer orders: status and time"
             assert found.describe("column", "shop.orders.TOTAL") == "Сумма заказа"  # falls back to Russian
-            assert found.describe("term", "Average_Receipt") == "Sum of the paid orders of a month"
+            expected = "Sum of the paid orders of a month, divided by their count"
+            assert found.describe("term", "Average_Receipt") == expected
             assert found.describe("table", "shop.returns") is None
 
     def test_the_servers_language_comes_first_and_the_other_stands_in(self, tmp_path: Path) -> None:
@@ -102,3 +106,15 @@ class TestRefresh:
             assert found.refresh() is True
             assert found.describe("table", "shop.orders") == "Orders, edited"
             assert found.refresh() is False  # nothing changed since
+
+    def test_status_tells_of_a_glossary_that_cannot_be_read_after_an_edit(self, tmp_path: Path) -> None:
+        """Status showed the warnings of start-up only: the descriptions were gone, and nothing said why."""
+        path = tmp_path / "glossary.conf"
+        found = glossary(path)
+        tools = {
+            tool.name: tool for tool in build_tools(Database({"PGPORT": "not-a-number"}), str(ROOT), glossary=found)
+        }
+        assert "cannot be read" not in tools["status"].call({})
+        path.unlink()
+        path.mkdir()
+        assert f"warning: The glossary {path} cannot be read" in tools["status"].call({})

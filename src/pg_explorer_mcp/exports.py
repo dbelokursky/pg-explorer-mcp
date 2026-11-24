@@ -10,10 +10,7 @@ do the connections an earlier export brought for other stands.
 
 from __future__ import annotations
 
-import contextlib
-import datetime
 import json
-import os
 import shutil
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -25,10 +22,11 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape, quoteattr
 
 from .clients import app_data
-from .db import pgpass_path
 from .i18n import plural, t
 from .imports import ImportRefusedError, dbeaver_workspace, read_dbeaver
+from .passwords import pgpass_path
 from .stands import EXPORT_MARKS, EXPORTED, Target, export_uuid, load_registry, registry_files, summarize
+from .user_files import Staged, discard, place, stage
 
 # This file and the ids of the connections keep the name pg-mcp: DBeaver and VS Code tie a user's own
 # settings of a connection to them, and a new name would make the next export start over (ADR 0007).
@@ -632,75 +630,24 @@ def write(export: Export) -> list[str]:
     changes nothing. The files are the user's own (a pg_service.conf may hold passwords of other
     services): a new text is readable by its owner only until it takes the old file's permissions.
     """
-    staged: list[tuple[Path, Path, Path]] = []  # the path as named, the file it is, the new text next to that file
+    staged: list[Staged] = []  # the path as named, the file it is, the new text next to that file
     try:
         for path, text in export.files:
-            staged.append(_stage(path, text))
+            staged.append(stage(path, text))
     except OSError as exc:
-        _discard(staged)
+        discard(staged)
         raise ExportRefusedError(t("import.cannot_write", path=path, error=exc)) from exc
     lines: list[str] = []
     for number, (path, real, temporary) in enumerate(staged):
         try:
-            backup = _place(real, temporary)
+            backup = place((path, real, temporary))
         except OSError as exc:
-            _discard(staged[number:])
+            discard(staged[number:])
             raise ExportRefusedError("\n".join([*lines, t("export.cannot_place", path=path, error=exc)])) from exc
         lines.append(
             t("import.written", path=path) if backup is None else t("import.written_backup", path=path, backup=backup)
         )
     return [*lines, export.next_step]
-
-
-def _stage(path: Path, text: str) -> tuple[Path, Path, Path]:
-    """Write the new text next to the file the path is, readable by its owner only."""
-    real = path.resolve()  # a link (into a dotfiles repository, say) stays a link to the changed file
-    temporary = real.with_name(real.name + ".pg-explorer-mcp-new")
-    real.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(text)
-    except OSError:
-        _discard([(path, real, temporary)])
-        raise
-    return path, real, temporary
-
-
-def _place(path: Path, temporary: Path) -> Path | None:
-    """Put the new file in place: the old one becomes the dated copy and gives the new one its permissions."""
-    if not path.exists():
-        temporary.replace(path)
-        return None
-    backup = backup_name(path)
-    shutil.copymode(path, temporary)
-    path.replace(backup)
-    try:
-        temporary.replace(path)
-    except OSError:
-        backup.replace(path)  # the old file goes back where it was
-        raise
-    return backup
-
-
-def backup_name(path: Path) -> Path:
-    """A dated name for the old file that no earlier copy has: two writes within a second keep both copies."""
-    stamp = f"{path.name}.bak-{_now()}"
-    backup, number = path.with_name(stamp), 1
-    while backup.exists():
-        number += 1
-        backup = path.with_name(f"{stamp}-{number}")
-    return backup
-
-
-def _now() -> str:
-    return f"{datetime.datetime.now():%Y%m%d-%H%M%S}"
-
-
-def _discard(staged: Sequence[tuple[Path, Path, Path]]) -> None:
-    for _, _, temporary in staged:
-        with contextlib.suppress(OSError):  # not there, or not even its folder
-            temporary.unlink()
 
 
 def installed(env: Mapping[str, str], home: Path) -> list[tuple[str, str]]:

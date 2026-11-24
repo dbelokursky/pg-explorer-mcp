@@ -24,13 +24,16 @@ from typing import Any
 import pytest
 
 import pg_explorer_mcp  # noqa: F401  (puts the vendored packages, pg8000 among them, on sys.path)
-from pg_explorer_mcp import i18n
-from tests.helpers import PsqlFile, unreachable_database_env
+from pg_explorer_mcp import i18n, passwords
+from tests.helpers import Memory, PsqlFile, unreachable_database_env
 
 IT_VARIABLES = ("PG_EXPLORER_MCP_IT", "PG_MCP_IT")  # the second name is the one before 0.8.0
 DEFAULT_IMAGE = "postgres:16"
 INTEGRATION = any(os.environ.get(name) == "1" for name in IT_VARIABLES)
 _started: object | None = None  # the container this run started, stopped when the run ends
+# A server the tests start as a process must leave the system's password store alone (ADR 0012); one that
+# runs in this process gets a store of its own in memory, from the fixture below.
+os.environ.setdefault(passwords.STORE_VARIABLE, "off")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:  # noqa: ARG001
@@ -105,6 +108,15 @@ def russian() -> Iterator[None]:
     """Russian for the length of one test."""
     with i18n.speaking("ru"):
         yield
+
+
+@pytest.fixture(autouse=True)
+def own_password_store(monkeypatch: pytest.MonkeyPatch) -> Memory:
+    """Every test works on a password store of its own, in memory (ADR 0012): none comes near the system's."""
+    memory = Memory()
+    monkeypatch.setattr(passwords._process, "passwords", passwords.Passwords(memory))
+    monkeypatch.setattr(passwords._process, "decided", True)
+    return memory
 
 
 @pytest.fixture

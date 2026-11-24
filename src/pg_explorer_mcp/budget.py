@@ -19,6 +19,10 @@ MIN_BUDGET = 500
 VALUE_LIMIT = 200  # characters per comment, default or definition inside an answer
 
 
+class Keep(str):
+    """A line of an answer that must survive the cut: it says what the answer leaves out."""
+
+
 def fit_to_budget(lines: list[str], budget: int) -> list[str]:
     """Trim a tool's answer to at most `budget` characters, newlines included.
 
@@ -29,16 +33,23 @@ def fit_to_budget(lines: list[str], budget: int) -> list[str]:
     - an answer that already fits comes back unchanged;
     - joined with newlines, the result is never longer than `budget`;
     - if anything was cut, the last line says so and starts with "…", and the
-      lines before it are input lines in their order, the last one possibly shortened.
+      lines before it are input lines in their order, the last one possibly shortened;
+    - a line of the class `Keep` is among them whatever was cut, right before the
+      notice, as long as it fits beside the notice.
     """
     if len("\n".join(lines)) <= budget:
         return lines
     total = len(lines)
-    # Reserve room for the longest notice this answer can get, plus its newline.
-    reserved = len(_notice(budget, total, total)) + 1
+    # Reserve room for the longest notice this answer can get, plus its newline, and for the lines that
+    # must survive; those that cannot fit even so are cut like any other.
+    tail = [line for line in lines if isinstance(line, Keep)]
+    if len("\n".join(tail)) + 1 + len(_notice(budget, total, total)) > budget:
+        tail = []
+    head = [line for line in lines if not isinstance(line, Keep)] if tail else lines
+    reserved = len(_notice(budget, total, total)) + 1 + len("\n".join(tail)) + (1 if tail else 0)
     kept: list[str] = []
     used = 0
-    for line in lines:
+    for line in head:
         cost = len(line) + (1 if kept else 0)
         if used + cost + reserved > budget:
             break
@@ -46,8 +57,8 @@ def fit_to_budget(lines: list[str], budget: int) -> list[str]:
         used += cost
     if not kept and budget - reserved > 1:
         # Even the first line is too long: keep its beginning rather than nothing.
-        kept = [lines[0][: budget - reserved - 1] + "…"]
-    return [*kept, _notice(budget, len(kept), total)]
+        kept = [head[0][: budget - reserved - 1] + "…"]
+    return [*kept, *tail, _notice(budget, len(kept) + len(tail), total)]
 
 
 def _notice(budget: int, shown: int, total: int) -> str:

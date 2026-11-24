@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pg_explorer_mcp import exports
+from pg_explorer_mcp import exports, user_files
 from pg_explorer_mcp.exports import Connection, Export, ExportRefusedError
 from tests.test_imports import dbeaver_workspace, postgres
 
@@ -628,7 +628,7 @@ class TestPreviewAndWrite:
         assert lines[0] == f"written {link}; the old file is kept as {backup}"
 
     def test_two_writes_within_a_second_keep_both_copies(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(exports, "_now", lambda: "20261023-120000")
+        monkeypatch.setattr(user_files, "_now", lambda: "20261023-120000")
         path = tmp_path / "settings.json"
         path.write_text("original\n", encoding="utf-8")
         exports.write(Export("vscode-pgsql", [], [(path, "first\n")], ""))

@@ -26,6 +26,8 @@ reaches dozens of stands through the same tools.
 - To bring the user's DBeaver, DataGrip or `pg_service.conf` connections into pg-explorer-mcp, run `/pg:import`: it
   previews first and writes only after the user confirms.
 - If the `pg` tools are missing or `status` says the database is unavailable, run `/pg:setup`.
-- Never ask the user to paste a database password into the chat; it belongs in ~/.pgpass.
+- Never ask the user to paste a database password into the chat: it belongs in the server's password
+  store, where the user puts it themselves with `python3 install.py password` in a terminal (`/pg:setup`
+  says so).
 - The server speaks English or Russian (`PG_EXPLORER_MCP_LANG`). Whichever it speaks, reply to the user
   in the language they write in.

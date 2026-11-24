@@ -761,14 +761,14 @@ class TestConnectionHints:
         # Windows discards what the server sent before it reset the connection, so the refusal
         # sometimes arrives without the server's message; both answers point at the password.
         refused = f"Login as '{login}' failed" in text and "Never paste it into the chat" in text
-        dropped = f"closed it during the login of '{login}'" in text and "check the password file" in text
+        dropped = f"closed it during the login of '{login}'" in text and "set the password again" in text
         assert refused or dropped, text
 
-    def test_missing_password_points_to_the_password_file(self, login: str) -> None:
+    def test_missing_password_points_to_the_command(self, login: str) -> None:
         env: dict[str, str | None] = {"PGUSER": login, "PGPASSWORD": None, "PGPASSFILE": str(ROOT / "no-such-pgpass")}
         if connects(**env):
             pytest.skip("the server trusts these connections, passwords are not checked")
-        assert "Put the password into" in status_with(**env)
+        assert "Set the password with" in status_with(**env)
 
     def test_tls_required_but_not_offered(self) -> None:
         if connects(PGSSLMODE="require"):

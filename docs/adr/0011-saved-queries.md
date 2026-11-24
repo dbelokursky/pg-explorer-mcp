@@ -29,7 +29,8 @@ question, as parameters are: named placeholders would have to bypass the cursor,
 query that needs arguments can be saved once per shape instead.
 
 The file is re-read when it changes on disk, as the stands registry is; the tool's presence in the
-list is decided at startup, so the first query costs a restart.
+list is decided at startup, so the first query costs a restart. `status` shows the file's warnings
+as they are when it is called, so a query that an edit got refused is explained without a restart.
 
 ## Consequences
 

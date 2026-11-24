@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
@@ -11,9 +12,9 @@ from pathlib import Path
 import pytest
 
 import install
-from pg_explorer_mcp import clients, exports, i18n, imports
+from pg_explorer_mcp import clients, exports, i18n, imports, passwords
 from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
-from tests.helpers import ROOT
+from tests.helpers import ROOT, Memory
 from tests.test_imports import data_source, datagrip_files, dbeaver_workspace, postgres, ssh_configs, ssh_properties
 
 ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "/opt/pg-explorer-mcp/run.py"]}
@@ -296,7 +297,11 @@ def test_import_previews_and_writes_nothing(
 
 
 def test_import_write_registers_pg_stands_next_to_pg(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unreachable_env: dict[str, str],
+    own_password_store: Memory,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     use_env(monkeypatch, unreachable_env, tmp_path)
     monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
@@ -318,11 +323,13 @@ def test_import_write_registers_pg_stands_next_to_pg(
     assert install.main(argv) == 0  # the stands are found, which is all the check asks of a stands entry
     out = capsys.readouterr().out
     assert "stands: 2 (dev7, ift2), connections in the registry: 2" in out
+    assert "2 passwords are in the password store (the memory of the tests)" in out
     assert "s3cret" not in out
-    assert (tmp_path / "pgpass").read_text(encoding="utf-8").splitlines() == [
+    assert own_password_store.text.splitlines() == [
         "dev7-db.example:5432:orders:billing:s3cret",
         "ift2-db.example:5432:shop:shop:pw",
     ]
+    assert not (tmp_path / "pgpass").exists()  # the import writes no file of passwords (ADR 0012)
     settings = read(tmp_path / ".qwen" / "settings.json")
     assert isinstance(settings, dict)
     servers = settings["mcpServers"]
@@ -330,6 +337,24 @@ def test_import_write_registers_pg_stands_next_to_pg(
     assert servers["pg-stands"]["env"]["PG_EXPLORER_MCP_STANDS"] == "*"
     assert "PG_EXPLORER_MCP_STANDS" not in servers["pg"]["env"]
     assert offers == [{}, {"besides": "dbeaver"}]  # the stands are in DBeaver already
+
+
+def test_import_write_refuses_to_lose_the_passwords_where_there_is_no_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unreachable_env: dict[str, str],
+    own_password_store: Memory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setattr(install, "offer_export", lambda **_kwargs: None)
+    passwords.use(None)
+    argv = ["import", "dbeaver", "--workspace", str(dbeaver_folder(tmp_path)), "--write", "--lang", "en"]
+    assert install.main(argv) == 1
+    assert "the passwords of the import would go nowhere: nothing was written" in capsys.readouterr().out
+    assert not (tmp_path / "stands.conf").exists()
+    assert own_password_store.text == ""
 
 
 def test_import_pg_service_needs_a_file_and_dbeaver_a_workspace(
@@ -378,7 +403,10 @@ def test_import_datagrip_reads_the_ides_their_projects_and_the_project_named(
     out = capsys.readouterr().out
     assert f"reading {shop / '.idea'}\nreading {broken}\ncannot read {broken / 'dataSources.xml'}" in out
     assert f"reading {options}\n2 connections go into" in out  # the broken project leaves the others to read
-    assert "  [ift2.shop.shop]  ift2-db:6432  no saved password: add a line to the password file" in out
+    assert (
+        "  [ift2.shop.shop]  ift2-db:6432  no saved password: put it in with "
+        "`python3 install.py password --stand ift2 --schema shop`"
+    ) in out
     assert "  [dev7.orders.billing]  dev7-db.example:5432  no saved password" in out
     assert "  DataGrip: IFT3  through an SSH tunnel via bastion.example:22: pg-explorer-mcp opens no tunnels" in out
     assert "This was a preview, nothing was written." in out
@@ -643,6 +671,60 @@ def test_export_previews_then_writes(
     )
 
 
+def test_export_pgpass_writes_into_the_password_file_what_the_store_has(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unreachable_env: dict[str, str],
+    own_password_store: Memory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """psql reads no other store: --pgpass is the user's own decision to have the passwords in clear there."""
+    service = stands_home(monkeypatch, tmp_path, unreachable_env)
+    passfile = tmp_path / "pgpass"
+    passfile.write_text("# mine\n", encoding="utf-8")
+    own_password_store.text = passwords.line_of(("dev7-db.example", "5432", "orders", "billing"), "s3cret") + "\n"
+    argv = ["export", "pg-service", "--write", "--pgpass", "--lang", "en"]
+    assert install.main(argv) == 0
+    out = capsys.readouterr().out
+    assert (
+        f"1 passwords are in {passfile}, in clear, for psql and pgAdmin; 1 of these connections had none in "
+        "the password store."
+    ) in out
+    assert "записан" not in out
+    [backup] = tmp_path.glob("pgpass.bak-*")
+    assert f"written {passfile}; the old file is kept as {backup}" in out
+    assert passfile.read_text(encoding="utf-8") == (
+        "# mine\n" + passwords.line_of(("dev7-db.example", "5432", "orders", "billing"), "s3cret") + "\n"
+    )
+    assert backup.read_text(encoding="utf-8") == "# mine\n"
+    assert service.exists()
+
+
+def test_export_pgpass_leaves_the_password_file_alone_when_the_store_has_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    service = stands_home(monkeypatch, tmp_path, unreachable_env)
+    argv = ["export", "pg-service", "--write", "--pgpass", "--lang", "en"]
+    assert install.main(argv) == 1
+    passfile = tmp_path / "pgpass"
+    assert (
+        f"no password of these connections is in the password store: {passfile} is left as it is (2 connections)"
+    ) in capsys.readouterr().out
+    assert not passfile.exists()
+    assert service.exists()  # the export itself was written before that
+
+
+def test_export_pgpass_needs_a_password_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    stands_home(monkeypatch, tmp_path, unreachable_env)
+    passwords.use(None)
+    argv = ["export", "pg-service", "--write", "--pgpass", "--lang", "en"]
+    assert install.main(argv) == 1
+    assert "no password store the server can use" in capsys.readouterr().out
+    assert not (tmp_path / "pgpass").exists()
+
+
 def test_export_says_why_it_cannot(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -749,3 +831,193 @@ def test_both_extensions_of_one_editor_get_their_connections(
     assert settings["editor.fontSize"] == 13
     assert len(settings["pgsql.connections"]) == len(settings["sqltools.connections"]) == 2
     assert len(list(user.glob("settings.json.bak-*"))) == 2
+
+
+@pytest.mark.usefixtures("shell")
+class TestPassword:
+    """`install.py password` (ADR 0012): the typed password goes into the store, and nowhere else."""
+
+    LOGIN = "billing@db.example:5432/orders"
+
+    @pytest.fixture
+    def shell(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A terminal to type into, and a shell that names one database, whatever the machine's shell has."""
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        monkeypatch.setenv("PG_EXPLORER_MCP_LANG", "en")
+        for key in ("PGPORT", "PGPASSWORD"):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("PGHOST", "db.example")
+        monkeypatch.setenv("PGDATABASE", "orders")
+        monkeypatch.setenv("PGUSER", "billing")
+
+    @staticmethod
+    def typed(monkeypatch: pytest.MonkeyPatch, *answers: str) -> None:
+        given = iter(answers)
+        monkeypatch.setattr(getpass, "getpass", lambda _prompt: next(given))
+
+    def test_the_typed_password_goes_into_the_store_and_is_printed_nowhere(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        assert install.main(["password"]) == 0
+        assert own_password_store.text == "db.example:5432:orders:billing:s3cret\n"
+        out = capsys.readouterr().out
+        assert f"the password of {self.LOGIN} is in the password store (the memory of the tests)" in out
+        assert "s3cret" not in out
+
+    def test_two_different_entries_write_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self.typed(monkeypatch, "s3cret", "s3creT")
+        assert install.main(["password"]) == 1
+        assert (own_password_store.text, capsys.readouterr().out.strip()) == (
+            "",
+            "the two entries differ: nothing was written",
+        )
+
+    def test_an_empty_password_writes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self.typed(monkeypatch, "", "")
+        assert install.main(["password"]) == 1
+        assert own_password_store.text == ""
+        assert "the password is empty: nothing was written" in capsys.readouterr().out
+
+    def test_without_a_terminal_it_asks_for_one(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        assert install.main(["password"]) == 2
+        assert "run it in a terminal, not through the agent" in capsys.readouterr().out
+        assert own_password_store.text == ""
+
+    def test_nothing_names_a_database(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.delenv("PGHOST")
+        assert install.main(["password"]) == 2
+        assert "name the login" in capsys.readouterr().out
+        assert own_password_store.text == ""
+
+    def test_the_options_name_the_login_and_each_host_gets_a_line_of_its_own(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory
+    ) -> None:
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        options = ["--host", "h1,h2", "--port", "6544,6545", "--database", "d2", "--user", "u2"]
+        assert install.main(["password", *options]) == 0
+        assert own_password_store.text == "h1:6544:d2:u2:s3cret\nh2:6545:d2:u2:s3cret\n"
+
+    def test_a_stands_login_comes_from_the_registry(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        unreachable_env: dict[str, str],
+        own_password_store: Memory,
+    ) -> None:
+        stands_home(monkeypatch, tmp_path, unreachable_env)
+        monkeypatch.setenv("PG_EXPLORER_MCP_STANDS", "*")
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        assert install.main(["password", "--stand", "dev7", "--schema", "billing"]) == 0
+        assert own_password_store.text == "dev7-db.example:5432:orders:billing:s3cret\n"
+
+    def test_a_stand_that_is_not_in_the_registry_is_refused(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        unreachable_env: dict[str, str],
+        own_password_store: Memory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        stands_home(monkeypatch, tmp_path, unreachable_env)
+        monkeypatch.setenv("PG_EXPLORER_MCP_STANDS", "*")
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        assert install.main(["password", "--stand", "dev9", "--schema", "billing"]) == 1
+        assert "No stand 'dev9'" in capsys.readouterr().out
+        assert own_password_store.text == ""
+
+    def test_move_carries_the_password_over_and_drops_the_exact_line_only(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        own_password_store: Memory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        passfile = tmp_path / "pgpass"
+        # The line of this login comes first, as libpq reads the file: what is moved is what the server used.
+        before = "# mine\ndb.example:5432:orders:billing:m0ved-secret\n*:*:*:billing:star\nother:5432:x:y:z\n"
+        passfile.write_text(before, encoding="utf-8")
+        if sys.platform != "win32":
+            passfile.chmod(0o600)
+        monkeypatch.setenv("PGPASSFILE", str(passfile))
+        monkeypatch.setattr(getpass, "getpass", lambda _prompt: pytest.fail("nothing is typed"))
+        assert install.main(["password", "--move"]) == 0
+        assert own_password_store.text == "db.example:5432:orders:billing:m0ved-secret\n"
+        assert passfile.read_text(encoding="utf-8") == "# mine\n*:*:*:billing:star\nother:5432:x:y:z\n"
+        [backup] = tmp_path.glob("pgpass.bak-*")
+        assert backup.read_text(encoding="utf-8") == before
+        assert "1 line(s) of the password file moved into the password store" in capsys.readouterr().out
+
+    def test_move_with_nothing_to_move_writes_nothing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        own_password_store: Memory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("PGPASSFILE", str(tmp_path / "pgpass"))
+        assert install.main(["password", "--move"]) == 1
+        assert (own_password_store.text, capsys.readouterr().out.strip()) == (
+            "",
+            f"the password file has no line for {self.LOGIN}: nothing to move",
+        )
+
+    def test_without_a_store_on_this_system_nothing_can_be_written(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        passwords.use(None)
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        assert install.main(["password"]) == 1
+        assert "no password store the server can use" in capsys.readouterr().out
+        assert own_password_store.text == ""
+
+    def test_a_stands_login_comes_from_the_registry_whatever_the_shell_says_of_stands(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        unreachable_env: dict[str, str],
+        own_password_store: Memory,
+    ) -> None:
+        """PG_EXPLORER_MCP_STANDS is the agent's setting: the user who types --stand need not have it."""
+        stands_home(monkeypatch, tmp_path, unreachable_env)
+        monkeypatch.delenv("PG_EXPLORER_MCP_STANDS", raising=False)
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        assert install.main(["password", "--stand", "dev7", "--schema", "billing"]) == 0
+        assert own_password_store.text == "dev7-db.example:5432:orders:billing:s3cret\n"
+
+    def test_a_section_with_a_dbname_keys_the_password_by_what_its_server_connects_to(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        unreachable_env: dict[str, str],
+        own_password_store: Memory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        stands_home(monkeypatch, tmp_path, unreachable_env)
+        stands = tmp_path / "stands.conf"
+        stands.write_text(
+            "[dev7.orders.billing]\nhost=dev7-db.example\n\n"
+            "[dev7.archive.billing]\nhost=dev7-db.example\ndbname=archive_ift\n",
+            encoding="utf-8",
+        )
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        # The schema billing is in two databases of the stand: the registry wants to know which.
+        assert install.main(["password", "--stand", "dev7", "--schema", "billing"]) == 1
+        assert "in several databases" in capsys.readouterr().out
+        assert install.main(["password", "--stand", "dev7", "--schema", "billing", "--database", "archive"]) == 0
+        assert own_password_store.text == "dev7-db.example:5432:archive_ift:billing:s3cret\n"
+
+
+def test_the_switch_of_the_store_is_copied_into_the_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PG_EXPLORER_MCP_PASSWORD_STORE", "off")
+    # The next line compares the name of a variable, not a password.
+    assert install.server_entry()["env"]["PG_EXPLORER_MCP_PASSWORD_STORE"] == "off"  # noqa: S105

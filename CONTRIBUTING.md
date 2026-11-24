@@ -56,6 +56,15 @@ TLS-прослойку со своим сертификатом, самому с
 `PYTEST_XDIST_WORKER` (pytest-xdist) или заданный `PG_EXPLORER_MCP_IT_SUFFIX`; без них имена
 стабильны, как раньше.
 
+Хранилище паролей системы (ADR 0012) тесты не трогают: сервер в самом процессе теста получает хранилище
+в памяти (`Memory` в `tests/helpers.py`), а сервер, запущенный как процесс, —
+`PG_EXPLORER_MCP_PASSWORD_STORE=off`. Настоящую связку ключей macOS пробует один тест, и только с
+`PG_EXPLORER_MCP_TEST_KEYCHAIN=1` (на Mac; CI ставит переменную в macOS-джобе): он создаёт запись
+`pg-explorer-mcp-test-<pid>` и удаляет её. Хранилище Windows (DPAPI) пробуют тесты, которые идут только
+на Windows — в её джобах CI. Связку ключей Linux пробует отдельная джоба
+`password store (Linux keyring)`: настоящий `secret-tool` против gnome-keyring на своей D-Bus-сессии с
+пустым паролем; локально тот же тест включается `PG_EXPLORER_MCP_TEST_KEYRING=1` на Linux-десктопе.
+
 CI гоняет то же самое, но на PR — сокращённый набор, а на push в `develop` и `main` и ночью на
 `develop` — полный. На PR: линтеры и типы, тесты на Linux и Windows под Python 3.9 и 3.14,
 интеграционные тесты на PostgreSQL 13, 16 (покрытие) и 18, интеграционные тесты на Windows с
@@ -70,6 +79,12 @@ PostgreSQL 17, проверка в Qwen Code и загрузка выгрузк�
 Поэтому Python джоба pgAdmin живёт в `scripts/pgadmin_check.py`, а не в самом `tests.yml`: скрипт берётся из
 проверяемой ветки вместе с пакетом, который импортирует, и переименование пакета в `develop` ночной прогон
 по файлу из `main` не ломает.
+
+Еженедельный `audit.yml` проверяет `uv.lock` через pip-audit на Python 3.9, 3.10 и 3.14: часть пакетов
+в lock записана по версиям Python, а pip-audit смотрит на версии того интерпретатора, на котором запущен.
+Запустить руками на ветке: `gh workflow run audit.yml --ref <ветка>`. Ветка 3.9 держит восемь известных
+дыр, которым на 3.9 нет исправления (исправленные релизы требуют 3.10): они перечислены в `audit.yml` по ID,
+и только они; новая находка красит прогон.
 
 ## Проверка в клиенте
 
@@ -129,9 +144,9 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
 
 ## Выпуск
 
-1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_explorer_mcp/__init__.py` и
-   обоих манифестах расширения, раздел «Не выпущено» в `CHANGELOG.md` становится `## X.Y.Z — дата`.
-   `python3 scripts/release.py version` печатает версию, когда все файлы согласны.
+1. Ветка `release/X.Y.Z` от `develop`: новая версия в `pyproject.toml`, `src/pg_explorer_mcp/__init__.py`,
+   обоих манифестах расширения и в примере `status` обоих README, раздел «Не выпущено» в `CHANGELOG.md`
+   становится `## X.Y.Z — дата`. `python3 scripts/release.py version` печатает версию, когда все файлы согласны.
 2. PR в `develop`, затем PR `develop` → `main`. Если с прошлого выпуска менялась выгрузка в
    инструменты БД (`src/pg_explorer_mcp/exports.py`), откройте её результат в DataGrip и в VS Code с
    расширениями PostgreSQL и SQLTools на машине, где они есть: CI проверяет только psql и pgAdmin.
@@ -183,7 +198,9 @@ CI), `--lang ru|en` (язык вопросов и сервера; по умол�
   `tests/test_i18n.py` сверяет ключи, формы множественного числа и плейсхолдеры. Журнал и ошибки
   JSON-RPC остаются английскими (ADR 0004).
 - **Версия в нескольких файлах.** `pyproject.toml`, `src/pg_explorer_mcp/__init__.py`, оба манифеста
-  расширения и заголовок в `CHANGELOG.md`; за совпадением следит `tests/test_version.py`, а тег
-  выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
+  расширения, заголовок в `CHANGELOG.md` и пример `status` в обоих README; за совпадением следит
+  `tests/test_version.py`, а тег выпуска `vX.Y.Z` сверяет с ними `scripts/release.py`.
+- **ruff одной версии.** Хук pre-commit берёт его из `rev` в `.pre-commit-config.yaml`, CI — из
+  `uv.lock`, а Dependabot обновляет только lock; за совпадением следит `tests/test_tool_versions.py`.
 - **Почему так.** Решения про стек и инструменты описаны в [docs/adr/](docs/adr/); прежде чем
   менять принятое, допишите новый ADR.

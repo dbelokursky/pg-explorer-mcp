@@ -2,8 +2,9 @@
 
 The registry uses the pg_service.conf format of libpq: one section per
 connection, named stand.database.schema, with host, port, dbname and user (the
-schema's name when omitted); passwords stay in the password file. A database
-whose sections all share one login is read through it as a whole: that login
+schema's name when omitted); passwords stay in the server's password store
+(ADR 0012), and a password= line of a section is clear text that status warns
+about. A database whose sections all share one login is read through it as a whole: that login
 takes any schema, and the catalog, not the registry, says which schemas there
 are. The server only reads the registry, and reads it leniently: a missing
 file, an unreadable file or a broken section becomes a warning in status, never
@@ -26,6 +27,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any
 
+from . import passwords
 from .db import (
     DEFAULT_STATEMENT_TIMEOUT_MS,
     Counters,
@@ -128,7 +130,8 @@ class Target:
             ("sslmode", "PGSSLMODE"),
             ("sslrootcert", "PGSSLROOTCERT"),
             ("connect_timeout", "PG_EXPLORER_MCP_SOCKET_TIMEOUT_S"),
-            ("password", "PGPASSWORD"),
+            # Not PGPASSWORD: a password written in the registry is clear text, and the store wins over it.
+            ("password", passwords.REGISTRY_PASSWORD),
         )
         for option, variable in optional:
             if self.options.get(option):
@@ -337,8 +340,14 @@ def load_registry(
             registry.warnings.append(t("stands.unreadable", path=path, error=exc))
             continue
         registry.files.append(str(path))
-        if _PASSWORD_LINE.search(text) and _readable_by_others(path):
-            registry.warnings.append(t("stands.readable_by_others", path=path))
+        if _PASSWORD_LINE.search(text):
+            # A password written in the registry is clear text (ADR 0012); other users reading it is worse.
+            if _readable_by_others(path):
+                registry.warnings.append(t("stands.readable_by_others", path=path))
+            else:
+                registry.warnings.append(
+                    t("stands.password_in_registry", path=path, command=passwords.PASSWORD_COMMAND)
+                )
         sections, problems = parse_service_file(text)
         registry.warnings.extend(t("stands.bad_line", path=path, problem=problem) for problem in problems)
         copies = exported_sections(text)
@@ -435,6 +444,9 @@ class Pool:
         self._counters = Counters()
         self.current: Target | None = None
         self.outcomes: dict[str, str] = {}  # stand -> how a call over several stands ended there
+        # The server's password store (ADR 0012), as every Database of the pool will see it.
+        self.passwords = passwords.current(env)
+        self.passwords_off = passwords.is_off(env)
 
     def database(self, target: Target) -> Database:
         """The target's connection, opened on first use; the call's own thread makes it the login the log names."""

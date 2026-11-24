@@ -12,9 +12,10 @@ import string
 from hypothesis import given
 from hypothesis import strategies as st
 
-from pg_explorer_mcp.budget import fit_to_budget, shorten
-from pg_explorer_mcp.db import _split_pgpass_line, split_hosts
+from pg_explorer_mcp.budget import Keep, fit_to_budget, shorten
+from pg_explorer_mcp.db import split_hosts
 from pg_explorer_mcp.diagram import _attribute_name, mermaid_type
+from pg_explorer_mcp.passwords import split_line
 from pg_explorer_mcp.stands import stand_ranges, summarize
 from pg_explorer_mcp.tools import _like_escape
 
@@ -27,7 +28,7 @@ name = st.from_regex(r"[a-z]{1,3}[1-9][0-9]{0,2}", fullmatch=True)
 @given(st.lists(field, min_size=1, max_size=6))
 def test_a_pgpass_line_splits_into_the_fields_it_was_written_from(fields: list[str]) -> None:
     line = ":".join(fields)
-    assert _split_pgpass_line(line) == fields
+    assert split_line(line) == fields
 
 
 @given(st.lists(field.filter(str), min_size=1, max_size=5), st.lists(field, min_size=1, max_size=5))
@@ -35,7 +36,7 @@ def test_an_escaped_colon_stays_inside_its_field(plain: list[str], inner: list[s
     # A password with colons is the reason the escapes exist: none of them may open a new field.
     value = "\\:".join(inner)
     fields = [value if index == len(plain) // 2 else part for index, part in enumerate(plain)]
-    assert len(_split_pgpass_line(":".join(fields))) == len(fields)
+    assert len(split_line(":".join(fields))) == len(fields)
 
 
 @given(st.lists(st.text(alphabet="ab", min_size=1, max_size=8), min_size=1, max_size=4))
@@ -83,11 +84,30 @@ def test_shortened_text_stays_within_the_limit_on_one_line(text: str, limit: int
     assert short.count("\n") == 0
 
 
-@given(st.lists(st.text(min_size=1, max_size=30), min_size=1, max_size=50), st.integers(min_value=500, max_value=8000))
+@given(
+    st.lists(
+        st.one_of(st.text(min_size=1, max_size=30), st.builds(Keep, st.text(min_size=1, max_size=30))),
+        min_size=1,
+        max_size=50,
+    ),
+    st.integers(min_value=500, max_value=8000),
+)
 def test_a_fitted_answer_stays_within_the_budget(lines: list[str], budget: int) -> None:
     fitted = fit_to_budget(lines, budget)
     assert len("\n".join(fitted)) <= budget
     assert all(line in lines for line in fitted[:-1])  # the last line may be the notice of the cut
+
+
+@given(
+    st.lists(st.text(alphabet="ab ", min_size=1, max_size=40), min_size=2, max_size=30),
+    st.text(alphabet="cd ", min_size=1, max_size=60),
+    st.integers(min_value=500, max_value=3000),
+)
+def test_a_kept_line_survives_whatever_is_cut_as_long_as_it_fits(body: list[str], last: str, budget: int) -> None:
+    lines = [*body, Keep(last)]
+    fitted = fit_to_budget(lines, budget)
+    if fitted != lines and len(last) + 1 + len(fitted[-1]) <= budget:
+        assert fitted[-2] == last  # right before the notice, whatever else of the body was cut
 
 
 @given(st.text(min_size=1, max_size=20))

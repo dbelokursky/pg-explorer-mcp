@@ -20,7 +20,7 @@ set of tools, about 5 thousand characters of descriptions in every request, and 
 | How it is switched on | the `PG_EXPLORER_MCP_STANDS` variable: `*` or comma-separated patterns of stand names (`dev*,ift2`) | without it the server works as before, from the `PG*` variables, whatever is on disk |
 | Where the registry is | the libpq `pg_service.conf` format: a section per connection named `stand.database.schema` | a standard format: `psql service=dev7.orders.billing` understands the same sections |
 | Which files | `PG_EXPLORER_MCP_STANDS_FILE` (by default `~/.pg-explorer-mcp/stands.conf`, written by the import) and the user's ordinary `pg_service.conf` | the server only reads; with equal names the import file wins |
-| Credentials | in the section, `host`, `port`, `dbname`, `user` (by default the schema name); the password goes into `~/.pgpass` | the password is looked up as before; `password=` in a section works but is not recommended |
+| Credentials | in the section, `host`, `port`, `dbname`, `user` (by default the schema name); the password goes into `~/.pgpass` — until ADR 0012, which moved it into the password store of the system | the password is looked up as before; `password=` in a section works but is not recommended, and since ADR 0012 `status` warns that it is clear text |
 | Several hosts | `host=h1,h2` with one `port`, or `port=p1,p2`, as in libpq; the server tries the hosts in order and takes the first that lets it in; the password is looked up for each host separately | this is how DBeaver stores a connection to a stand with a standby host (`h1:6544,h2` and the port 6544), and psql understands the same sections |
 | What is taken from the entry | `PGSSLMODE`, `PGSSLROOTCERT`, timeouts and the password file, for all stands unless a section sets its own; the entry's host, user and password, never | there is one TLS requirement for the whole company, and someone else's login on a stand is a mistake |
 | How the agent picks a connection | the `stand` and `schema` arguments, and `database` when a schema name repeats; a schema not in the registry is read by the login of a database read as a whole, and if a stand has several such databases, `database` says which one it is in | the model knows nothing about users: the server takes the login of the right schema itself |
@@ -44,7 +44,8 @@ set of tools, about 5 thousand characters of descriptions in every request, and 
   at all, the server works from the `PG*` variables, as before.
 - A failure of one stand (no network, a wrong password) affects only that stand.
 - The import is a separate command, and the server does not run it. The import writes only its own registry file and
-  appends to `~/.pgpass`, deleting nothing; on any error it writes nothing.
+  appends to `~/.pgpass`, deleting nothing; on any error it writes nothing. Since ADR 0012 the passwords go into
+  the password store of the system, and `~/.pgpass` is not written by the import any more.
 
 ## Import
 
@@ -76,7 +77,9 @@ folder for every project; before SSH configurations, `proxy-host` in the data so
 leaves the connection direct, and it is brought in as usual.
 Writing prepares both files in full, then puts them in place with a dated copy of the old ones; the password file
 is only added to and updated, and the registry is added to or, with `--prune`, replaced; on a failure nothing
-changes. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
+changes, and a registry or password file that cannot be read refuses the import: counted as empty, it would be
+replaced by what the import brings alone. Since ADR 0012 there is one file: the registry is placed first, the
+passwords go into the password store, and when they cannot be kept the registry is taken back. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
 When `install.py` is run by hand in a terminal and finds DBeaver, it offers to show the preview; the agent
 does the same with the `/pg:import` command and writes only after the user confirms.
 

@@ -163,7 +163,9 @@ EN: dict[str, str] = {
     # Saved queries: the group's own SQL, run by name (queries.py).
     "queries.unreadable": "The saved queries {path} cannot be read: {error}",
     "queries.refused": "Query {name} was left out: {message}",
-    "queries.not_rows": "only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)",
+    "queries.not_rows": (
+        "Query {name} was left out: only a query that returns rows can be saved (SELECT, WITH, VALUES, TABLE)"
+    ),
     "queries.unknown": "No saved query {name!r}. Saved: {known}.",
     "queries.answer": "{name}: {description}",
     "queries.entries.one": "{count} query",
@@ -275,6 +277,44 @@ EN: dict[str, str] = {
         "limits: read only = {read_only}, statement timeout = {timeout}, list_tables returns at most "
         "{tables} entries, answers are cut at {budget} characters"
     ),
+    # Passwords: the store of the system, and where a password came from (passwords.py, ADR 0012).
+    "status.password_store": "password store: {store}",
+    "status.password_store_off": "password store: off ({variable})",
+    "status.password_store_none": (
+        "password store: this system has none, so the password comes from PGPASSWORD or the password file"
+    ),
+    "status.password_from": "password: from {source}",
+    "status.password_unset": "password: not set. Put it into the password store: {command}",
+    "passwords.keychain": "the login keychain of macOS (record pg-explorer-mcp/passwords)",
+    "passwords.the_store": "the password store",
+    "passwords.the_environment": "PGPASSWORD in the environment",
+    "passwords.the_registry": "a password= line of the registry",
+    "passwords.store_unreadable": "the password store cannot be read: {error}",
+    "passwords.clear_text": (
+        "the password comes from {path} in clear text: move it into the password store with {command} --move"
+    ),
+    "passwords.keychain_error": "the login keychain did not answer: {error}",
+    "passwords.keychain_silent": (
+        "the keychain tool could not be started or did not answer in time: {error}. "
+        "The keychain may be locked or asking for permission: unlock it and try again."
+    ),
+    "passwords.not_ours": "the keychain holds another record under {service}/{account}: {error}",
+    "passwords.dpapi": "the file {path}, sealed by DPAPI for this Windows account",
+    "passwords.dpapi_error": (
+        "the password file {path} cannot be read or written: {error}. It is sealed for the Windows "
+        "account that made it."
+    ),
+    "passwords.secret_service": "the keyring of the desktop, record {service}/{account} (Secret Service)",
+    "passwords.keyring_error": "the keyring did not answer: {error}",
+    "passwords.keyring_silent": (
+        "the keyring tool could not be started or did not answer in time: {error}. The keyring may be "
+        "locked and waiting for the desktop to ask for its password."
+    ),
+    "passwords.keyring_not_ours": "the keyring holds another record under {service}/{account}: {error}",
+    "passwords.keyring_missing": (
+        "the record {service}/{account} in the keyring names generation {generation} and has no parts: "
+        "the passwords have to be put in again"
+    ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
     # Arguments and answers of the tools.
@@ -358,8 +398,8 @@ EN: dict[str, str] = {
     "db.session_setup": "Connected, but could not set up a read-only session: {error}",
     "db.password_unset": "the server asks for a password and none is set",
     "db.password": (
-        "Login as {user!r} failed: {detail}. Put the password into {passfile} as one line "
-        "host:port:database:user:password (file mode 600). Never paste it into the chat."
+        "Login as {user!r} failed: {detail}. Set the password with `{command}` in a terminal. "
+        "Never paste it into the chat."
     ),
     "db.refused": (
         "Nothing accepts connections at {where}. Check PGHOST and PGPORT, and that the database is reachable "
@@ -370,7 +410,7 @@ EN: dict[str, str] = {
     "db.unreachable": "{where} is unreachable from this machine: {error}. Connect the VPN and check PGHOST.",
     "db.dropped": (
         "{where} accepted the connection, then closed it during the login of {user!r} without saying why. "
-        "Usually a wrong password or pg_hba.conf: check the password file, then ask the DBA."
+        "Usually a wrong password or pg_hba.conf: set the password again with `{command}`, then ask the DBA."
     ),
     "db.no_database": "Database {database!r} does not exist at {where}. Check PGDATABASE.",
     "db.login_refused": (
@@ -564,6 +604,9 @@ EN: dict[str, str] = {
         "does not have it. Nothing to compare."
     ),
     "stands.readable_by_others": "{path} holds a password, and other users can read it: chmod 600 {path}",
+    "stands.password_in_registry": (
+        "{path} holds a password in clear text: move it into the password store with {command} and drop the line"
+    ),
     "stands.reload_kept": (
         "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
     ),
@@ -580,7 +623,47 @@ EN: dict[str, str] = {
         "for datagrip: a JetBrains project to read as well (always read: the global data sources of the IDEs "
         "and DataGrip's projects in ~/DataGripProjects)"
     ),
-    "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
+    "install.help.write": (
+        "write the registry, keep the passwords in the password store and register pg-stands; without it, only show"
+    ),
+    "install.help.password": (
+        "put a password into the password store: for this database, or with --stand and --schema for a stand's login"
+    ),
+    "install.help.host": "the database host; PGHOST of the shell when left out",
+    "install.help.port": "the port; PGPORT of the shell when left out",
+    "install.help.database": (
+        "the database; PGDATABASE of the shell when left out; with --stand, the database of the schema when "
+        "its name repeats"
+    ),
+    "install.help.user": "the role; PGUSER of the shell when left out",
+    "install.help.stand": "a stand of the registry: the password is for the login of its --schema there",
+    "install.help.schema": "the schema of the stand whose login the password is for",
+    "install.help.move": (
+        "take the password from the password file instead of typing it, and remove the lines of this login there"
+    ),
+    "install.password_prompt": "Password for {login}: ",
+    "install.password_again": "Once more, to be sure: ",
+    "install.password_differ": "the two entries differ: nothing was written",
+    "install.password_empty": "the password is empty: nothing was written",
+    "install.password_saved": "the password of {login} is in the password store ({store})",
+    "install.password_needs_terminal": (
+        "this command asks for the password: run it in a terminal, not through the agent"
+    ),
+    "install.password_login": (
+        "name the login with --host, --port, --database and --user, or with --stand and --schema; "
+        "or set PGHOST in the shell"
+    ),
+    "install.no_store": (
+        "this system has no password store the server can use: the password can only come from PGPASSWORD"
+    ),
+    "install.nothing_to_move": "the password file has no line for {login}: nothing to move",
+    "install.secret_tool_missing": (
+        "To keep passwords in the keyring of the desktop, install the secret-tool utility: "
+        "`sudo apt install libsecret-tools` (Debian, Ubuntu), `sudo dnf install libsecret` (Fedora, RHEL)."
+    ),
+    "install.password_moved": (
+        "{count} line(s) of the password file moved into the password store; the old file is kept as {backup}"
+    ),
     "install.help.prune": "with --write: replace the registry instead of adding to it",
     "install.help.stand_pattern": (
         "regular expression that finds the stand in a folder, connection name or host (default: {pattern}); "
@@ -599,14 +682,23 @@ EN: dict[str, str] = {
     "import.reading": "reading {source}",
     "import.preview_header": "{count} connections go into {registry}:",
     "import.preview_named": "stand from the connection name",
-    "import.preview_no_password": "no saved password: add a line to the password file",
-    "import.preview_passwords": "{count} passwords go into {passfile}",
+    "import.preview_no_password": "no saved password: put it in with `{command}`",
+    "import.preview_passwords": "{count} passwords go into the password store ({where})",
+    "import.passwords_stored": "{count} passwords are in the password store ({store})",
+    "import.no_store": (
+        "this system has no password store the server can use, so the passwords of the import would go "
+        "nowhere: nothing was written"
+    ),
+    "import.passwords_not_stored": (
+        "the passwords did not go into the password store ({error}), and the registry is as it was: nothing was written"
+    ),
     "import.preview_skipped": "left out: {count}",
     "import.nothing": "nothing to import",
     "import.dry_run": (
         "This was a preview, nothing was written. Add --write to write the files and register pg-stands."
     ),
     "import.cannot_write": "cannot write {path}: {error}. Nothing was changed.",
+    "import.cannot_place": "cannot replace {path}: {error}. It is left as it was.",
     "import.written": "written {path}",
     "import.written_backup": "written {path}; the old file is kept as {backup}",
     "import.no_dbeaver": (
@@ -658,27 +750,42 @@ EN: dict[str, str] = {
     "export.nothing_new": "{tool} has all of these connections already; nothing to write",
     "export.dry_run": "This was a preview, nothing was written. Add --write to write the files.",
     "export.cannot_place": "cannot replace {path}: {error}. It is left as it was.",
+    "export.help.pgpass": (
+        "also write the passwords of these connections into the libpq password file, in clear: for psql, "
+        "which reads no other store"
+    ),
+    "export.pgpass_written": (
+        "{count} passwords are in {path}, in clear, for psql and pgAdmin; {missing} of these connections had "
+        "none in the password store."
+    ),
+    "export.pgpass_nothing": (
+        "no password of these connections is in the password store: {path} is left as it is ({missing} connections)"
+    ),
     "export.next_dbeaver": (
-        "Restart DBeaver: the connections are in a folder per stand and log in with the password file."
+        "Restart DBeaver: the connections are in a folder per stand. DBeaver asks for each password once and "
+        "keeps it itself: the password store of the server is not DBeaver's to read."
     ),
     "export.next_datagrip": (
         "Open the folder {path} as a project in DataGrip or another JetBrains IDE (File | Open), or reopen the "
-        "project if it is open: the data sources are grouped by stand and log in with the password file."
+        "project if it is open: the data sources are grouped by stand. The IDE asks for each password once and "
+        "keeps it itself: the password store of the server is not the IDE's to read."
     ),
     "export.next_pgadmin": (
-        "In pgAdmin: Tools | Import/Export Servers, Import, the file {path}. The servers are grouped by stand "
-        "and read passwords from {passfile}."
+        "In pgAdmin: Tools | Import/Export Servers, Import, the file {path}. The servers are grouped by stand. "
+        "pgAdmin asks for each password once; `install.py export pgadmin --write --pgpass` writes them into "
+        "{passfile}, in clear, where psql reads them too."
     ),
     "export.next_pg_service": (
-        'Connect with psql "service={service}" or pgcli "service={service}": the schema comes first on the search path.'
+        'Connect with psql "service={service}" or pgcli "service={service}": the schema comes first on the search '
+        "path. psql asks for each password, unless `--pgpass` wrote them into the password file."
     ),
     "export.next_vscode_pgsql": (
         "Reload the editor window: the connections are in the PostgreSQL view, a group per stand. The extension "
         "cannot read the password file: it asks for each password once and keeps it in the system keychain."
     ),
     "export.next_sqltools": (
-        "Reload the editor window: the connections are in SQLTools, a group per stand, and log in with the "
-        "password file."
+        "Reload the editor window: the connections are in SQLTools, a group per stand. SQLTools asks for each "
+        "password once and keeps it in its settings."
     ),
     "export.offer": "Found {tools}. Add the stand connections there ({count})? [y/N] ",
     "export.offer_hint": "To add them later:",
@@ -776,7 +883,9 @@ RU: dict[str, str] = {
     "search.glossary": "из глоссария:",
     "queries.unreadable": "Файл сохранённых запросов {path} не читается: {error}",
     "queries.refused": "Запрос {name} не взят: {message}",
-    "queries.not_rows": "сохранить можно только запрос, возвращающий строки (SELECT, WITH, VALUES, TABLE)",
+    "queries.not_rows": (
+        "Запрос {name} не взят: сохранить можно только запрос, возвращающий строки (SELECT, WITH, VALUES, TABLE)"
+    ),
     "queries.unknown": "Нет сохранённого запроса {name!r}. Сохранены: {known}.",
     "queries.answer": "{name}: {description}",
     "queries.entries.one": "{count} запрос",
@@ -894,6 +1003,43 @@ RU: dict[str, str] = {
         "лимиты: только чтение = {read_only}, таймаут запроса = {timeout}, list_tables возвращает не больше "
         "{tables} записей, ответы обрезаются до {budget} символов"
     ),
+    "status.password_store": "хранилище паролей: {store}",
+    "status.password_store_off": "хранилище паролей: выключено ({variable})",
+    "status.password_store_none": (
+        "хранилище паролей: на этой системе его нет, пароль берётся из PGPASSWORD или файла паролей"
+    ),
+    "status.password_from": "пароль: из {source}",
+    "status.password_unset": "пароль: не задан. Положите его в хранилище паролей: {command}",
+    "passwords.keychain": "связка ключей macOS (запись pg-explorer-mcp/passwords)",
+    "passwords.the_store": "хранилища паролей",
+    "passwords.the_environment": "переменной PGPASSWORD",
+    "passwords.the_registry": "строки password= реестра",
+    "passwords.store_unreadable": "хранилище паролей не читается: {error}",
+    "passwords.clear_text": (
+        "пароль лежит в {path} открытым текстом: перенесите его в хранилище паролей командой {command} --move"
+    ),
+    "passwords.keychain_error": "связка ключей не ответила: {error}",
+    "passwords.keychain_silent": (
+        "не удалось запустить утилиту связки ключей или она не ответила вовремя: {error}. "
+        "Связка может быть заперта или спрашивать разрешение: разблокируйте её и повторите."
+    ),
+    "passwords.not_ours": "в связке ключей под именем {service}/{account} лежит чужая запись: {error}",
+    "passwords.dpapi": "файл {path}, запечатанный DPAPI для этой учётной записи Windows",
+    "passwords.dpapi_error": (
+        "файл паролей {path} не читается или не записывается: {error}. Он запечатан для той учётной "
+        "записи Windows, которая его создала."
+    ),
+    "passwords.secret_service": "связка ключей рабочего стола, запись {service}/{account} (Secret Service)",
+    "passwords.keyring_error": "связка ключей не ответила: {error}",
+    "passwords.keyring_silent": (
+        "не удалось запустить утилиту связки ключей или она не ответила вовремя: {error}. Связка может "
+        "быть заперта и ждать, пока рабочий стол спросит её пароль."
+    ),
+    "passwords.keyring_not_ours": "в связке ключей под именем {service}/{account} лежит чужая запись: {error}",
+    "passwords.keyring_missing": (
+        "запись {service}/{account} в связке ключей называет поколение {generation}, а частей у него нет: "
+        "пароли придётся положить заново"
+    ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
     "error.arguments": "Аргументы должны быть JSON-объектом",
@@ -988,8 +1134,8 @@ RU: dict[str, str] = {
     "db.session_setup": "Подключение есть, но включить сессию только на чтение не удалось: {error}",
     "db.password_unset": "сервер просит пароль, а он не задан",
     "db.password": (
-        "Вход под ролью {user!r} не удался: {detail}. Запишите пароль в {passfile} одной строкой "
-        "host:port:database:user:password (права на файл — 600). Никогда не вставляйте его в чат."
+        "Вход под ролью {user!r} не удался: {detail}. Задайте пароль командой `{command}` в терминале. "
+        "Никогда не вставляйте его в чат."
     ),
     "db.refused": (
         "По адресу {where} никто не принимает подключения. Проверьте PGHOST и PGPORT и доступна ли база "
@@ -1000,7 +1146,7 @@ RU: dict[str, str] = {
     "db.unreachable": "{where} недоступен с этой машины: {error}. Подключите VPN и проверьте PGHOST.",
     "db.dropped": (
         "{where} принял подключение, но закрыл его при входе под ролью {user!r}, не объяснив причину. "
-        "Обычно это неверный пароль или pg_hba.conf: проверьте файл паролей, потом спросите DBA."
+        "Обычно это неверный пароль или pg_hba.conf: задайте пароль заново командой `{command}`, потом спросите DBA."
     ),
     "db.no_database": "На {where} нет базы {database!r}. Проверьте PGDATABASE.",
     "db.login_refused": "Сервер не пустил роль {user!r}: {detail}. Проверьте роль и pg_hba.conf вместе с DBA.",
@@ -1204,6 +1350,9 @@ RU: dict[str, str] = {
         "На стенде {stand} в базе {database} нет схемы {schema!r}: она есть в реестре, но не в базе. Сравнивать нечего."
     ),
     "stands.readable_by_others": "в {path} есть пароль, а читать файл могут другие пользователи: chmod 600 {path}",
+    "stands.password_in_registry": (
+        "в {path} пароль лежит открытым текстом: перенесите его в хранилище паролей командой {command} и уберите строку"
+    ),
     "stands.reload_kept": (
         "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
         "раньше"
@@ -1218,7 +1367,41 @@ RU: dict[str, str] = {
         "для datagrip: ещё и этот проект JetBrains (читаются всегда: глобальные источники данных IDE "
         "и проекты DataGrip в ~/DataGripProjects)"
     ),
-    "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
+    "install.help.write": (
+        "записать реестр, положить пароли в хранилище паролей и зарегистрировать pg-stands; без него — только показать"
+    ),
+    "install.help.password": (
+        "положить пароль в хранилище паролей: для этой базы или, с --stand и --schema, для входа схемы стенда"
+    ),
+    "install.help.host": "хост базы; без него — PGHOST из оболочки",
+    "install.help.port": "порт; без него — PGPORT из оболочки",
+    "install.help.database": "база; без неё — PGDATABASE из оболочки; с --stand — база схемы, если её имя повторяется",
+    "install.help.user": "роль; без неё — PGUSER из оболочки",
+    "install.help.stand": "стенд из реестра: пароль для входа его схемы (--schema) на этом стенде",
+    "install.help.schema": "схема стенда, для входа которой предназначен пароль",
+    "install.help.move": ("взять пароль из файла паролей вместо ввода и убрать строки этого подключения оттуда"),
+    "install.password_prompt": "Пароль для {login}: ",
+    "install.password_again": "Ещё раз, для проверки: ",
+    "install.password_differ": "введённые пароли не совпадают: ничего не записано",
+    "install.password_empty": "пароль пуст: ничего не записано",
+    "install.password_saved": "пароль для {login} лежит в хранилище паролей ({store})",
+    "install.password_needs_terminal": "команда спрашивает пароль: запустите её в терминале, а не через агента",
+    "install.password_login": (
+        "назовите подключение: --host, --port, --database и --user либо --stand и --schema; "
+        "или задайте PGHOST в оболочке"
+    ),
+    "install.no_store": (
+        "на этой системе нет хранилища паролей, которое сервер умеет использовать: "
+        "пароль может прийти только из PGPASSWORD"
+    ),
+    "install.nothing_to_move": "в файле паролей нет строки для {login}: переносить нечего",
+    "install.secret_tool_missing": (
+        "Чтобы держать пароли в связке ключей рабочего стола, поставьте утилиту secret-tool: "
+        "`sudo apt install libsecret-tools` (Debian, Ubuntu), `sudo dnf install libsecret` (Fedora, RHEL)."
+    ),
+    "install.password_moved": (
+        "строк файла паролей перенесено в хранилище паролей: {count}; прежний файл сохранён как {backup}"
+    ),
     "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
     "install.help.stand_pattern": (
         "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern}); "
@@ -1237,14 +1420,23 @@ RU: dict[str, str] = {
     "import.reading": "читаю {source}",
     "import.preview_header": "в {registry} попадут подключения: {count}",
     "import.preview_named": "стенд из имени подключения",
-    "import.preview_no_password": "пароль не сохранён: добавьте строку в файл паролей",
-    "import.preview_passwords": "в {passfile} попадут пароли: {count}",
+    "import.preview_no_password": "пароль не сохранён: положите его командой `{command}`",
+    "import.preview_passwords": "в хранилище паролей ({where}) попадут пароли: {count}",
+    "import.passwords_stored": "паролей в хранилище паролей ({store}): {count}",
+    "import.no_store": (
+        "на этой системе нет хранилища паролей, которое сервер умеет использовать: пароли импорта было бы "
+        "некуда положить, ничего не записано"
+    ),
+    "import.passwords_not_stored": (
+        "пароли не попали в хранилище паролей ({error}), реестр остался прежним: ничего не записано"
+    ),
     "import.preview_skipped": "пропущено: {count}",
     "import.nothing": "импортировать нечего",
     "import.dry_run": (
         "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы и зарегистрировать pg-stands."
     ),
     "import.cannot_write": "не удалось записать {path}: {error}. Ничего не изменено.",
+    "import.cannot_place": "не удалось заменить {path}: {error}. Файл остался прежним.",
     "import.written": "записан {path}",
     "import.written_backup": "записан {path}; прежний файл сохранён как {backup}",
     "import.no_dbeaver": (
@@ -1297,27 +1489,42 @@ RU: dict[str, str] = {
     "export.nothing_new": "в {tool} все эти подключения уже есть, записывать нечего",
     "export.dry_run": "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы.",
     "export.cannot_place": "не удалось заменить {path}: {error}. Файл остался прежним.",
+    "export.help.pgpass": (
+        "заодно записать пароли этих подключений в файл паролей libpq открытым текстом — ради psql, "
+        "который другого хранилища не читает"
+    ),
+    "export.pgpass_written": (
+        "паролей в {path} открытым текстом, для psql и pgAdmin: {count}; у {missing} подключений пароля в "
+        "хранилище не было."
+    ),
+    "export.pgpass_nothing": (
+        "в хранилище паролей нет пароля ни одного из этих подключений: {path} оставлен как был (подключений: {missing})"
+    ),
     "export.next_dbeaver": (
-        "Перезапустите DBeaver: подключения лежат в папках по стендам, пароли берутся из файла паролей."
+        "Перезапустите DBeaver: подключения лежат в папках по стендам. DBeaver спросит каждый пароль один раз "
+        "и сохранит его сам: хранилище паролей сервера DBeaver не читает."
     ),
     "export.next_datagrip": (
         "Откройте папку {path} как проект в DataGrip или другой IDE JetBrains (File | Open), а если проект уже "
-        "открыт — откройте его заново: источники данных сгруппированы по стендам, пароли берутся из файла паролей."
+        "открыт — откройте его заново: источники данных сгруппированы по стендам. IDE спросит каждый пароль "
+        "один раз и сохранит его сама: хранилище паролей сервера IDE не читает."
     ),
     "export.next_pgadmin": (
-        "В pgAdmin: Tools | Import/Export Servers, Import, файл {path}. Серверы сгруппированы по стендам "
-        "и берут пароли из {passfile}."
+        "В pgAdmin: Tools | Import/Export Servers, Import, файл {path}. Серверы сгруппированы по стендам. "
+        "pgAdmin спросит каждый пароль один раз; `install.py export pgadmin --write --pgpass` запишет их "
+        "в {passfile} открытым текстом — оттуда их берёт и psql."
     ),
     "export.next_pg_service": (
-        'Подключайтесь так: psql "service={service}" или pgcli "service={service}"; схема идёт первой в search_path.'
+        'Подключайтесь так: psql "service={service}" или pgcli "service={service}"; схема идёт первой в '
+        "search_path. psql спросит каждый пароль, если `--pgpass` не записал их в файл паролей."
     ),
     "export.next_vscode_pgsql": (
         "Перезагрузите окно редактора: подключения появятся в панели PostgreSQL, по группе на стенд. Расширение "
         "не умеет читать файл паролей: оно спросит каждый пароль один раз и сохранит его в системной связке ключей."
     ),
     "export.next_sqltools": (
-        "Перезагрузите окно редактора: подключения появятся в SQLTools, по группе на стенд, пароли берутся "
-        "из файла паролей."
+        "Перезагрузите окно редактора: подключения появятся в SQLTools, по группе на стенд. SQLTools спросит "
+        "каждый пароль один раз и сохранит его в настройках."
     ),
     "export.offer": "Найдены {tools}. Добавить туда подключения к стендам ({count})? [y/N] ",
     "export.offer_hint": "Чтобы добавить их позже, выполните:",
