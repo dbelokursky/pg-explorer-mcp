@@ -61,6 +61,25 @@ def unreachable_database_env() -> dict[str, str]:
     return env
 
 
+class Memory:
+    """A password store for the tests: the record in a string, no system storage anywhere near (ADR 0012)."""
+
+    def __init__(self) -> None:
+        self.text = ""
+        self.readings = 0  # how many times the record was asked for
+
+    @property
+    def label(self) -> str:
+        return "the memory of the tests"
+
+    def read(self) -> str:
+        self.readings += 1
+        return self.text
+
+    def write(self, text: str) -> None:
+        self.text = text
+
+
 PsqlFile = Callable[[Path, Mapping[str, str]], None]  # run a SQL file the way a DBA would
 
 

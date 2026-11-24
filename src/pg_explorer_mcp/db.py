@@ -1,11 +1,11 @@
 """Read-only access to PostgreSQL through the vendored pg8000 driver.
 
-Connection settings come from the PG* environment variables and the password
-file that psql uses, so a user can check access with psql and the server picks
-up the same configuration. PGHOST may list several hosts separated by commas,
-with one port for all of them or one per host in PGPORT, and they are tried in
-turn, as libpq tries them. Failures are raised with a message that tells the
-model, and through it the user, what to fix.
+Connection settings come from the PG* environment variables; the password comes from
+PGPASSWORD, from the server's password store in the system's secure storage (ADR 0012)
+or, for those who had one before the store, from the password file psql uses. PGHOST
+may list several hosts separated by commas, with one port for all of them or one per
+host in PGPORT, and they are tried in turn, as libpq tries them. Failures are raised
+with a message that tells the model, and through it the user, what to fix.
 """
 
 from __future__ import annotations
@@ -17,8 +17,6 @@ import math
 import os
 import socket
 import ssl
-import stat
-import sys
 import threading
 import time
 from collections.abc import Iterator, Mapping, Sequence
@@ -30,7 +28,7 @@ from typing import Any
 import pg8000.exceptions
 import pg8000.native
 
-from . import environment
+from . import environment, passwords
 from .i18n import t
 
 # No route to the host: with the stands behind a VPN, the usual sign that the VPN is down.
@@ -134,11 +132,15 @@ class Counters:
 
 @dataclass(frozen=True)
 class Endpoint:
-    """One host of the settings, with its port and the password the password file holds for that host."""
+    """One host of the settings, with its port, the password for that host and where the password came from.
+
+    source is one of passwords.ENVIRONMENT, STORE, FILE and REGISTRY, or None when there is no password.
+    """
 
     host: str
     port: int
     password: str | None
+    source: str | None = None
 
     @property
     def address(self) -> str:
@@ -173,11 +175,11 @@ class Settings:
         sslmode = (env.get("PGSSLMODE") or "prefer").lower()
         if sslmode not in SSL_MODES:
             raise ValueError(t("db.bad_sslmode", value=sslmode, choices=", ".join(SSL_MODES)))
-        passfile = pgpass_path(env)
-        password = env.get("PGPASSWORD")
-        # The password file is read per host, as libpq reads it: each host may have a line of its own.
+        passfile = passwords.pgpass_path(env)
+        # Each host may have a password of its own, as libpq reads the password file; see passwords.lookup
+        # for where a password is taken from.
         endpoints = tuple(
-            Endpoint(host, port, password or read_pgpass(passfile, host, port, database, user))
+            Endpoint(host, port, *passwords.lookup(env, host, port, database, user))
             for host, port in split_hosts(env.get("PGHOST") or "localhost", env.get("PGPORT") or "5432")
         )
         return cls(
@@ -206,8 +208,13 @@ class Settings:
 
     @property
     def password(self) -> str | None:
-        """The first host's password: the password file may hold one per host."""
+        """The first host's password: each host may have one of its own."""
         return self.endpoints[0].password
+
+    @property
+    def source(self) -> str | None:
+        """Where the first host's password came from (passwords.ENVIRONMENT, STORE, FILE, REGISTRY), if any."""
+        return self.endpoints[0].source
 
     @property
     def addresses(self) -> str:
@@ -233,8 +240,12 @@ class Database:
         self._config_error: str | None = None
         self._counters = counters or Counters()  # shared by all connections of a stands pool
         self._lock = threading.Lock()  # held for a transaction, and for opening the session it runs in
+        self._env = environment.with_legacy_names(os.environ) if env is None else env
+        # The server's password store (ADR 0012); None where the system has none, or it is switched off.
+        self.passwords = passwords.current(self._env)
+        self.passwords_off = passwords.is_off(self._env)
         try:
-            self.settings = Settings.from_env(environment.with_legacy_names(os.environ) if env is None else env)
+            self.settings = Settings.from_env(self._env)
         except ValueError as exc:
             self._config_error = str(exc)
 
@@ -360,6 +371,7 @@ class Database:
         return self._conn
 
     def _connect(self) -> pg8000.native.Connection:
+        self.reread()
         settings = self.settings
         if settings is None:
             raise DatabaseUnavailableError(t("db.settings_invalid", error=self._config_error))
@@ -378,6 +390,15 @@ class Database:
             raise failures[0]
         message = t("db.every_host_failed", failures="; ".join(str(failure) for failure in failures))
         raise DatabaseUnavailableError(message, host_down=every_host_down) from failures[-1]
+
+    def reread(self) -> None:
+        """Read the settings again: before a session is opened, and before status describes them.
+
+        A password put into the store, or changed in the password file, since the settings were read
+        needs no restart. These cannot have got worse: they were good enough to get this far.
+        """
+        with contextlib.suppress(ValueError):
+            self.settings = Settings.from_env(self._env)
 
 
 def _open(settings: Settings, endpoint: Endpoint) -> pg8000.native.Connection:
@@ -511,15 +532,6 @@ def _dropped(exc: Exception) -> bool:
     )
 
 
-def pgpass_path(env: Mapping[str, str]) -> str:
-    """The password file: PGPASSFILE's, or the psql default of the platform."""
-    if env.get("PGPASSFILE"):
-        return env["PGPASSFILE"]
-    if sys.platform == "win32":
-        return str(Path(env.get("APPDATA") or Path.home()) / "postgresql" / "pgpass.conf")
-    return str(Path.home() / ".pgpass")
-
-
 def split_hosts(hosts: str, ports: str) -> list[tuple[str, int]]:
     """Hosts paired with their ports the way libpq pairs PGHOST and PGPORT.
 
@@ -537,46 +549,6 @@ def split_hosts(hosts: str, ports: str) -> list[tuple[str, int]]:
         return [(name, int(number)) for name, number in zip(names, numbers)]
     except ValueError:
         raise ValueError(t("db.not_a_number", name="PGPORT", value=ports)) from None
-
-
-def read_pgpass(path: str, host: str, port: int, database: str, user: str) -> str | None:
-    """Look the password up the way libpq does: the first matching line wins, * matches anything."""
-    passfile = Path(path)
-    try:
-        if sys.platform != "win32" and passfile.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
-            return None  # like libpq, ignore a password file that others can read
-        lines = passfile.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    # libpq matches Unix-socket connections against "localhost".
-    wanted = ("localhost" if host.startswith("/") else host, str(port), database, user)
-    for line in lines:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        fields = _split_pgpass_line(line)
-        if len(fields) == 5 and all(field in ("*", value) for field, value in zip(fields, wanted)):
-            return fields[4]
-    return None
-
-
-def _split_pgpass_line(line: str) -> list[str]:
-    # Fields are separated by ":"; "\:" and "\\" stand for a literal colon and backslash.
-    fields: list[str] = []
-    current: list[str] = []
-    escaped = False
-    for char in line:
-        if escaped:
-            current.append(char)
-            escaped = False
-        elif char == "\\":
-            escaped = True
-        elif char == ":":
-            fields.append("".join(current))
-            current = []
-        else:
-            current.append(char)
-    fields.append("".join(current))
-    return fields
 
 
 def _ssl_attempts(settings: Settings) -> list[Any]:
@@ -634,7 +606,7 @@ def _explain_connect_failure(exc: Exception, settings: Settings, endpoint: Endpo
     if isinstance(cause, OSError) and cause.errno in _NO_ROUTE:
         return t("db.unreachable", where=where, error=cause.strerror or cause)
     if _dropped(exc):
-        return t("db.dropped", where=where, user=settings.user)
+        return t("db.dropped", where=where, user=settings.user, command=passwords.PASSWORD_COMMAND)
     if code == "28P01" or (not endpoint.password and "password" in detail.lower()):
         return _password_hint(settings, detail)
     if code == "3D000":
@@ -647,7 +619,7 @@ def _explain_connect_failure(exc: Exception, settings: Settings, endpoint: Endpo
 
 
 def _password_hint(settings: Settings, detail: str) -> str:
-    return t("db.password", user=settings.user, detail=detail, passfile=settings.passfile)
+    return t("db.password", user=settings.user, detail=detail, command=passwords.PASSWORD_COMMAND)
 
 
 def _int_setting(env: Mapping[str, str], name: str, default: int) -> int:

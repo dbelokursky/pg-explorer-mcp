@@ -22,9 +22,9 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape, quoteattr
 
 from .clients import app_data
-from .db import pgpass_path
 from .i18n import plural, t
 from .imports import ImportRefusedError, dbeaver_workspace, read_dbeaver
+from .passwords import pgpass_path
 from .stands import EXPORT_MARKS, EXPORTED, Target, export_uuid, load_registry, registry_files, summarize
 from .user_files import Staged, discard, place, stage
 

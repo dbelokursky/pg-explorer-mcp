@@ -27,7 +27,7 @@ from pg_explorer_mcp.querylog import QueryLog
 from pg_explorer_mcp.stand_tools import build_stand_tools
 from pg_explorer_mcp.stands import Pool, load_registry
 from pg_explorer_mcp.tools import Tool, ToolError
-from tests.helpers import ROOT, it_suffix, unreachable_database_env
+from tests.helpers import ROOT, Memory, it_suffix, unreachable_database_env
 
 pytestmark = pytest.mark.integration
 
@@ -175,17 +175,30 @@ class TestStatus:
 
     def test_checks_a_stand_with_a_login_of_its_own(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["status"], stand="dev1")
-        assert lines[-3] == f"checked with dev1 / shop / {BILLING}"
-        assert lines[-2].startswith("database: connected to ")
-        assert f" as {BILLING}, PostgreSQL " in lines[-2]
+        checked = lines.index(f"checked with dev1 / shop / {BILLING}")
+        assert lines[checked + 1].startswith("warning: the password comes from ")  # the password file of this test
+        assert lines[checked + 2].startswith("database: connected to ")
+        assert f" as {BILLING}, PostgreSQL " in lines[checked + 2]
         assert "read only = on" in lines[-1]
+
+    def test_a_password_in_the_store_logs_in_and_wins_over_the_password_file(
+        self, tools: dict[str, Tool], own_password_store: Memory
+    ) -> None:
+        own_password_store.text = "".join(f"*:*:*:{role}:{password}\n" for role, password in PASSWORDS.items())
+        lines = lines_of(tools["status"], stand="dev1")
+        checked = lines.index(f"checked with dev1 / shop / {BILLING}")
+        assert lines[checked + 1] == "password: from the password store"
+        assert lines[checked + 2].startswith("database: connected to ")
+        assert any(line.startswith("password store: ") for line in lines[:checked])
+        assert not any("in clear text" in line for line in lines)
 
     def test_a_broken_login_does_not_hide_a_working_one(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["status"], stand="dev2")
-        assert lines[-5] == "checked with dev2 / shop / mcp_it_aaa"
-        assert lines[-4].startswith("database: unavailable.")
-        assert lines[-3] == f"checked with dev2 / shop / {BILLING}"
-        assert f" as {BILLING}, PostgreSQL " in lines[-2]
+        refused = lines.index("checked with dev2 / shop / mcp_it_aaa")
+        assert lines[refused + 1] == "password: not set. Put it into the password store: python3 install.py password"
+        assert lines[refused + 2].startswith("database: unavailable.")
+        assert lines[refused + 3] == f"checked with dev2 / shop / {BILLING}"
+        assert f" as {BILLING}, PostgreSQL " in lines[refused + 5]
 
     def test_an_unreachable_stand_is_reported(self, tools: dict[str, Tool]) -> None:
         assert lines_of(tools["status"], stand="dev9")[-1].startswith("database: unavailable.")
@@ -319,8 +332,10 @@ class TestWholeDatabase:
 
     def test_status_checks_the_one_login(self, tools: dict[str, Tool]) -> None:
         lines = lines_of(tools["status"], stand="ift2")
-        assert lines[-4:-2] == [f"ift2 / shop: {BILLING}, {ORDERS}", f"checked with ift2 / shop / {READER}"]
-        assert f" as {READER}, PostgreSQL " in lines[-2]
+        checked = lines.index(f"checked with ift2 / shop / {READER}")
+        assert lines[checked - 1] == f"ift2 / shop: {BILLING}, {ORDERS}"
+        assert lines[checked + 1].startswith("warning: the password comes from ")
+        assert f" as {READER}, PostgreSQL " in lines[checked + 2]
 
 
 class TestCompareSchema:

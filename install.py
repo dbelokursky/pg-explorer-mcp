@@ -13,11 +13,15 @@
     python3 install.py import pg-service ~/.pg_service.conf --write
     python3 install.py export dbeaver            show which stand connections DBeaver would get
     python3 install.py export pgadmin --write    write servers.json for pgAdmin to import
+    python3 install.py password                  put the password of this database into the password store
+    python3 install.py password --stand dev7 --schema billing
+    python3 install.py password --move           carry the password over from ~/.pgpass
 
 Uses only the standard library and registers the very interpreter that runs it,
 so the agent later starts the server on a Python that is known to work. PG*
 variables set in the current shell, except PGPASSWORD, are copied into the
-server entry; the password belongs in the libpq password file (~/.pgpass).
+server entry; the password belongs in the password store of the system, which
+`install.py password` writes (ADR 0012), never in the settings and never in the chat.
 The language goes into the entry as well: an agent may start the server
 without the locale variables of this shell.
 """
@@ -26,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import getpass
 import json
 import os
 import platform
@@ -38,9 +43,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pg_explorer_mcp import clients, environment, exports, i18n, imports
+from pg_explorer_mcp import clients, environment, exports, i18n, imports, passwords
+from pg_explorer_mcp.db import split_hosts
 from pg_explorer_mcp.i18n import t
 from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
+from pg_explorer_mcp.stands import StandError, load_registry
+from pg_explorer_mcp.user_files import place, stage
 
 MIN_PYTHON = (3, 9)
 ROOT = Path(__file__).resolve().parent
@@ -70,6 +78,8 @@ COPIED_ENV = (
     "PG_EXPLORER_MCP_STANDS_FILE",
     "PGSERVICEFILE",
     "PG_EXPLORER_MCP_MAX_CONNECTIONS",
+    # the password store of the system (ADR 0012); off is the value worth passing on
+    passwords.STORE_VARIABLE,
 )
 PROFILES = ("schema", "explore", "analyst")
 YES = ("y", "yes", "д", "да")
@@ -204,33 +214,14 @@ def main(argv: list[str]) -> int:
     _common_options(parser)
     parser.add_argument("--check", action="store_true", help=t("install.help.check"))
     parser.add_argument("--name", type=_name, help=t("install.help.name"))
-    commands = parser.add_subparsers(dest="command")
-    importer = commands.add_parser("import", help=t("install.help.import"), description=t("install.help.import"))
-    _common_options(importer)
-    importer.add_argument("source", choices=("dbeaver", "datagrip", "pg-service"), help=t("install.help.source"))
-    importer.add_argument("file", nargs="?", help=t("install.help.file"))
-    importer.add_argument("--workspace", help=t("install.help.workspace"))
-    importer.add_argument("--project", help=t("install.help.project"))
-    importer.add_argument("--write", action="store_true", help=t("install.help.write"))
-    importer.add_argument("--prune", action="store_true", help=t("install.help.prune"))
-    importer.add_argument(
-        "--stand-pattern",
-        default=imports.DEFAULT_STAND_PATTERN,
-        help=t("install.help.stand_pattern", pattern=imports.DEFAULT_STAND_PATTERN),
-    )
-    exporter = commands.add_parser("export", help=t("export.help"), description=t("export.help"))
-    exporter.add_argument("tool", choices=list(exports.TOOLS), help=t("export.help.tool"))
-    exporter.add_argument("--stands", default="*", help=t("export.help.stands"))
-    exporter.add_argument("--write", action="store_true", help=t("export.help.write"))
-    exporter.add_argument("--workspace", help=t("install.help.workspace"))
-    exporter.add_argument("--project", help=t("export.help.project", path=exports.default_project(shell_env())))
-    exporter.add_argument("--editor", choices=list(exports.EDITORS), default="vscode", help=t("export.help.editor"))
-    exporter.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
+    _commands(parser.add_subparsers(dest="command"))
     args = parser.parse_args(argv)
     if args.command == "import":
         return import_command(args, language)
     if args.command == "export":
         return export_command(args)
+    if args.command == "password":
+        return password_command(args)
 
     entry = server_entry(args.profile, language, args.name)
     name = server_name(args.name)
@@ -327,6 +318,39 @@ def _common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
 
 
+def _commands(commands: Any) -> None:
+    """The subcommands: import, export and password."""
+    importer = commands.add_parser("import", help=t("install.help.import"), description=t("install.help.import"))
+    _common_options(importer)
+    importer.add_argument("source", choices=("dbeaver", "datagrip", "pg-service"), help=t("install.help.source"))
+    importer.add_argument("file", nargs="?", help=t("install.help.file"))
+    importer.add_argument("--workspace", help=t("install.help.workspace"))
+    importer.add_argument("--project", help=t("install.help.project"))
+    importer.add_argument("--write", action="store_true", help=t("install.help.write"))
+    importer.add_argument("--prune", action="store_true", help=t("install.help.prune"))
+    importer.add_argument(
+        "--stand-pattern",
+        default=imports.DEFAULT_STAND_PATTERN,
+        help=t("install.help.stand_pattern", pattern=imports.DEFAULT_STAND_PATTERN),
+    )
+    exporter = commands.add_parser("export", help=t("export.help"), description=t("export.help"))
+    exporter.add_argument("tool", choices=list(exports.TOOLS), help=t("export.help.tool"))
+    exporter.add_argument("--stands", default="*", help=t("export.help.stands"))
+    exporter.add_argument("--write", action="store_true", help=t("export.help.write"))
+    exporter.add_argument("--workspace", help=t("install.help.workspace"))
+    exporter.add_argument("--project", help=t("export.help.project", path=exports.default_project(shell_env())))
+    exporter.add_argument("--editor", choices=list(exports.EDITORS), default="vscode", help=t("export.help.editor"))
+    exporter.add_argument("--lang", choices=i18n.LANGUAGES, help=t("install.help.lang"))
+    secret = commands.add_parser("password", help=t("install.help.password"), description=t("install.help.password"))
+    secret.add_argument("--host", help=t("install.help.host"))
+    secret.add_argument("--port", help=t("install.help.port"))
+    secret.add_argument("--database", help=t("install.help.database"))
+    secret.add_argument("--user", help=t("install.help.user"))
+    secret.add_argument("--stand", help=t("install.help.stand"))
+    secret.add_argument("--schema", help=t("install.help.schema"))
+    secret.add_argument("--move", action="store_true", help=t("install.help.move"))
+
+
 def import_command(args: argparse.Namespace, language: str) -> int:
     """Preview, or with --write bring, the connections of DBeaver, DataGrip or pg_service.conf into pg-explorer-mcp."""
     try:
@@ -363,6 +387,103 @@ def import_command(args: argparse.Namespace, language: str) -> int:
     offer_clients(server_name(STANDS_NAME), entry, besides=args.client)
     offer_export(besides=args.source)  # the stands are in the tool they came from already
     return 0 if ok else 1
+
+
+def password_command(args: argparse.Namespace) -> int:
+    """Put a password into the password store (ADR 0012): typed here, or carried over from the password file."""
+    env = shell_env()
+    try:
+        logins = _logins(args, env)
+    except (StandError, ValueError) as exc:
+        print(exc)
+        return 1
+    if not logins:
+        print(t("install.password_login"))
+        return 2
+    store = passwords.current(env)
+    if store is None:
+        print(t("install.no_store"))
+        return 1
+    named = ", ".join(f"{user}@{host}:{port}/{database}" for host, port, database, user in logins)
+    if args.move:
+        return _move_password(env, store, logins, named)
+    if not sys.stdin.isatty():
+        print(t("install.password_needs_terminal"))
+        return 2
+    typed = getpass.getpass(t("install.password_prompt", login=named))
+    if typed != getpass.getpass(t("install.password_again")):
+        print(t("install.password_differ"))
+        return 1
+    if not typed:
+        print(t("install.password_empty"))
+        return 1
+    return _saved(store, dict.fromkeys(logins, typed), named)
+
+
+def _saved(store: passwords.Passwords, found: dict[passwords.Login, str], named: str) -> int:
+    """Put these passwords into the store; what went wrong is said without a traceback."""
+    try:
+        store.put(found)
+    except passwords.PasswordStoreError as exc:
+        print(exc)
+        return 1
+    print(t("install.password_saved", login=named, store=store.label))
+    return 0
+
+
+def _move_password(env: dict[str, str], store: passwords.Passwords, logins: list[passwords.Login], named: str) -> int:
+    """Carry the password of these logins over from the password file into the store, and drop its lines there.
+
+    A line with * in it stays: it may be the password of other logins too, and from now on the store wins.
+    """
+    passfile = passwords.pgpass_path(env)
+    found: dict[passwords.Login, str] = {}
+    for login in logins:
+        password = passwords.read_pgpass(passfile, login[0], int(login[1]), login[2], login[3])
+        if password is not None:
+            found[login] = password
+    if not found:
+        print(t("install.nothing_to_move", login=named))
+        return 1
+    if _saved(store, found, named):
+        return 1
+    dropped = _drop_lines(Path(passfile), logins)
+    if dropped is not None:
+        lines, backup = dropped
+        print(t("install.password_moved", count=lines, backup=backup))
+    return 0
+
+
+def _drop_lines(passfile: Path, logins: list[passwords.Login]) -> tuple[int, Path | None] | None:
+    """Rewrite the password file without the lines of exactly these logins; how many went, and the dated copy."""
+    try:
+        lines = passfile.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    kept = passwords.without(lines, logins)
+    if len(kept) == len(lines):
+        return None
+    backup = place(stage(passfile, "\n".join(kept) + ("\n" if kept else "")), owner_only=True)
+    return len(lines) - len(kept), backup
+
+
+def _logins(args: argparse.Namespace, env: dict[str, str]) -> list[passwords.Login]:
+    """The logins the password is for: those of a stand's schema, or of the database the options and PG* name.
+
+    Empty when nothing names a database; StandError when the stand or the schema is not in the registry.
+    """
+    if args.stand:
+        registry = load_registry(env)
+        if registry is None:
+            raise StandError(t("stands.unknown", stand=args.stand, stands=t("error.none")))
+        target = registry.target(registry.stand(args.stand), args.schema)
+        return [(host, str(port), target.database, target.login) for host, port in target.endpoints()]
+    user = args.user or env.get("PGUSER") or getpass.getuser()
+    database = args.database or env.get("PGDATABASE") or user
+    if not (args.host or env.get("PGHOST")):
+        return []
+    port = args.port or env.get("PGPORT") or "5432"
+    return [(host, str(number), database, user) for host, number in split_hosts(args.host or env["PGHOST"], port)]
 
 
 def _connections(args: argparse.Namespace) -> list[imports.Connection] | None:

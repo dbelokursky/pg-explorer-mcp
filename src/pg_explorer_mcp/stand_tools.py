@@ -61,6 +61,7 @@ from .tools import (
     explain_query,
     glossary_and_queries_warnings,
     list_tables,
+    password_lines,
     relations_named,
     run_saved_query,
     run_select,
@@ -68,6 +69,7 @@ from .tools import (
     schema_diagram,
     search_schema,
     split_name,
+    store_lines,
 )
 
 # The tools only a server with stands has, and the single-database tool each one follows.
@@ -342,12 +344,14 @@ def stand_status(
     """Status of the entry for many stands: every stand, or one that is asked about."""
     registry = pool.registry
     stands = registry.stands()
+    about, store_warnings = store_lines(pool.passwords, off=pool.passwords_off)
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
         t("status.read_only"),
         t("status.stands", count=len(stands), stands=summarize(stands), connections=len(registry.targets)),
         t("status.registry", files=", ".join(registry.files) or t("error.none")),
+        *about,
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),
         query_log.describe(),
@@ -374,8 +378,8 @@ def stand_status(
             else []
         ),
     ]
-    complained = (*warnings, *glossary_and_queries_warnings(glossary, saved), *registry_warnings(registry))
-    lines.extend(t("status.warning", warning=warning) for warning in complained)
+    complained = (*warnings, *store_warnings, *glossary_and_queries_warnings(glossary, saved))
+    lines.extend(t("status.warning", warning=warning) for warning in (*complained, *registry_warnings(registry)))
     if not isinstance(stand, str) or not stand.strip():
         lines.append(
             t(
@@ -404,8 +408,12 @@ def stand_status(
 def _check(pool: Pool, target: Target, budget: int) -> tuple[DatabaseUnavailableError | None, list[str]]:
     """The status lines of connecting with this login, and the failure if it did not connect."""
     lines = [t("status.checked_with", label=target.label)]
+    database = pool.database(target)
+    about, warned = password_lines(database, with_store=False)
+    lines.extend(about)
+    lines.extend(t("status.warning", warning=warning) for warning in warned)
     try:
-        info = pool.database(target).server_info()
+        info = database.server_info()
     except DatabaseUnavailableError as exc:
         return exc, [*lines, t("status.unavailable", reason=exc)]
     lines.append(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))

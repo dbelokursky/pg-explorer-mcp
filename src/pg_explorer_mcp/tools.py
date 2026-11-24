@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
-from . import __version__, diagram, health
+from . import __version__, diagram, health, passwords
 from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .glossary import Glossary
@@ -475,6 +475,38 @@ def glossary_and_queries_warnings(glossary: Glossary | None, saved: SavedQueries
     return [*(glossary.warnings if glossary is not None else []), *(saved.warnings if saved is not None else [])]
 
 
+def store_lines(store: passwords.Passwords | None, *, off: bool) -> tuple[list[str], list[str]]:
+    """What status says about the password store (ADR 0012): a line, and a warning when it is unreadable."""
+    if store is None:
+        said = "status.password_store_off" if off else "status.password_store_none"
+        return [t(said, variable=passwords.STORE_VARIABLE)], []
+    problem = store.problem()
+    warned = [t("passwords.store_unreadable", error=problem)] if problem else []
+    return [t("status.password_store", store=store.label)], warned
+
+
+def password_lines(db: Database, *, with_store: bool = True) -> tuple[list[str], list[str]]:
+    """What status says about passwords (ADR 0012): lines for among the others, and warnings for among the warnings.
+
+    Where the password of these settings comes from, or that there is none; a password that comes from the
+    libpq password file is clear text, and is warned about. Without the store, for a check of one stand:
+    the status above it has named the store already.
+    """
+    about, warned = store_lines(db.passwords, off=db.passwords_off) if with_store else ([], [])
+    db.reread()  # the settings say where the password came from when they were last read
+    settings = db.settings
+    if settings is None:
+        return about, warned
+    sources = {endpoint.source for endpoint in settings.endpoints}
+    if passwords.FILE in sources:
+        warned = [*warned, t("passwords.clear_text", path=settings.passfile, command=passwords.PASSWORD_COMMAND)]
+    elif settings.source is None:
+        about = [*about, t("status.password_unset", command=passwords.PASSWORD_COMMAND)]
+    else:
+        about = [*about, t("status.password_from", source=t(passwords.NAMES[settings.source]))]
+    return about, warned
+
+
 def status(
     db: Database,
     install_dir: str,
@@ -489,11 +521,13 @@ def status(
     saved: SavedQueries | None = None,
 ) -> list[str]:
     """The status answer: server, target, profile, language, limits and warnings."""
+    about, password_warnings = password_lines(db)
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
         t("status.read_only"),
         t("status.target", target=db.describe_target()),
+        *about,
         t("status.profile", profile=profile, tools=", ".join(names)),
         t("status.language", language=current()),
         query_log.describe(),
@@ -520,7 +554,7 @@ def status(
             else []
         ),
     ]
-    complained = (*warnings, *glossary_and_queries_warnings(glossary, saved))
+    complained = (*warnings, *password_warnings, *glossary_and_queries_warnings(glossary, saved))
     lines.extend(t("status.warning", warning=warning) for warning in complained)
     try:
         info = db.server_info()

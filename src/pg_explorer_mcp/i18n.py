@@ -277,6 +277,28 @@ EN: dict[str, str] = {
         "limits: read only = {read_only}, statement timeout = {timeout}, list_tables returns at most "
         "{tables} entries, answers are cut at {budget} characters"
     ),
+    # Passwords: the store of the system, and where a password came from (passwords.py, ADR 0012).
+    "status.password_store": "password store: {store}",
+    "status.password_store_off": "password store: off ({variable})",
+    "status.password_store_none": (
+        "password store: this system has none, so the password comes from PGPASSWORD or the password file"
+    ),
+    "status.password_from": "password: from {source}",
+    "status.password_unset": "password: not set. Put it into the password store: {command}",
+    "passwords.keychain": "the login keychain of macOS (record pg-explorer-mcp/passwords)",
+    "passwords.the_store": "the password store",
+    "passwords.the_environment": "PGPASSWORD in the environment",
+    "passwords.the_registry": "a password= line of the registry",
+    "passwords.store_unreadable": "the password store cannot be read: {error}",
+    "passwords.clear_text": (
+        "the password comes from {path} in clear text: move it into the password store with {command} --move"
+    ),
+    "passwords.keychain_error": "the login keychain did not answer: {error}",
+    "passwords.keychain_silent": (
+        "the keychain tool could not be started or did not answer in time: {error}. "
+        "The keychain may be locked or asking for permission: unlock it and try again."
+    ),
+    "passwords.not_ours": "the keychain holds another record under {service}/{account}: {error}",
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
     # Arguments and answers of the tools.
@@ -360,8 +382,8 @@ EN: dict[str, str] = {
     "db.session_setup": "Connected, but could not set up a read-only session: {error}",
     "db.password_unset": "the server asks for a password and none is set",
     "db.password": (
-        "Login as {user!r} failed: {detail}. Put the password into {passfile} as one line "
-        "host:port:database:user:password (file mode 600). Never paste it into the chat."
+        "Login as {user!r} failed: {detail}. Set the password with `{command}` in a terminal. "
+        "Never paste it into the chat."
     ),
     "db.refused": (
         "Nothing accepts connections at {where}. Check PGHOST and PGPORT, and that the database is reachable "
@@ -372,7 +394,7 @@ EN: dict[str, str] = {
     "db.unreachable": "{where} is unreachable from this machine: {error}. Connect the VPN and check PGHOST.",
     "db.dropped": (
         "{where} accepted the connection, then closed it during the login of {user!r} without saying why. "
-        "Usually a wrong password or pg_hba.conf: check the password file, then ask the DBA."
+        "Usually a wrong password or pg_hba.conf: set the password again with `{command}`, then ask the DBA."
     ),
     "db.no_database": "Database {database!r} does not exist at {where}. Check PGDATABASE.",
     "db.login_refused": (
@@ -566,6 +588,9 @@ EN: dict[str, str] = {
         "does not have it. Nothing to compare."
     ),
     "stands.readable_by_others": "{path} holds a password, and other users can read it: chmod 600 {path}",
+    "stands.password_in_registry": (
+        "{path} holds a password in clear text: move it into the password store with {command} and drop the line"
+    ),
     "stands.reload_kept": (
         "the stands registry changed ({files}), but no stands could be read from it: keeping the stands read before"
     ),
@@ -583,6 +608,37 @@ EN: dict[str, str] = {
         "and DataGrip's projects in ~/DataGripProjects)"
     ),
     "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
+    "install.help.password": (
+        "put a password into the password store: for this database, or with --stand and --schema for a stand's login"
+    ),
+    "install.help.host": "the database host; PGHOST of the shell when left out",
+    "install.help.port": "the port; PGPORT of the shell when left out",
+    "install.help.database": "the database; PGDATABASE of the shell when left out",
+    "install.help.user": "the role; PGUSER of the shell when left out",
+    "install.help.stand": "a stand of the registry: the password is for the login of its --schema there",
+    "install.help.schema": "the schema of the stand whose login the password is for",
+    "install.help.move": (
+        "take the password from the password file instead of typing it, and remove the lines of this login there"
+    ),
+    "install.password_prompt": "Password for {login}: ",
+    "install.password_again": "Once more, to be sure: ",
+    "install.password_differ": "the two entries differ: nothing was written",
+    "install.password_empty": "the password is empty: nothing was written",
+    "install.password_saved": "the password of {login} is in the password store ({store})",
+    "install.password_needs_terminal": (
+        "this command asks for the password: run it in a terminal, not through the agent"
+    ),
+    "install.password_login": (
+        "name the login with --host, --port, --database and --user, or with --stand and --schema; "
+        "or set PGHOST in the shell"
+    ),
+    "install.no_store": (
+        "this system has no password store the server can use: the password can only come from PGPASSWORD"
+    ),
+    "install.nothing_to_move": "the password file has no line for {login}: nothing to move",
+    "install.password_moved": (
+        "{count} line(s) of the password file moved into the password store; the old file is kept as {backup}"
+    ),
     "install.help.prune": "with --write: replace the registry instead of adding to it",
     "install.help.stand_pattern": (
         "regular expression that finds the stand in a folder, connection name or host (default: {pattern}); "
@@ -899,6 +955,27 @@ RU: dict[str, str] = {
         "лимиты: только чтение = {read_only}, таймаут запроса = {timeout}, list_tables возвращает не больше "
         "{tables} записей, ответы обрезаются до {budget} символов"
     ),
+    "status.password_store": "хранилище паролей: {store}",
+    "status.password_store_off": "хранилище паролей: выключено ({variable})",
+    "status.password_store_none": (
+        "хранилище паролей: на этой системе его нет, пароль берётся из PGPASSWORD или файла паролей"
+    ),
+    "status.password_from": "пароль: из {source}",
+    "status.password_unset": "пароль: не задан. Положите его в хранилище паролей: {command}",
+    "passwords.keychain": "связка ключей macOS (запись pg-explorer-mcp/passwords)",
+    "passwords.the_store": "хранилища паролей",
+    "passwords.the_environment": "переменной PGPASSWORD",
+    "passwords.the_registry": "строки password= реестра",
+    "passwords.store_unreadable": "хранилище паролей не читается: {error}",
+    "passwords.clear_text": (
+        "пароль лежит в {path} открытым текстом: перенесите его в хранилище паролей командой {command} --move"
+    ),
+    "passwords.keychain_error": "связка ключей не ответила: {error}",
+    "passwords.keychain_silent": (
+        "не удалось запустить утилиту связки ключей или она не ответила вовремя: {error}. "
+        "Связка может быть заперта или спрашивать разрешение: разблокируйте её и повторите."
+    ),
+    "passwords.not_ours": "в связке ключей под именем {service}/{account} лежит чужая запись: {error}",
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
     "error.arguments": "Аргументы должны быть JSON-объектом",
@@ -993,8 +1070,8 @@ RU: dict[str, str] = {
     "db.session_setup": "Подключение есть, но включить сессию только на чтение не удалось: {error}",
     "db.password_unset": "сервер просит пароль, а он не задан",
     "db.password": (
-        "Вход под ролью {user!r} не удался: {detail}. Запишите пароль в {passfile} одной строкой "
-        "host:port:database:user:password (права на файл — 600). Никогда не вставляйте его в чат."
+        "Вход под ролью {user!r} не удался: {detail}. Задайте пароль командой `{command}` в терминале. "
+        "Никогда не вставляйте его в чат."
     ),
     "db.refused": (
         "По адресу {where} никто не принимает подключения. Проверьте PGHOST и PGPORT и доступна ли база "
@@ -1005,7 +1082,7 @@ RU: dict[str, str] = {
     "db.unreachable": "{where} недоступен с этой машины: {error}. Подключите VPN и проверьте PGHOST.",
     "db.dropped": (
         "{where} принял подключение, но закрыл его при входе под ролью {user!r}, не объяснив причину. "
-        "Обычно это неверный пароль или pg_hba.conf: проверьте файл паролей, потом спросите DBA."
+        "Обычно это неверный пароль или pg_hba.conf: задайте пароль заново командой `{command}`, потом спросите DBA."
     ),
     "db.no_database": "На {where} нет базы {database!r}. Проверьте PGDATABASE.",
     "db.login_refused": "Сервер не пустил роль {user!r}: {detail}. Проверьте роль и pg_hba.conf вместе с DBA.",
@@ -1209,6 +1286,9 @@ RU: dict[str, str] = {
         "На стенде {stand} в базе {database} нет схемы {schema!r}: она есть в реестре, но не в базе. Сравнивать нечего."
     ),
     "stands.readable_by_others": "в {path} есть пароль, а читать файл могут другие пользователи: chmod 600 {path}",
+    "stands.password_in_registry": (
+        "в {path} пароль лежит открытым текстом: перенесите его в хранилище паролей командой {command} и уберите строку"
+    ),
     "stands.reload_kept": (
         "реестр стендов изменился ({files}), но прочитать из него стенды не удалось: остаются стенды, прочитанные "
         "раньше"
@@ -1224,6 +1304,34 @@ RU: dict[str, str] = {
         "и проекты DataGrip в ~/DataGripProjects)"
     ),
     "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
+    "install.help.password": (
+        "положить пароль в хранилище паролей: для этой базы или, с --stand и --schema, для входа схемы стенда"
+    ),
+    "install.help.host": "хост базы; без него — PGHOST из оболочки",
+    "install.help.port": "порт; без него — PGPORT из оболочки",
+    "install.help.database": "база; без неё — PGDATABASE из оболочки",
+    "install.help.user": "роль; без неё — PGUSER из оболочки",
+    "install.help.stand": "стенд из реестра: пароль для входа его схемы (--schema) на этом стенде",
+    "install.help.schema": "схема стенда, для входа которой предназначен пароль",
+    "install.help.move": ("взять пароль из файла паролей вместо ввода и убрать строки этого подключения оттуда"),
+    "install.password_prompt": "Пароль для {login}: ",
+    "install.password_again": "Ещё раз, для проверки: ",
+    "install.password_differ": "введённые пароли не совпадают: ничего не записано",
+    "install.password_empty": "пароль пуст: ничего не записано",
+    "install.password_saved": "пароль для {login} лежит в хранилище паролей ({store})",
+    "install.password_needs_terminal": "команда спрашивает пароль: запустите её в терминале, а не через агента",
+    "install.password_login": (
+        "назовите подключение: --host, --port, --database и --user либо --stand и --schema; "
+        "или задайте PGHOST в оболочке"
+    ),
+    "install.no_store": (
+        "на этой системе нет хранилища паролей, которое сервер умеет использовать: "
+        "пароль может прийти только из PGPASSWORD"
+    ),
+    "install.nothing_to_move": "в файле паролей нет строки для {login}: переносить нечего",
+    "install.password_moved": (
+        "строк файла паролей перенесено в хранилище паролей: {count}; прежний файл сохранён как {backup}"
+    ),
     "install.help.prune": "вместе с --write: заменить реестр, а не дополнять",
     "install.help.stand_pattern": (
         "регулярное выражение, которое находит стенд в папке, имени подключения или хосте (по умолчанию: {pattern}); "
