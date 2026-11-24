@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import shutil
 import stat
 import subprocess
@@ -193,8 +194,10 @@ class Passwords:
     def put(self, passwords: Mapping[Login, str]) -> None:
         """Add these passwords, a line per login, in place of the lines of the same logins; written at once.
 
-        PasswordStoreError says why nothing was written.
+        PasswordStoreError says why nothing was written. Nothing to add writes nothing, and creates nothing.
         """
+        if not passwords:
+            return
         with self._lock:
             lines = _merged(self._store.read().splitlines(), passwords)
             self._store.write("\n".join(lines) + ("\n" if lines else ""))
@@ -353,6 +356,172 @@ class DpapiFile:
         return t("passwords.dpapi_error", path=self._path, error=error)
 
 
+# --- Linux: the keyring of the desktop ----------------------------------------------------------------
+
+SECRET_TOOL = "secret-tool"  # noqa: S105  (the name of a tool, not a secret)
+PART_BYTES = 6000  # of UTF-8 in a part: its base64 stays under the 8192 bytes secret-tool reads from its input
+KEYRING_LABEL = "pg-explorer-mcp passwords"  # how the items are named in the tool of the desktop
+Pair = tuple[str, str]  # an attribute of an item and its value, which are not secret and go as arguments
+
+
+def _keyring_command(tool: str, *args: str) -> list[str]:
+    """The keyring tool with its arguments, as the tests may replace with a script of their own."""
+    return [tool, *args]
+
+
+def _secret_tool(tool: str, *args: str, secret: str = "") -> tuple[int, str, str]:
+    """Run the keyring tool as the agent runs the server: the secret on its input, a limited time to answer."""
+    try:
+        done = subprocess.run(  # noqa: S603  (the system's own tool, by its full path, with arguments of ours)
+            _keyring_command(tool, *args),
+            input=secret,
+            capture_output=True,
+            text=True,
+            timeout=TOOL_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise PasswordStoreError(t("passwords.keyring_silent", error=exc)) from exc
+    return done.returncode, done.stdout, done.stderr
+
+
+def _pieces(text: str) -> list[str]:
+    """The record in pieces of at most PART_BYTES of UTF-8, each cut where a character ends."""
+    pieces: list[str] = []
+    current: list[str] = []
+    size = 0
+    for char in text:
+        width = len(char.encode("utf-8"))
+        if current and size + width > PART_BYTES:
+            pieces.append("".join(current))
+            current, size = [], 0
+        current.append(char)
+        size += width
+    pieces.append("".join(current))  # an empty record is one empty piece: the head must always find a part
+    return pieces
+
+
+class SecretService:
+    """The keyring of the Linux desktop, through the secret-tool utility of libsecret (Secret Service).
+
+    GNOME Keyring, KWallet and KeePassXC keep such a keyring, encrypted with a key unlocked at login.
+    The utility reads a secret of 8 KiB at most, and one user may have hundreds of logins: the record
+    lies there as the parts of a generation, and the head, an item of its own, names the generation.
+    The parts go in first and the head last, so whatever interrupts a writing, the head names parts
+    that are all there. A secret goes in on the standard input and comes out on the standard output,
+    never as an argument.
+    """
+
+    def __init__(
+        self,
+        tool: str = SECRET_TOOL,
+        service: str = SERVICE,
+        account: str = ACCOUNT,
+        collection: str | None = None,
+    ) -> None:
+        """The record under this service and account, written by this tool.
+
+        collection, when given, is the object path of a collection of the keyring to write into, the
+        default one otherwise: the tests of a machine without a login keyring name the session collection.
+        """
+        self._tool = tool
+        self._service = service
+        self._account = account
+        self._collection = collection
+
+    @property
+    def label(self) -> str:
+        """What status calls the store, in the server's language."""
+        return t("passwords.secret_service", service=self._service, account=self._account)
+
+    def read(self) -> str:
+        """The record as the server wrote it; "" when nothing is stored yet."""
+        head = ""
+        for _ in range(3):
+            head = self._item(("kind", "head")) or ""
+            if not head:
+                return ""
+            if not head.isdigit():
+                raise PasswordStoreError(self._not_ours(ValueError(head)))
+            parts = self._parts(head)
+            if parts:
+                return "".join(parts)
+            # A record always has a part. Without one, the record was rewritten between its head and its
+            # parts: the old generation is gone and the head is about to name the new one. Once more.
+        raise PasswordStoreError(
+            t("passwords.keyring_missing", generation=head, service=self._service, account=self._account)
+        )
+
+    def _parts(self, generation: str) -> list[str]:
+        """The parts of a generation in order, as long as there is a part: an absent one ends the record."""
+        parts: list[str] = []
+        number = 0
+        while (part := self._item(("generation", generation), ("part", str(number)))) is not None:
+            parts.append(part)
+            number += 1
+        return parts
+
+    def write(self, text: str) -> None:
+        """Replace the record: the parts of a new generation first, then the head that names them."""
+        previous = self._item(("kind", "head"))
+        if previous is not None and not previous.isdigit():
+            raise PasswordStoreError(self._not_ours(ValueError(previous)))
+        generation = str(int(previous or "0") + 1)
+        for number, piece in enumerate(_pieces(text)):
+            self._store(piece, ("generation", generation), ("part", str(number)))
+        self._store(generation, ("kind", "head"))
+        if previous is not None:
+            with contextlib.suppress(PasswordStoreError):
+                self._clear(("generation", previous))  # the best effort: a leftover is sealed and unused
+
+    def forget(self) -> None:
+        """Remove every item of the record: the tests leave the keyring as they found it."""
+        self._clear()
+
+    def _item(self, *attributes: Pair) -> str | None:
+        """The secret of the item with these attributes; None when there is none."""
+        code, out, err = _secret_tool(self._tool, "lookup", *self._arguments(*attributes))
+        if code == 1 and not err.strip():
+            return None  # the utility's own answer to "no such item": it says nothing
+        if code != 0:
+            raise PasswordStoreError(self._failed(err))
+        try:
+            return base64.b64decode(out.strip(), validate=True).decode("utf-8")
+        except (binascii.Error, ValueError) as exc:
+            raise PasswordStoreError(self._not_ours(exc)) from exc
+
+    def _store(self, secret: str, *attributes: Pair) -> None:
+        encoded = base64.b64encode(secret.encode("utf-8")).decode("ascii")
+        code, _, err = _secret_tool(
+            self._tool,
+            "store",
+            f"--label={KEYRING_LABEL}",
+            *([f"--collection={self._collection}"] if self._collection else []),
+            *self._arguments(*attributes),
+            secret=encoded,
+        )
+        if code != 0:
+            raise PasswordStoreError(self._failed(err))
+
+    def _clear(self, *attributes: Pair) -> None:
+        """Remove the items with these attributes: nothing to remove is the utility's exit code 1, as is an error."""
+        code, _, err = _secret_tool(self._tool, "clear", *self._arguments(*attributes))
+        if code != 0 and err.strip():
+            raise PasswordStoreError(self._failed(err))
+
+    def _arguments(self, *attributes: Pair) -> list[str]:
+        arguments = ["service", self._service, "account", self._account]
+        for name, value in attributes:
+            arguments += [name, value]
+        return arguments
+
+    def _failed(self, error: str) -> str:
+        return t("passwords.keyring_error", error=error.strip())
+
+    def _not_ours(self, error: OSError | ValueError) -> str:
+        return t("passwords.keyring_not_ours", error=error, service=self._service, account=self._account)
+
+
 # --- which store this process uses ------------------------------------------------------------------
 
 
@@ -371,6 +540,9 @@ def _of_this_system(env: Mapping[str, str]) -> Store | None:
         return Keychain()
     if sys.platform == "win32":
         return DpapiFile(windows_file(env))
+    tool = shutil.which(SECRET_TOOL)
+    if sys.platform.startswith("linux") and tool:
+        return SecretService(tool)
     return None
 
 

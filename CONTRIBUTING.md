@@ -61,7 +61,9 @@ TLS-прослойку со своим сертификатом, самому с
 `PG_EXPLORER_MCP_PASSWORD_STORE=off`. Настоящую связку ключей macOS пробует один тест, и только с
 `PG_EXPLORER_MCP_TEST_KEYCHAIN=1` (на Mac; CI ставит переменную в macOS-джобе): он создаёт запись
 `pg-explorer-mcp-test-<pid>` и удаляет её. Хранилище Windows (DPAPI) пробуют тесты, которые идут только
-на Windows — в её джобах CI.
+на Windows — в её джобах CI. Связку ключей Linux пробует отдельная джоба
+`password store (Linux keyring)`: настоящий `secret-tool` против gnome-keyring на своей D-Bus-сессии с
+пустым паролем; локально тот же тест включается `PG_EXPLORER_MCP_TEST_KEYRING=1` на Linux-десктопе.
 
 CI гоняет то же самое, но на PR — сокращённый набор, а на push в `develop` и `main` и ночью на
 `develop` — полный. На PR: линтеры и типы, тесты на Linux и Windows под Python 3.9 и 3.14,

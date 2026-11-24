@@ -403,6 +403,8 @@ def password_command(args: argparse.Namespace) -> int:
     store = passwords.current(env)
     if store is None:
         print(t("install.no_store"))
+        if sys.platform.startswith("linux"):  # the desktop keyring is there; its tool may not be
+            print(t("install.secret_tool_missing"))
         return 1
     named = ", ".join(f"{user}@{host}:{port}/{database}" for host, port, database, user in logins)
     if args.move:
