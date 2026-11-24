@@ -92,6 +92,19 @@ def _now() -> str:
     return f"{datetime.datetime.now():%Y%m%d-%H%M%S}"
 
 
+def unplace(staged: Staged, backup: Path | None) -> None:
+    """Take a placed text back, when a later step failed: the dated copy is the file again, or the new file goes.
+
+    What cannot be undone is left as it is: the dated copy is the user's way back.
+    """
+    _, real, _ = staged
+    with contextlib.suppress(OSError):
+        if backup is None:
+            real.unlink()
+        else:
+            backup.replace(real)
+
+
 def discard(staged: Sequence[Staged]) -> None:
     """Remove the new texts that wait next to their files, the ones not placed yet."""
     for _, _, temporary in staged:

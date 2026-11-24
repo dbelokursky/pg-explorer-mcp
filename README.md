@@ -569,7 +569,9 @@ user=shop_reader
   login: `schema` takes any schema the database holds, and `list_schemas` and `list_tables` show what the
   login can read, as for one database; a database with a login per schema keeps to the schemas of the
   registry;
-- passwords go into the password file, a line per login, just as for one database;
+- passwords go into the [password store](#4-the-password-goes-into-the-password-store), one line per login, as
+  for one database: `python3 install.py password --stand dev7 --schema billing` (`--database` when the
+  schema repeats on the stand). The password file is still read for those who had one before;
 - the server reads `~/.pg-explorer-mcp/stands.conf` (on Windows `%APPDATA%\pg-explorer-mcp\stands.conf`, or the file
   `PG_EXPLORER_MCP_STANDS_FILE` names) and your own `~/.pg_service.conf`; with equal names the first file wins.
   While the new folder has no `stands.conf`, the one pg-mcp 0.7.0 wrote to `~/.pg-mcp/` is read, and the
@@ -592,7 +594,7 @@ JetBrains IDE with database tools, or in a `pg_service.conf` file, let `install.
 
 ```bash
 python3 install.py import dbeaver            # a preview: what would go where; nothing is written
-python3 install.py import dbeaver --write    # write the registry and the password file, register pg-stands
+python3 install.py import dbeaver --write    # write the registry, keep the passwords in the password store
 python3 install.py import datagrip           # DataGrip, IntelliJ IDEA, PyCharm and the other JetBrains IDEs
 python3 install.py import datagrip --project ~/IdeaProjects/shop   # and the data sources of a project
 python3 install.py import pg-service ~/.pg_service.conf --write
@@ -607,24 +609,26 @@ database is the connection's, from its URL first, and the section is named after
 schemas that login reads the import cannot know, so the server reads such a database as a whole through
 it, and a stand with a login per schema gets a section per login, as before. The preview lists
 what would be written and what is left out and why; passwords are never shown. `--write` rewrites
-`~/.pg-explorer-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`), adds the passwords
-to the password file without touching its other lines, keeps a dated backup of both files and
-registers `pg-stands`; when anything fails, nothing is changed. DBeaver's saved passwords are read
-from its own files while DBeaver keeps them under its default key; with its secure storage switched
-on they stay unknown, and the preview says which logins need a line in the password file by hand.
-The agent does the same with `/pg:import`, writing only after you confirm. A running server notices
-a changed registry on its next call, so an import needs no restart; a registry file that holds a
-`password=` line and is readable by other users gets a warning in `status`. A DBeaver connection with
-several hosts (`h1:6544,h2` with the port 6544, as DBeaver writes it, or a URL
-`jdbc:postgresql://h1:6544,h2:6544/db`) keeps them all, and the password file gets a line per host,
-since libpq matches a line against one host.
+`~/.pg-explorer-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`) and puts the
+passwords into the [password store](#4-the-password-goes-into-the-password-store), a line per login; a
+dated copy of the registry is kept, and when anything fails, nothing is changed: the passwords are kept
+after the registry is written, and the registry is taken back when they cannot be. Where the system has
+no password store, an import with passwords is refused: they would go nowhere. DBeaver's saved
+passwords are read from its own files while DBeaver keeps them under its default key; with its secure
+storage switched on they stay unknown, and the preview names the `install.py password` command for each
+login that needs one by hand. The agent does the same with `/pg:import`, writing only after you confirm.
+A running server notices a changed registry on its next call, so an import needs no restart; a registry
+file that holds a `password=` line gets a warning in `status`, since a password in the registry is clear
+text. A DBeaver connection with several hosts (`h1:6544,h2` with the port 6544, as DBeaver writes it, or a
+URL `jdbc:postgresql://h1:6544,h2:6544/db`) keeps them all, and the store gets a line per host, since each
+host may be a login of its own.
 
 `import datagrip` reads the global data sources of each JetBrains IDE, from its newest version, and
 DataGrip's projects in `~/DataGripProjects`; the other IDEs keep data sources in the projects of your
 code, and `--project <folder>` brings one of those in. A URL with several hosts
 (`jdbc:postgresql://h1:6544,h2:6545/db`) keeps them all, and a host without a port of its own gets 5432,
 as in the JDBC driver. The IDEs keep passwords in the system keychain or in KeePass, which the import
-never reads: the preview marks those logins, and their lines go into the password file by hand. A
+never reads: the preview marks those logins and names the `install.py password` command for each. A
 password, user or `sslmode` written in the URL itself is taken from there. Data sources that
 `install.py export datagrip` wrote are not brought back.
 
@@ -633,17 +637,23 @@ says so, naming the SSH server when the tool's files do (for the IDEs, the SSH c
 project's `.idea/sshConfigs.xml` or in the IDE's settings): its host is the database's as the SSH server
 sees it, often `localhost`, and pg-explorer-mcp opens no tunnels. To query such a stand, open the tunnel
 yourself, say `ssh -N -L 15432:<database host>:5432 <SSH server>`, then add its section by hand with
-`host=localhost` and `port=15432`, and its line to the password file with the same host and port. A
+`host=localhost` and `port=15432`, and its password with `python3 install.py password --host localhost
+--port 15432 --database <database> --user <role>`. A
 connection whose tunnel is switched off in the tool is brought in as usual.
 
 **Exporting connections to database tools.** The other way round, `install.py export` puts the stands
-into the tools you query them with yourself: a folder or group per stand, every connection logging in
-with the password file. No password is copied anywhere.
+into the tools you query them with yourself: a folder or group per stand. These tools cannot read the
+server's password store: DBeaver, the JetBrains IDEs, pgAdmin, SQLTools and the PostgreSQL extension of VS
+Code ask for each password once and keep it themselves. psql reads no other store than the password file,
+so it asks every time — unless you add `--pgpass`, which writes the passwords of the exported connections
+into the libpq password file, in clear, keeping a dated copy of the old file. No password is copied
+anywhere else.
 
 ```bash
 python3 install.py export dbeaver                # a preview: what would go where; nothing is written
 python3 install.py export dbeaver --write
 python3 install.py export pgadmin --write --stands 'dev*,ift2'
+python3 install.py export pg-service --write --pgpass   # and the passwords into ~/.pgpass, in clear, for psql
 ```
 
 | Tool | `export` | What it writes | Then |
@@ -651,7 +661,7 @@ python3 install.py export pgadmin --write --stands 'dev*,ift2'
 | DBeaver | `dbeaver` | `data-sources-pg-mcp.json` next to DBeaver's `data-sources.json`, or in the folder `--workspace` names | Restart DBeaver |
 | DataGrip and the JetBrains IDEs with database tools | `datagrip` | `.idea/dataSources.xml` and `dataSources.local.xml` in `~/.pg-explorer-mcp/datagrip`, or in the project `--project` names (close it first) | Open the folder as a project |
 | pgAdmin 4 | `pgadmin` | `~/.pg-explorer-mcp/pgadmin-servers.json` | Tools > Import/Export Servers > Import |
-| psql, pgcli | `pg-service` | Sections of `~/.pg_service.conf`, the schema first on the search path | `psql "service=dev7.demo.shop"` |
+| psql, pgcli | `pg-service` | Sections of `~/.pg_service.conf`, the schema first on the search path | `psql "service=dev7.demo.shop"`; `--pgpass` for the passwords |
 | PostgreSQL extension of VS Code (Microsoft) | `vscode-pgsql` | `pgsql.connections` in the user settings; `--editor cursor` or `windsurf` for those editors | Reload the window |
 | SQLTools | `sqltools` | `sqltools.connections` in the user settings, with an empty password | Reload the window |
 
@@ -667,9 +677,9 @@ often come from DBeaver in the first place. In `~/.pg_service.conf` every export
 the line `# pg-explorer-mcp export`: the next export rewrites only such sections, the server does not take them
 for stands, and a section of the same name that you wrote yourself stays as it is while its stand is
 left out. The TLS settings of a stand, `sslmode` and `sslrootcert`, go along. A settings file with
-comments is left alone, and the export prints what to add to it by hand. The PostgreSQL extension of
-Microsoft cannot read the password file: it asks for each password once and keeps it in the system
-keychain. Importing the file into pgAdmin again adds the servers again, so remove the old ones first.
+comments is left alone, and the export prints what to add to it by hand. `--pgpass` takes the passwords
+out of the password store for the connections it finds there and counts the others. Importing the file
+into pgAdmin again adds the servers again, so remove the old ones first.
 After `import --write`, and after registering an entry while stands exist, `install.py` at a terminal
 looks for these tools on the machine and offers to export into them.
 
