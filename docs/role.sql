@@ -5,7 +5,8 @@
 --   psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owner=app_owner -f docs/role.sql
 --
 --   role      name of the new login role; PostgreSQL reserves names that start with pg_
---   password  its password; give it to users through ~/.pgpass, never in the agent settings
+--   password  its password; users put it into the server's password store (install.py password),
+--              never into the agent settings
 --   schemas   comma-separated schemas the agent may read
 --   owner     role that creates tables in those schemas, so future tables become readable too
 --

@@ -69,8 +69,9 @@ python3 install.py --client qwen --lang en                       # register and 
 qwen extensions link "$(pwd)"                                    # context and the /pg:setup command
 ```
 
-Put the password into `~/.pgpass` ([how](#4-the-password-goes-into-the-password-file)), restart
-Qwen Code and ask the agent: "Check the database connection".
+Put the password where the server keeps it: `python3 install.py password` asks for it in the
+terminal ([how](#4-the-password-goes-into-the-password-store)). Restart Qwen Code and ask the agent:
+"Check the database connection".
 
 There is a shorter way too: link the extension (`qwen extensions link`), restart Qwen Code and run
 `/pg:setup` in it. The agent finds Python, runs `install.py` and works through the hints itself.
@@ -87,7 +88,7 @@ create a database and a role (a fresh local PostgreSQL will do):
 
 ```bash
 python3 scripts/demo.py                                     # pg_mcp_demo and the role mcp_demo_agent, password demo
-echo "localhost:5432:pg_mcp_demo:mcp_demo_agent:demo" >> ~/.pgpass && chmod 600 ~/.pgpass
+python3 install.py password --host localhost --database pg_mcp_demo --user mcp_demo_agent   # type: demo
 PGDATABASE=pg_mcp_demo PGUSER=mcp_demo_agent python3 install.py --profile analyst
 ```
 
@@ -141,31 +142,35 @@ $env:PGHOST = "db.example.com"; $env:PGDATABASE = "app"; $env:PGUSER = "mcp_agen
 For TLS with certificate checks add `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<path to the CA>`.
 All variables are listed under [settings](#settings).
 
-### 4. The password goes into the password file
+### 4. The password goes into the password store
 
-The password lives only in PostgreSQL's password file, the same one `psql` reads. Never put it into
-the agent settings and never send it in the chat.
-
-macOS and Linux use `~/.pgpass`:
+The server keeps its passwords in the secure storage of the system, encrypted by the system itself,
+and takes the password of its own login from there. Never put it into the agent settings and never
+send it in the chat: type it where the server can keep it.
 
 ```bash
-nano ~/.pgpass        # or any other editor
-chmod 600 ~/.pgpass   # otherwise the file is ignored: others could read it
+python3 install.py password        # asks for the password and does not show it
 ```
 
-Windows uses `%APPDATA%\postgresql\pgpass.conf`:
+Without options the password is for the database that `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER`
+of the shell name; `--host`, `--port`, `--database` and `--user` name another one, and `--stand`
+with `--schema` the login of a stand ([many stands](#many-stands)).
 
-```powershell
-mkdir "$env:APPDATA\postgresql" -Force
-notepad "$env:APPDATA\postgresql\pgpass.conf"
-```
+| System | Where the system keeps it | What it needs |
+|---|---|---|
+| macOS | the login keychain, record `pg-explorer-mcp` / `passwords` | nothing: the `security` tool is part of macOS |
 
-One line per connection: `host:port:database:role:password`. An asterisk matches any value; escape
-a colon or a backslash inside a value as `\:` and `\\`.
+A password changed in the store is used by the next connection without a restart. `status` says which
+store is in use and where the password came from. On a system that has none the server keeps no
+password, and `status` says that too.
 
-```text
-db.example.com:5432:app:mcp_agent:password-from-the-DBA
-```
+**Those who already have `~/.pgpass`.** The server still reads the libpq password file, and warns in
+`status` that the password is in clear text. `python3 install.py password --move` carries the password
+of a login over into the store and removes its line from the file, keeping a dated copy of the file;
+a line with `*` stays, as it may serve other logins. From then on the store wins for that login.
+
+`PG_EXPLORER_MCP_PASSWORD_STORE=off` switches the store off, for a machine where the storage of the
+system must not be touched.
 
 ### 5. Register the server with the agent
 
@@ -289,6 +294,8 @@ pg-explorer-mcp 0.10.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
+password store: the login keychain of macOS (record pg-explorer-mcp/passwords)
+password: from the password store
 profile: analyst (status, list_tables, search_schema, describe_table, schema_diagram, db_health, sample_rows, explain_query, run_select)
 language: en
 query log: off
@@ -878,8 +885,9 @@ The full policy is in [ADR 0002](docs/adr/0002-read-only-sql-policy.md).
 Everything the tools return goes into the model's context. With a local model inside your organisation
 the data stays there, but pick the profile by the task: `schema` shows no data at all.
 
-The server takes passwords from the [password file](#4-the-password-goes-into-the-password-file), as
-`psql` does, and only from the line for its own login.
+The server takes the password of its own login from its [password store](#4-the-password-goes-into-the-password-store)
+in the secure storage of the system. Nothing of the server's is written in clear: `~/.pgpass` is still
+read for those who had one before the store, and `status` warns about it.
 
 ## Query log
 
@@ -984,8 +992,9 @@ writes only the new ones.
 | `PGUSER` | the OS user name | role |
 | `PGSSLMODE` | `prefer` | `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`; only the last two check the certificate |
 | `PGSSLROOTCERT` | — | CA certificate for `verify-ca` and `verify-full` |
-| `PGPASSFILE` | `~/.pgpass`, on Windows `%APPDATA%\postgresql\pgpass.conf` | password file |
-| `PGPASSWORD` | — | works, but `install.py` never copies it: the password belongs in the password file |
+| `PGPASSFILE` | `~/.pgpass`, on Windows `%APPDATA%\postgresql\pgpass.conf` | the libpq password file, read for those who had one before the password store |
+| `PGPASSWORD` | — | works, but `install.py` never copies it: the password belongs in the [password store](#4-the-password-goes-into-the-password-store) |
+| `PG_EXPLORER_MCP_PASSWORD_STORE` | on | `off`: the storage of the system is neither read nor written |
 | `PG_EXPLORER_MCP_PROFILE` | `explore` | `schema`, `explore` or `analyst` |
 | `PG_EXPLORER_MCP_LANG` | from the locale | `en` or `ru` |
 | `PG_EXPLORER_MCP_MAX_RESPONSE_CHARS` | `8000` | budget of one answer in characters, at least 500 |
@@ -1016,7 +1025,7 @@ psql -d app -v role=mcp_agent -v password='…' -v schemas=sales,reports -v owne
 | Parameter | Meaning |
 |---|---|
 | `role` | name of the new role; PostgreSQL reserves names that start with `pg_` |
-| `password` | its password; users put it into their password file |
+| `password` | its password; users put it into the [password store](#4-the-password-goes-into-the-password-store) with `install.py password` |
 | `schemas` | comma-separated schemas the agent may read |
 | `owner` | the role that creates tables in those schemas, so future tables become readable too |
 
@@ -1043,8 +1052,8 @@ says what is wrong.
 | "Host … cannot be resolved" | a typo in `PGHOST`, or a VPN is needed | fix `PGHOST` |
 | "Connecting to … timed out" | a firewall or a VPN | check that the port is reachable from this machine |
 | "… is unreachable from this machine" | no route to the host: the VPN is down | connect the VPN |
-| "… accepted the connection, then closed it during the login" | the server refused the login, but its message was lost (Windows drops it on a reset); usually the password or `pg_hba.conf` | check the password file, then ask the DBA |
-| "Login as … failed" or "the server asks for a password" | no password in the password file, a wrong line, or file permissions | check the path, the line format and `chmod 600` |
+| "… accepted the connection, then closed it during the login" | the server refused the login, but its message was lost (Windows drops it on a reset); usually the password or `pg_hba.conf` | set the password again with `install.py password`, then ask the DBA |
+| "Login as … failed" or "the server asks for a password" | no password in the password store, or a wrong one | `python3 install.py password`; on macOS unlock the keychain in Keychain Access if `status` says it cannot be read |
 | "Database … does not exist" | wrong database name | fix `PGDATABASE` |
 | "The server refused the login for …" | `pg_hba.conf`, or the role lacks `LOGIN`/`CONNECT` | ask the DBA |
 | "TLS with … failed" | the TLS mode does not match the server | check `PGSSLMODE` and `PGSSLROOTCERT` |
