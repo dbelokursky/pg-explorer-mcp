@@ -26,7 +26,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
+from . import dpapi
 from .i18n import t
+from .user_files import place, stage
 
 SERVICE = "pg-explorer-mcp"  # how the system's storage names the record
 ACCOUNT = "passwords"
@@ -303,6 +305,54 @@ def _security(*args: str) -> tuple[int, str, str]:
     return done.returncode, done.stdout, done.stderr
 
 
+# --- Windows: a file sealed by DPAPI -----------------------------------------------------------------
+
+
+def windows_file(env: Mapping[str, str]) -> Path:
+    r"""Where the sealed passwords are on Windows: %APPDATA%\pg-explorer-mcp\passwords."""
+    return Path(env.get("APPDATA") or Path.home()) / SERVICE / ACCOUNT
+
+
+class DpapiFile:
+    """The passwords of the server in one file on Windows, sealed by DPAPI for the account.
+
+    DPAPI encrypts with a key Windows keeps for the account that asked: another account of that
+    machine cannot open the file, nor can the same account on another machine. The file is replaced
+    whole, with a dated copy of the old one (user_files.py); nothing is asked of the user.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    @property
+    def label(self) -> str:
+        """What status calls the store, in the server's language."""
+        return t("passwords.dpapi", path=self._path)
+
+    def read(self) -> str:
+        """The lines as the server wrote them; "" when the file does not exist yet."""
+        try:
+            sealed = self._path.read_bytes()
+        except FileNotFoundError:
+            return ""
+        except OSError as exc:
+            raise PasswordStoreError(self._failed(exc)) from exc
+        try:
+            return dpapi.unseal(sealed).decode("utf-8")
+        except (OSError, ValueError) as exc:
+            raise PasswordStoreError(self._failed(exc)) from exc
+
+    def write(self, text: str) -> None:
+        """Replace the file with these lines, sealed."""
+        try:
+            place(stage(self._path, dpapi.seal(text.encode("utf-8"))))
+        except OSError as exc:
+            raise PasswordStoreError(self._failed(exc)) from exc
+
+    def _failed(self, error: OSError | ValueError) -> str:
+        return t("passwords.dpapi_error", path=self._path, error=error)
+
+
 # --- which store this process uses ------------------------------------------------------------------
 
 
@@ -313,12 +363,14 @@ def is_off(env: Mapping[str, str]) -> bool:
 
 def system(env: Mapping[str, str]) -> Store | None:
     """The store to use on this machine, or None: switched off, or nothing here can keep a secret."""
-    return None if is_off(env) else _of_this_system()
+    return None if is_off(env) else _of_this_system(env)
 
 
-def _of_this_system() -> Store | None:
+def _of_this_system(env: Mapping[str, str]) -> Store | None:
     if sys.platform == "darwin" and shutil.which(SECURITY):
         return Keychain()
+    if sys.platform == "win32":
+        return DpapiFile(windows_file(env))
     return None
 
 

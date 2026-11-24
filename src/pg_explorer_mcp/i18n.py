@@ -299,6 +299,11 @@ EN: dict[str, str] = {
         "The keychain may be locked or asking for permission: unlock it and try again."
     ),
     "passwords.not_ours": "the keychain holds another record under {service}/{account}: {error}",
+    "passwords.dpapi": "the file {path}, sealed by DPAPI for this Windows account",
+    "passwords.dpapi_error": (
+        "the password file {path} cannot be read or written: {error}. It is sealed for the Windows "
+        "account that made it."
+    ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
     # Arguments and answers of the tools.
@@ -976,6 +981,11 @@ RU: dict[str, str] = {
         "Связка может быть заперта или спрашивать разрешение: разблокируйте её и повторите."
     ),
     "passwords.not_ours": "в связке ключей под именем {service}/{account} лежит чужая запись: {error}",
+    "passwords.dpapi": "файл {path}, запечатанный DPAPI для этой учётной записи Windows",
+    "passwords.dpapi_error": (
+        "файл паролей {path} не читается или не записывается: {error}. Он запечатан для той учётной "
+        "записи Windows, которая его создала."
+    ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
     "error.arguments": "Аргументы должны быть JSON-объектом",

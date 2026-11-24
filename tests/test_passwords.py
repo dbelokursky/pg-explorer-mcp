@@ -21,6 +21,7 @@ from pg_explorer_mcp.passwords import (
     FILE,
     REGISTRY,
     STORE,
+    DpapiFile,
     Keychain,
     Passwords,
     PasswordStoreError,
@@ -234,15 +235,22 @@ class TestWhichStore:
     def test_macos_has_the_keychain_when_its_tool_is_there(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "platform", "darwin")
         monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/security")
-        assert isinstance(passwords._of_this_system(), Keychain)
+        assert isinstance(passwords._of_this_system({}), Keychain)
         monkeypatch.setattr(shutil, "which", lambda _name: None)
-        assert passwords._of_this_system() is None
+        assert passwords._of_this_system({}) is None
 
-    @pytest.mark.parametrize("platform", ["linux", "win32"])
-    def test_other_systems(self, platform: str, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sys, "platform", platform)
+    def test_linux_without_a_desktop_keyring(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/security")
-        assert passwords._of_this_system() is None
+        assert passwords._of_this_system({}) is None
+
+    def test_windows_has_a_file_under_appdata_sealed_by_dpapi(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        store = passwords._of_this_system({"APPDATA": str(tmp_path)})
+        assert isinstance(store, DpapiFile)
+        assert store._path == tmp_path / "pg-explorer-mcp" / "passwords"
 
 
 # The keychain tool as the tests need it: the same arguments and exit codes, the records in a file next to it.
@@ -482,3 +490,44 @@ def test_a_password_of_a_registry_section_is_not_the_entry_s_and_loses_to_the_st
     assert store is not None
     store.put({("db", "5432", "orders", "billing"): "kept"})
     assert lookup(env, "db", 5432, "orders", "billing") == ("kept", STORE)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows'")
+class TestDpapiFile:
+    def test_nothing_is_stored_yet(self, tmp_path: Path) -> None:
+        assert DpapiFile(tmp_path / "passwords").read() == ""
+
+    def test_what_is_written_is_read_back_by_another_store_over_the_same_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "deep" / "passwords"
+        lines = "db.example:5432:orders:billing:секрет\n*:*:*:billing:st\\:ar\n"
+        DpapiFile(path).write(lines)
+        assert DpapiFile(path).read() == lines
+
+    def test_the_file_holds_nothing_in_the_clear(self, tmp_path: Path) -> None:
+        path = tmp_path / "passwords"
+        DpapiFile(path).write(line_of(LOGIN, "s3cret") + "\n")
+        raw = path.read_bytes()
+        assert not any(word in raw for word in (b"s3cret", b"db.example", b"orders", b"billing"))
+        assert DpapiFile(path).label == f"the file {path}, sealed by DPAPI for this Windows account"
+
+    def test_a_file_that_is_not_ours_is_refused(self, tmp_path: Path) -> None:
+        path = tmp_path / "passwords"
+        path.write_bytes(b"written by someone else")
+        with pytest.raises(PasswordStoreError, match="cannot be read or written"):
+            DpapiFile(path).read()
+
+    def test_the_old_file_stays_as_a_dated_copy_that_opens_the_same_way(self, tmp_path: Path) -> None:
+        path = tmp_path / "passwords"
+        DpapiFile(path).write("one\n")
+        DpapiFile(path).write("two\n")
+        [backup] = tmp_path.glob("passwords.bak-*")
+        assert DpapiFile(backup).read() == "one\n"
+
+    def test_the_store_of_the_system_is_found_again_by_the_next_process(self, tmp_path: Path) -> None:
+        env = {"APPDATA": str(tmp_path)}
+        first = passwords.system(env)
+        assert isinstance(first, DpapiFile)
+        passwords.use(first)
+        passwords.current(env).put({LOGIN: "s3cret"})  # type: ignore[union-attr]
+        passwords.use(passwords.system(env))  # what a server started later decides
+        assert lookup({}, "db.example", 5432, "orders", "billing") == ("s3cret", STORE)

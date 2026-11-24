@@ -159,6 +159,7 @@ with `--schema` the login of a stand ([many stands](#many-stands)).
 | System | Where the system keeps it | What it needs |
 |---|---|---|
 | macOS | the login keychain, record `pg-explorer-mcp` / `passwords` | nothing: the `security` tool is part of macOS |
+| Windows | `%APPDATA%\pg-explorer-mcp\passwords`, sealed by DPAPI for the Windows account | nothing |
 
 A password changed in the store is used by the next connection without a restart. `status` says which
 store is in use and where the password came from. On a system that has none the server keeps no

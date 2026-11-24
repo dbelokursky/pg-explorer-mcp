@@ -60,7 +60,8 @@ TLS-прослойку со своим сертификатом, самому с
 в памяти (`Memory` в `tests/helpers.py`), а сервер, запущенный как процесс, —
 `PG_EXPLORER_MCP_PASSWORD_STORE=off`. Настоящую связку ключей macOS пробует один тест, и только с
 `PG_EXPLORER_MCP_TEST_KEYCHAIN=1` (на Mac; CI ставит переменную в macOS-джобе): он создаёт запись
-`pg-explorer-mcp-test-<pid>` и удаляет её.
+`pg-explorer-mcp-test-<pid>` и удаляет её. Хранилище Windows (DPAPI) пробуют тесты, которые идут только
+на Windows — в её джобах CI.
 
 CI гоняет то же самое, но на PR — сокращённый набор, а на push в `develop` и `main` и ночью на
 `develop` — полный. На PR: линтеры и типы, тесты на Linux и Windows под Python 3.9 и 3.14,
