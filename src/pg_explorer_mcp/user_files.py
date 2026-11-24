@@ -25,17 +25,24 @@ NEW = ".pg-explorer-mcp-new"  # the suffix of a new text while it waits next to 
 _OWNER_ONLY = 0o600
 
 
-def stage(path: Path, text: str) -> Staged:
-    """Write the new text next to the file the path is, readable by its owner only and flushed to disk."""
+def stage(path: Path, text: str | bytes) -> Staged:
+    """Write the new text, or bytes, next to the file the path is: readable by its owner only, flushed to disk."""
     real = path.resolve()  # a link (into a dotfiles repository, say) stays a link to the changed file
     temporary = real.with_name(real.name + NEW)
     real.parent.mkdir(parents=True, exist_ok=True)
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _OWNER_ONLY)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
+        if isinstance(text, str):
+            # Text goes as text, with the line ends of the system, as it always went.
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+        else:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
         if sys.platform != "win32":
             temporary.chmod(_OWNER_ONLY)  # whatever the umask made of the mode given to open
     except OSError:
