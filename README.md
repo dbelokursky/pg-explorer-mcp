@@ -293,7 +293,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-explorer-mcp 0.10.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
+pg-explorer-mcp 0.11.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
@@ -1088,6 +1088,12 @@ the new `pg-explorer-mcp-<version>.zip` from the
 [Releases page](https://github.com/dbelokursky/pg-explorer-mcp/releases), delete the old folder, unpack the new
 one in its place and restart the agent. Run `install.py` again only if the folder's path changed or
 you changed Python, the profile or the language.
+
+**From 0.10.0 and earlier.** Nothing to redo after the update. The server now keeps passwords in the
+[password store](#4-the-password-goes-into-the-password-store) of the system; a `~/.pgpass` that exists still
+works, and `status` warns that it holds the password in clear text. `python3 install.py password --move` carries
+a password over into the store. The import of connections puts passwords there too: where the system has no
+store, an import with passwords is refused.
 
 **From pg-mcp 0.7.0 and earlier.**
 
