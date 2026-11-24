@@ -261,6 +261,9 @@ data = json.loads(state.read_text()) if state.exists() else {}
 if "sleep" in data:
     time.sleep(data["sleep"])
 if args[0] == "find-generic-password":
+    if data.get("locked"):
+        sys.stderr.write("security: SecKeychainSearchCopyNext: User interaction is not allowed.")
+        sys.exit(36)
     record = data.get(args[args.index("-s") + 1] + "/" + args[args.index("-a") + 1])
     if record is None:
         sys.stderr.write("security: SecKeychainSearchCopyNext: The specified item could not be found.")
@@ -326,10 +329,21 @@ class TestKeychain:
         assert "did not answer" in str(caught.value)
         assert "s3cret" not in str(caught.value)
 
+    def test_a_locked_keychain_cannot_be_read_and_the_error_says_why(self, folder: Path) -> None:
+        (folder / "state.json").write_text(json.dumps({"locked": True}), encoding="utf-8")
+        with pytest.raises(PasswordStoreError, match="did not answer: security: SecKeychainSearchCopyNext"):
+            Keychain().read()
+
     def test_another_record_under_our_name_is_refused(self, folder: Path) -> None:
         (folder / "state.json").write_text(
             json.dumps({"pg-explorer-mcp/passwords": "not the server's"}), encoding="utf-8"
         )
+        with pytest.raises(PasswordStoreError, match="another record under pg-explorer-mcp/passwords"):
+            Keychain().read()
+
+    def test_a_record_that_is_not_our_text_is_refused(self, folder: Path) -> None:
+        not_text = base64.b64encode(b"\xff\xfe").decode("ascii")
+        (folder / "state.json").write_text(json.dumps({"pg-explorer-mcp/passwords": not_text}), encoding="utf-8")
         with pytest.raises(PasswordStoreError, match="another record under pg-explorer-mcp/passwords"):
             Keychain().read()
 
