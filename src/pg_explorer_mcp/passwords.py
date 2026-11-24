@@ -199,7 +199,7 @@ class Passwords:
         if not passwords:
             return
         with self._lock:
-            lines = _merged(self._store.read().splitlines(), passwords)
+            lines = merged(self._store.read().splitlines(), passwords)
             self._store.write("\n".join(lines) + ("\n" if lines else ""))
             self._lines, self._read_at, self._problem = lines, time.monotonic(), None
 
@@ -216,7 +216,7 @@ class Passwords:
             return self._lines
 
 
-def _merged(lines: Sequence[str], passwords: Mapping[Login, str]) -> list[str]:
+def merged(lines: Sequence[str], passwords: Mapping[Login, str]) -> list[str]:
     """The lines with these passwords in place of those of the same logins, and a line for each new login."""
     pending = dict(passwords)
     out = []

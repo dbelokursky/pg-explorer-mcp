@@ -8,11 +8,12 @@
     python3 install.py --lang ru  the server and this script speak Russian
     PGDATABASE=sales python3 install.py --name sales  another database, as pg-sales
     python3 install.py import dbeaver            show what DBeaver's connections would bring
-    python3 install.py import dbeaver --write    write the stands registry, the password file, register pg-stands
+    python3 install.py import dbeaver --write    write the stands registry, the passwords into the password store
     python3 install.py import datagrip           show what DataGrip and the other JetBrains IDEs would bring
     python3 install.py import pg-service ~/.pg_service.conf --write
     python3 install.py export dbeaver            show which stand connections DBeaver would get
     python3 install.py export pgadmin --write    write servers.json for pgAdmin to import
+    python3 install.py export pg-service --write --pgpass   and the passwords into ~/.pgpass, in clear, for psql
     python3 install.py password                  put the password of this database into the password store
     python3 install.py password --stand dev7 --schema billing
     python3 install.py password --move           carry the password over from ~/.pgpass
@@ -47,7 +48,7 @@ from pg_explorer_mcp import clients, environment, exports, i18n, imports, passwo
 from pg_explorer_mcp.db import split_hosts
 from pg_explorer_mcp.i18n import t
 from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
-from pg_explorer_mcp.stands import StandError, load_registry
+from pg_explorer_mcp.stands import StandError, load_registry, registry_files
 from pg_explorer_mcp.user_files import place, stage
 
 MIN_PYTHON = (3, 9)
@@ -337,6 +338,7 @@ def _commands(commands: Any) -> None:
     exporter.add_argument("tool", choices=list(exports.TOOLS), help=t("export.help.tool"))
     exporter.add_argument("--stands", default="*", help=t("export.help.stands"))
     exporter.add_argument("--write", action="store_true", help=t("export.help.write"))
+    exporter.add_argument("--pgpass", action="store_true", help=t("export.help.pgpass"))
     exporter.add_argument("--workspace", help=t("install.help.workspace"))
     exporter.add_argument("--project", help=t("export.help.project", path=exports.default_project(shell_env())))
     exporter.add_argument("--editor", choices=list(exports.EDITORS), default="vscode", help=t("export.help.editor"))
@@ -361,9 +363,10 @@ def import_command(args: argparse.Namespace, language: str) -> int:
         return 1
     if connections is None:
         return 2
-    registry_file, passfile = imports.default_files(shell_env())
+    registry_file = registry_files(shell_env())[0]
+    store = passwords.current(shell_env())  # None where the system has no password store (ADR 0012)
     result = imports.plan(connections, pattern)
-    for line in imports.preview(result, registry_file, passfile):
+    for line in imports.preview(result, registry_file, store):
         print(line)
     if not result.targets:
         print(t("import.nothing"))
@@ -372,7 +375,7 @@ def import_command(args: argparse.Namespace, language: str) -> int:
         print(t("import.dry_run"))
         return 0
     try:
-        written = imports.write(result, registry_file, passfile, prune=args.prune)
+        written = imports.write(result, registry_file, store, prune=args.prune)
     except imports.ImportRefusedError as exc:
         print(exc)
         return 1
@@ -475,11 +478,14 @@ def _logins(args: argparse.Namespace, env: dict[str, str]) -> list[passwords.Log
     Empty when nothing names a database; StandError when the stand or the schema is not in the registry.
     """
     if args.stand:
-        registry = load_registry(env)
+        # A stand was named: the registry is read whatever PG_EXPLORER_MCP_STANDS says, which is the agent's
+        # setting and need not be in the shell of the user who types this command.
+        registry = load_registry(env, patterns=["*"])
         if registry is None:
             raise StandError(t("stands.unknown", stand=args.stand, stands=t("error.none")))
-        target = registry.target(registry.stand(args.stand), args.schema)
-        return [(host, str(port), target.database, target.login) for host, port in target.endpoints()]
+        target = registry.target(registry.stand(args.stand), args.schema, args.database)
+        database = target.options.get("dbname", target.database)  # what the server of that section connects to
+        return [(host, str(port), database, target.login) for host, port in target.endpoints()]
     user = args.user or env.get("PGUSER") or getpass.getuser()
     database = args.database or env.get("PGDATABASE") or user
     if not (args.host or env.get("PGHOST")):
@@ -583,7 +589,52 @@ def export_command(args: argparse.Namespace) -> int:
     if not args.write:
         print(t("export.dry_run"))
         return 0
-    return _write_export(export)
+    return _write_export(export) or (_write_pgpass(items) if args.pgpass else 0)
+
+
+def _write_pgpass(items: list[exports.Connection]) -> int:
+    """The passwords of these connections, out of the password store and into the libpq password file.
+
+    In clear, for psql, which reads no other store; only because --pgpass asked for it (ADR 0012).
+
+    A line of another login stays; a line of the same login is replaced; the old file is a dated copy.
+    """
+    env = shell_env()
+    store = passwords.current(env)
+    if store is None:
+        print(t("install.no_store"))
+        return 1
+    found: dict[passwords.Login, str] = {}
+    missing = 0
+    for item in items:
+        for host, port in item.hosts:
+            password = store.lookup(host, port, item.dbname, item.user)
+            if password is None:
+                missing += 1
+            else:
+                found[(host, str(port), item.dbname, item.user)] = password
+    passfile = Path(passwords.pgpass_path(env))
+    if not found:
+        print(t("export.pgpass_nothing", path=passfile, missing=missing))
+        return 1
+    try:
+        existing = passfile.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, NotADirectoryError):
+        existing = []  # no password file yet: the exported logins start one
+    except (OSError, UnicodeDecodeError) as exc:
+        # Counted as empty, every other password of the user would be gone from the new file.
+        print(t("import.unreadable", path=passfile, error=exc))
+        return 1
+    lines = passwords.merged(existing, found)
+    try:
+        backup = place(stage(passfile, "\n".join(lines) + "\n"), owner_only=True)
+    except OSError as exc:
+        print(t("import.cannot_place", path=passfile, error=exc))
+        return 1
+    print(t("export.pgpass_written", path=passfile, count=len(found), missing=missing))
+    if backup is not None:
+        print(t("import.written_backup", path=passfile, backup=backup))
+    return 0
 
 
 def _write_export(export: exports.Export) -> int:

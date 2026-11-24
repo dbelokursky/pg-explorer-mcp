@@ -44,7 +44,8 @@ set of tools, about 5 thousand characters of descriptions in every request, and 
   at all, the server works from the `PG*` variables, as before.
 - A failure of one stand (no network, a wrong password) affects only that stand.
 - The import is a separate command, and the server does not run it. The import writes only its own registry file and
-  appends to `~/.pgpass`, deleting nothing; on any error it writes nothing.
+  appends to `~/.pgpass`, deleting nothing; on any error it writes nothing. Since ADR 0012 the passwords go into
+  the password store of the system, and `~/.pgpass` is not written by the import any more.
 
 ## Import
 
@@ -77,7 +78,8 @@ leaves the connection direct, and it is brought in as usual.
 Writing prepares both files in full, then puts them in place with a dated copy of the old ones; the password file
 is only added to and updated, and the registry is added to or, with `--prune`, replaced; on a failure nothing
 changes, and a registry or password file that cannot be read refuses the import: counted as empty, it would be
-replaced by what the import brings alone. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
+replaced by what the import brings alone. Since ADR 0012 there is one file: the registry is placed first, the
+passwords go into the password store, and when they cannot be kept the registry is taken back. After writing, the `pg-stands` entry is registered with `PG_EXPLORER_MCP_STANDS=*`, and the `pg` entry is left alone.
 When `install.py` is run by hand in a terminal and finds DBeaver, it offers to show the preview; the agent
 does the same with the `/pg:import` command and writes only after the user confirms.
 

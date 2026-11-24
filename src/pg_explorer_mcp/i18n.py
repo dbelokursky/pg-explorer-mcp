@@ -623,13 +623,18 @@ EN: dict[str, str] = {
         "for datagrip: a JetBrains project to read as well (always read: the global data sources of the IDEs "
         "and DataGrip's projects in ~/DataGripProjects)"
     ),
-    "install.help.write": "write the registry and the password file and register pg-stands; without it, only show",
+    "install.help.write": (
+        "write the registry, keep the passwords in the password store and register pg-stands; without it, only show"
+    ),
     "install.help.password": (
         "put a password into the password store: for this database, or with --stand and --schema for a stand's login"
     ),
     "install.help.host": "the database host; PGHOST of the shell when left out",
     "install.help.port": "the port; PGPORT of the shell when left out",
-    "install.help.database": "the database; PGDATABASE of the shell when left out",
+    "install.help.database": (
+        "the database; PGDATABASE of the shell when left out; with --stand, the database of the schema when "
+        "its name repeats"
+    ),
     "install.help.user": "the role; PGUSER of the shell when left out",
     "install.help.stand": "a stand of the registry: the password is for the login of its --schema there",
     "install.help.schema": "the schema of the stand whose login the password is for",
@@ -677,8 +682,16 @@ EN: dict[str, str] = {
     "import.reading": "reading {source}",
     "import.preview_header": "{count} connections go into {registry}:",
     "import.preview_named": "stand from the connection name",
-    "import.preview_no_password": "no saved password: add a line to the password file",
-    "import.preview_passwords": "{count} passwords go into {passfile}",
+    "import.preview_no_password": "no saved password: put it in with `{command}`",
+    "import.preview_passwords": "{count} passwords go into the password store ({where})",
+    "import.passwords_stored": "{count} passwords are in the password store ({store})",
+    "import.no_store": (
+        "this system has no password store the server can use, so the passwords of the import would go "
+        "nowhere: nothing was written"
+    ),
+    "import.passwords_not_stored": (
+        "the passwords did not go into the password store ({error}), and the registry is as it was: nothing was written"
+    ),
     "import.preview_skipped": "left out: {count}",
     "import.nothing": "nothing to import",
     "import.dry_run": (
@@ -737,27 +750,42 @@ EN: dict[str, str] = {
     "export.nothing_new": "{tool} has all of these connections already; nothing to write",
     "export.dry_run": "This was a preview, nothing was written. Add --write to write the files.",
     "export.cannot_place": "cannot replace {path}: {error}. It is left as it was.",
+    "export.help.pgpass": (
+        "also write the passwords of these connections into the libpq password file, in clear: for psql, "
+        "which reads no other store"
+    ),
+    "export.pgpass_written": (
+        "{count} passwords are in {path}, in clear, for psql and pgAdmin; {missing} of these connections had "
+        "none in the password store."
+    ),
+    "export.pgpass_nothing": (
+        "no password of these connections is in the password store: {path} is left as it is ({missing} connections)"
+    ),
     "export.next_dbeaver": (
-        "Restart DBeaver: the connections are in a folder per stand and log in with the password file."
+        "Restart DBeaver: the connections are in a folder per stand. DBeaver asks for each password once and "
+        "keeps it itself: the password store of the server is not DBeaver's to read."
     ),
     "export.next_datagrip": (
         "Open the folder {path} as a project in DataGrip or another JetBrains IDE (File | Open), or reopen the "
-        "project if it is open: the data sources are grouped by stand and log in with the password file."
+        "project if it is open: the data sources are grouped by stand. The IDE asks for each password once and "
+        "keeps it itself: the password store of the server is not the IDE's to read."
     ),
     "export.next_pgadmin": (
-        "In pgAdmin: Tools | Import/Export Servers, Import, the file {path}. The servers are grouped by stand "
-        "and read passwords from {passfile}."
+        "In pgAdmin: Tools | Import/Export Servers, Import, the file {path}. The servers are grouped by stand. "
+        "pgAdmin asks for each password once; `install.py export pgadmin --write --pgpass` writes them into "
+        "{passfile}, in clear, where psql reads them too."
     ),
     "export.next_pg_service": (
-        'Connect with psql "service={service}" or pgcli "service={service}": the schema comes first on the search path.'
+        'Connect with psql "service={service}" or pgcli "service={service}": the schema comes first on the search '
+        "path. psql asks for each password, unless `--pgpass` wrote them into the password file."
     ),
     "export.next_vscode_pgsql": (
         "Reload the editor window: the connections are in the PostgreSQL view, a group per stand. The extension "
         "cannot read the password file: it asks for each password once and keeps it in the system keychain."
     ),
     "export.next_sqltools": (
-        "Reload the editor window: the connections are in SQLTools, a group per stand, and log in with the "
-        "password file."
+        "Reload the editor window: the connections are in SQLTools, a group per stand. SQLTools asks for each "
+        "password once and keeps it in its settings."
     ),
     "export.offer": "Found {tools}. Add the stand connections there ({count})? [y/N] ",
     "export.offer_hint": "To add them later:",
@@ -1339,13 +1367,15 @@ RU: dict[str, str] = {
         "для datagrip: ещё и этот проект JetBrains (читаются всегда: глобальные источники данных IDE "
         "и проекты DataGrip в ~/DataGripProjects)"
     ),
-    "install.help.write": "записать реестр и файл паролей и зарегистрировать pg-stands; без него — только показать",
+    "install.help.write": (
+        "записать реестр, положить пароли в хранилище паролей и зарегистрировать pg-stands; без него — только показать"
+    ),
     "install.help.password": (
         "положить пароль в хранилище паролей: для этой базы или, с --stand и --schema, для входа схемы стенда"
     ),
     "install.help.host": "хост базы; без него — PGHOST из оболочки",
     "install.help.port": "порт; без него — PGPORT из оболочки",
-    "install.help.database": "база; без неё — PGDATABASE из оболочки",
+    "install.help.database": "база; без неё — PGDATABASE из оболочки; с --stand — база схемы, если её имя повторяется",
     "install.help.user": "роль; без неё — PGUSER из оболочки",
     "install.help.stand": "стенд из реестра: пароль для входа его схемы (--schema) на этом стенде",
     "install.help.schema": "схема стенда, для входа которой предназначен пароль",
@@ -1390,8 +1420,16 @@ RU: dict[str, str] = {
     "import.reading": "читаю {source}",
     "import.preview_header": "в {registry} попадут подключения: {count}",
     "import.preview_named": "стенд из имени подключения",
-    "import.preview_no_password": "пароль не сохранён: добавьте строку в файл паролей",
-    "import.preview_passwords": "в {passfile} попадут пароли: {count}",
+    "import.preview_no_password": "пароль не сохранён: положите его командой `{command}`",
+    "import.preview_passwords": "в хранилище паролей ({where}) попадут пароли: {count}",
+    "import.passwords_stored": "паролей в хранилище паролей ({store}): {count}",
+    "import.no_store": (
+        "на этой системе нет хранилища паролей, которое сервер умеет использовать: пароли импорта было бы "
+        "некуда положить, ничего не записано"
+    ),
+    "import.passwords_not_stored": (
+        "пароли не попали в хранилище паролей ({error}), реестр остался прежним: ничего не записано"
+    ),
     "import.preview_skipped": "пропущено: {count}",
     "import.nothing": "импортировать нечего",
     "import.dry_run": (
@@ -1451,27 +1489,42 @@ RU: dict[str, str] = {
     "export.nothing_new": "в {tool} все эти подключения уже есть, записывать нечего",
     "export.dry_run": "Это был предпросмотр, ничего не записано. Добавьте --write, чтобы записать файлы.",
     "export.cannot_place": "не удалось заменить {path}: {error}. Файл остался прежним.",
+    "export.help.pgpass": (
+        "заодно записать пароли этих подключений в файл паролей libpq открытым текстом — ради psql, "
+        "который другого хранилища не читает"
+    ),
+    "export.pgpass_written": (
+        "паролей в {path} открытым текстом, для psql и pgAdmin: {count}; у {missing} подключений пароля в "
+        "хранилище не было."
+    ),
+    "export.pgpass_nothing": (
+        "в хранилище паролей нет пароля ни одного из этих подключений: {path} оставлен как был (подключений: {missing})"
+    ),
     "export.next_dbeaver": (
-        "Перезапустите DBeaver: подключения лежат в папках по стендам, пароли берутся из файла паролей."
+        "Перезапустите DBeaver: подключения лежат в папках по стендам. DBeaver спросит каждый пароль один раз "
+        "и сохранит его сам: хранилище паролей сервера DBeaver не читает."
     ),
     "export.next_datagrip": (
         "Откройте папку {path} как проект в DataGrip или другой IDE JetBrains (File | Open), а если проект уже "
-        "открыт — откройте его заново: источники данных сгруппированы по стендам, пароли берутся из файла паролей."
+        "открыт — откройте его заново: источники данных сгруппированы по стендам. IDE спросит каждый пароль "
+        "один раз и сохранит его сама: хранилище паролей сервера IDE не читает."
     ),
     "export.next_pgadmin": (
-        "В pgAdmin: Tools | Import/Export Servers, Import, файл {path}. Серверы сгруппированы по стендам "
-        "и берут пароли из {passfile}."
+        "В pgAdmin: Tools | Import/Export Servers, Import, файл {path}. Серверы сгруппированы по стендам. "
+        "pgAdmin спросит каждый пароль один раз; `install.py export pgadmin --write --pgpass` запишет их "
+        "в {passfile} открытым текстом — оттуда их берёт и psql."
     ),
     "export.next_pg_service": (
-        'Подключайтесь так: psql "service={service}" или pgcli "service={service}"; схема идёт первой в search_path.'
+        'Подключайтесь так: psql "service={service}" или pgcli "service={service}"; схема идёт первой в '
+        "search_path. psql спросит каждый пароль, если `--pgpass` не записал их в файл паролей."
     ),
     "export.next_vscode_pgsql": (
         "Перезагрузите окно редактора: подключения появятся в панели PostgreSQL, по группе на стенд. Расширение "
         "не умеет читать файл паролей: оно спросит каждый пароль один раз и сохранит его в системной связке ключей."
     ),
     "export.next_sqltools": (
-        "Перезагрузите окно редактора: подключения появятся в SQLTools, по группе на стенд, пароли берутся "
-        "из файла паролей."
+        "Перезагрузите окно редактора: подключения появятся в SQLTools, по группе на стенд. SQLTools спросит "
+        "каждый пароль один раз и сохранит его в настройках."
     ),
     "export.offer": "Найдены {tools}. Добавить туда подключения к стендам ({count})? [y/N] ",
     "export.offer_hint": "Чтобы добавить их позже, выполните:",

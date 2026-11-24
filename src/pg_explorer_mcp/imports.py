@@ -17,13 +17,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote_plus
 
+from . import passwords
 from .aes import decrypt_cbc
 from .clients import app_data
 from .db import split_hosts
 from .i18n import t
-from .passwords import pgpass_path
-from .stands import Target, export_uuid, exported_sections, parse_service_file, registry_files
-from .user_files import Staged, discard, place, stage
+from .stands import Target, export_uuid, exported_sections, parse_service_file
+from .user_files import discard, place, stage, unplace
 
 # DBeaver encrypts credentials-config.json with this key unless the user turned on its secure storage.
 DBEAVER_KEY = bytes.fromhex("babb4a9f774ab853c96c2d653dfe544a")
@@ -468,51 +468,67 @@ def _options(connection: Connection) -> dict[str, str]:
 # --- the preview ---------------------------------------------------------------------------------
 
 
-def preview(result: Plan, registry_file: Path, passfile: Path) -> list[str]:
+def preview(result: Plan, registry_file: Path, store: passwords.Passwords | None) -> list[str]:
     """Lines for the screen: what goes where, without a single password."""
     lines = [t("import.preview_header", count=len(result.targets), registry=registry_file)]
     for target in result.targets:
         notes = [t("import.preview_named")] if target in result.named else []
         if target in result.without_password:
-            notes.append(t("import.preview_no_password"))
+            notes.append(t("import.preview_no_password", command=_password_command(result.targets, target)))
         lines.append(f"  [{target.name}]  {target.address}" + "".join(f"  {note}" for note in notes))
-    lines.append(t("import.preview_passwords", count=len(result.passwords), passfile=passfile))
+    if result.passwords:
+        where = store.label if store is not None else t("error.none")
+        lines.append(t("import.preview_passwords", count=len(result.passwords), where=where))
     if result.skipped:
         lines.append(t("import.preview_skipped", count=len(result.skipped)))
         lines.extend(f"  {connection.source}: {connection.name}  {reason}" for connection, reason in result.skipped)
     return lines
 
 
+def _password_command(targets: Sequence[Target], target: Target) -> str:
+    """The command that puts the password of this login into the store, by stand and schema.
+
+    With --database when another database of the stand has a section of the same schema name.
+    """
+    command = f"python3 install.py password --stand {target.stand} --schema {target.schema}"
+    same_schema = {other.database for other in targets if other.stand == target.stand and other.schema == target.schema}
+    return f"{command} --database {target.database}" if len(same_schema) > 1 else command
+
+
 # --- writing -------------------------------------------------------------------------------------
 
 
-def write(result: Plan, registry_file: Path, passfile: Path, *, prune: bool = False) -> list[str]:
-    """Put the registry and the password file in place; both are prepared in full before either is.
+def write(result: Plan, registry_file: Path, store: passwords.Passwords | None, *, prune: bool = False) -> list[str]:
+    """Put the registry in its place and the passwords into the password store; on a failure nothing changes.
 
-    Both are install.py's own and may hold passwords: what is written is readable by its owner alone.
+    The registry is prepared in full before anything is placed, and placed first: when the passwords
+    cannot be kept, it is taken back. Where the system has no password store, an import that has
+    passwords is refused: they would go nowhere (ADR 0012).
     """
     if not result.targets:
         raise ImportRefusedError(t("import.nothing"))
+    if result.passwords and store is None:
+        raise ImportRefusedError(t("import.no_store"))
     registry_text = _registry_text(registry_file, result.targets, prune=prune)
-    passfile_text = _passfile_text(passfile, result.passwords)
-    prepared = ((registry_file, registry_text), (passfile, passfile_text))
-    staged: list[Staged] = []
     try:
-        for path, text in prepared:
-            staged.append(stage(path, text))
+        staged = stage(registry_file, registry_text)
     except OSError as exc:
-        discard(staged)
         raise ImportRefusedError(t("import.cannot_write", path=exc.filename or registry_file, error=exc)) from exc
-    lines: list[str] = []
-    for number, (path, real, temporary) in enumerate(staged):
+    try:
+        backup = place(staged, owner_only=True)
+    except OSError as exc:
+        discard([staged])
+        raise ImportRefusedError(t("import.cannot_place", path=registry_file, error=exc)) from exc
+    lines = [t("import.written", path=registry_file)]
+    if backup is not None:
+        lines = [t("import.written_backup", path=registry_file, backup=backup)]
+    if result.passwords and store is not None:
         try:
-            backup = place((path, real, temporary), owner_only=True)
-        except OSError as exc:
-            discard(staged[number:])
-            raise ImportRefusedError("\n".join([*lines, t("import.cannot_place", path=path, error=exc)])) from exc
-        lines.append(
-            t("import.written", path=path) if backup is None else t("import.written_backup", path=path, backup=backup)
-        )
+            store.put(result.passwords)
+        except passwords.PasswordStoreError as exc:
+            unplace(staged, backup)  # a registry whose stands have no passwords would mislead: back as it was
+            raise ImportRefusedError(t("import.passwords_not_stored", error=exc)) from exc
+        lines.append(t("import.passwords_stored", count=len(result.passwords), store=store.label))
     return lines
 
 
@@ -531,7 +547,7 @@ def _registry_text(registry_file: Path, targets: Sequence[Target], *, prune: boo
     when = datetime.date.today().isoformat()
     out = [
         f"# Stands of pg-explorer-mcp, written by install.py import on {when}. Sections are stand.database.schema;",
-        "# the server reads this file when it starts. Passwords belong in the password file.",
+        "# the server reads this file when it starts. Passwords belong in the password store.",
         "",
     ]
     for name in sorted(sections, key=_natural_key):
@@ -543,61 +559,3 @@ def _registry_text(registry_file: Path, targets: Sequence[Target], *, prune: boo
 
 def _natural_key(name: str) -> list[object]:
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name)]
-
-
-def _passfile_text(passfile: Path, passwords: Mapping[tuple[str, str, str, str], str]) -> str:
-    """The password file with these logins added or updated and everything else kept as it was."""
-    try:
-        existing = passfile.read_text(encoding="utf-8").splitlines()
-    except (FileNotFoundError, NotADirectoryError):
-        existing = []  # no password file yet, not even its folder: the imported logins start one
-    except (OSError, UnicodeDecodeError) as exc:
-        # Counted as empty, every other password of the user would be gone from the new file.
-        raise ImportRefusedError(t("import.unreadable", path=passfile, error=exc)) from exc
-    pending = dict(passwords)
-    out = []
-    for line in existing:
-        key = _passfile_key(line)
-        if key in pending:
-            out.append(_passfile_line(key, pending.pop(key)))
-        else:
-            out.append(line)
-    out.extend(_passfile_line(key, password) for key, password in pending.items())
-    return "\n".join(out) + ("\n" if out else "")
-
-
-def _passfile_key(line: str) -> tuple[str, str, str, str] | None:
-    if not line.strip() or line.lstrip().startswith("#"):
-        return None
-    fields = _split(line)
-    return (fields[0], fields[1], fields[2], fields[3]) if len(fields) == 5 else None
-
-
-def _split(line: str) -> list[str]:
-    fields, current, escaped = [], "", False
-    for char in line:
-        if escaped:
-            current += char
-            escaped = False
-        elif char == "\\":
-            escaped = True
-        elif char == ":":
-            fields.append(current)
-            current = ""
-        else:
-            current += char
-    fields.append(current)
-    return fields
-
-
-def _passfile_line(key: tuple[str, str, str, str], password: str) -> str:
-    return ":".join(_escape(part) for part in (*key, password))
-
-
-def _escape(part: str) -> str:
-    return part.replace("\\", "\\\\").replace(":", "\\:")
-
-
-def default_files(env: Mapping[str, str]) -> tuple[Path, Path]:
-    """Where the import writes: the server's own stands file and the libpq password file."""
-    return registry_files(env)[0], Path(pgpass_path(env))
