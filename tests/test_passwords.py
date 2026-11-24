@@ -25,6 +25,7 @@ from pg_explorer_mcp.passwords import (
     Keychain,
     Passwords,
     PasswordStoreError,
+    SecretService,
     line_of,
     login_of,
     lookup,
@@ -202,6 +203,11 @@ class TestTheStore:
         assert store.lookup("h", 5432, "d", "u") is None
         assert (store.problem(), locked.tried) == ("locked", 1)  # asked once, not on every login
 
+    def test_nothing_to_put_writes_nothing_and_creates_no_record(self) -> None:
+        memory = Memory()
+        Passwords(memory).put({})
+        assert (memory.text, memory.readings) == ("", 0)
+
     def test_a_store_that_cannot_be_written_keeps_what_was_read(self) -> None:
         class Sealed(Memory):
             def write(self, _text: str) -> None:
@@ -239,9 +245,17 @@ class TestWhichStore:
         monkeypatch.setattr(shutil, "which", lambda _name: None)
         assert passwords._of_this_system({}) is None
 
+    def test_linux_has_the_keyring_of_the_desktop_when_its_tool_is_there(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/secret-tool" if name == "secret-tool" else None)
+        store = passwords._of_this_system({})
+        assert isinstance(store, SecretService)
+        assert store._tool == "/usr/bin/secret-tool"
+
     def test_linux_without_a_desktop_keyring(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/security")
+        # The keychain tool of macOS found under a Linux name: no keyring tool, no store.
+        monkeypatch.setattr(shutil, "which", lambda name: None if name == "secret-tool" else "/usr/bin/security")
         assert passwords._of_this_system({}) is None
 
     def test_windows_has_a_file_under_appdata_sealed_by_dpapi(
@@ -531,3 +545,202 @@ class TestDpapiFile:
         passwords.current(env).put({LOGIN: "s3cret"})  # type: ignore[union-attr]
         passwords.use(passwords.system(env))  # what a server started later decides
         assert lookup({}, "db.example", 5432, "orders", "billing") == ("s3cret", STORE)
+
+
+# The keyring tool as the tests need it: the same arguments and exit codes, the items in a file next to it,
+# and the same limit of 8 KiB on the secret it reads.
+FAKE_KEYRING = """
+import json
+import sys
+import time
+from pathlib import Path
+
+here = Path(__file__).parent
+state, calls, flags = here / "items.json", here / "calls.log", here / "flags.json"
+args = sys.argv[1:]
+secret = sys.stdin.read()
+items = json.loads(state.read_text()) if state.exists() else {}
+extra = json.loads(flags.read_text()) if flags.exists() else {}
+with calls.open("a") as noted:
+    noted.write(json.dumps([args, secret]) + "\\n")
+if "sleep" in extra:
+    time.sleep(extra["sleep"])
+if extra.get("refuse"):
+    sys.stderr.write("secret-tool: The name org.freedesktop.secrets was not provided by any .service files")
+    sys.exit(1)
+action, rest = args[0], args[1:]
+if action == "store":
+    rest = rest[1:]  # --label=...
+attributes = dict(zip(rest[::2], rest[1::2]))
+key = json.dumps(attributes, sort_keys=True)
+if action == "lookup":
+    if key not in items:
+        sys.exit(1)
+    sys.stdout.write(items[key] + ("\\n" if extra.get("newline") else ""))
+elif action == "store":
+    items[key] = secret.encode("utf-8")[:8192].decode("utf-8", "ignore")  # as the real one: 8 KiB at most
+    state.write_text(json.dumps(items))
+elif action == "clear":
+    def matches(kept):
+        have = json.loads(kept)
+        return all(have.get(name) == value for name, value in attributes.items())
+
+    matching = [kept for kept in items if matches(kept)]
+    for kept in matching:
+        del items[kept]
+    state.write_text(json.dumps(items))
+    sys.exit(0 if matching else 1)
+else:
+    sys.exit(1)
+"""
+
+
+def items_of(folder: Path) -> dict[str, str]:
+    """The items of the fake keyring: their attributes as a sorted JSON key, and the secret."""
+    items = json.loads((folder / "items.json").read_text(encoding="utf-8"))
+    assert isinstance(items, dict)
+    return items
+
+
+def calls_of(folder: Path) -> list[tuple[list[str], str]]:
+    """What the fake keyring was asked, in order: the arguments, and the secret on its input."""
+    asked = []
+    for line in (folder / "calls.log").read_text(encoding="utf-8").splitlines():
+        arguments, secret = json.loads(line)
+        asked.append((arguments, secret))
+    return asked
+
+
+class TestSecretService:
+    """secret-tool reads 8 KiB at most: the record lies in the keyring as parts, under a generation (ADR 0012)."""
+
+    BIG = "".join(line_of((f"host{n}", "5432", "orders", "billing"), f"пароль-{n}") + "\n" for n in range(700))
+
+    @pytest.fixture
+    def folder(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """A keyring whose tool is the script: it answers as secret-tool does, from files in the folder."""
+        script = tmp_path / "secret-tool.py"
+        script.write_text(FAKE_KEYRING, encoding="utf-8")
+        monkeypatch.setattr(passwords, "_keyring_command", lambda _tool, *args: [sys.executable, str(script), *args])
+        return tmp_path
+
+    @pytest.mark.usefixtures("folder")
+    def test_nothing_is_stored_yet(self) -> None:
+        assert SecretService().read() == ""
+
+    @pytest.mark.usefixtures("folder")
+    def test_what_is_written_is_read_back_by_another_store(self) -> None:
+        record = line_of(LOGIN, "секрет") + "\n"
+        SecretService().write(record)
+        assert SecretService().read() == record
+
+    def test_a_long_record_lies_in_parts_the_tool_takes_whole(self, folder: Path) -> None:
+        assert len(self.BIG.encode("utf-8")) > 3 * passwords.PART_BYTES
+        SecretService().write(self.BIG)
+        assert SecretService().read() == self.BIG  # a part too long would come back cut
+        stored = [secret for args, secret in calls_of(folder) if args[0] == "store"]
+        assert max(len(secret) for secret in stored) <= 8192
+        assert sum("part" in args for args, _ in calls_of(folder) if args[0] == "store") >= 3
+
+    def test_the_head_goes_in_last_and_names_the_generation(self, folder: Path) -> None:
+        SecretService().write("one\n")
+        stores = [args for args, _ in calls_of(folder) if args[0] == "store"]
+        assert stores[-1][-2:] == ["kind", "head"]
+        [head] = [secret for args, secret in calls_of(folder) if args[0] == "store" and "head" in args]
+        assert base64.b64decode(head) == b"1"
+
+    def test_a_second_writing_makes_a_new_generation_and_clears_the_old_one(self, folder: Path) -> None:
+        SecretService().write("one\n" * 5000)
+        SecretService().write("two\n")
+        assert SecretService().read() == "two\n"
+        generations = {json.loads(key)["generation"] for key in items_of(folder) if "generation" in json.loads(key)}
+        assert generations == {"2"}
+        heads = [key for key in items_of(folder) if json.loads(key).get("kind") == "head"]
+        assert len(heads) == 1  # the tool updates the item of the same attributes and makes no duplicate
+
+    def test_the_secret_goes_in_on_the_input_and_never_as_an_argument(self, folder: Path) -> None:
+        SecretService().write(line_of(LOGIN, "s3cret") + "\n")
+        for args, _secret in calls_of(folder):
+            assert "s3cret" not in " ".join(args)
+        given = [secret for args, secret in calls_of(folder) if args[0] == "store"]
+        assert any("s3cret" in base64.b64decode(secret).decode("utf-8") for secret in given)
+
+    def test_a_tool_that_ends_the_secret_with_a_line_end_is_understood(self, folder: Path) -> None:
+        (folder / "flags.json").write_text(json.dumps({"newline": True}), encoding="utf-8")
+        SecretService().write("one\ntwo\n")
+        assert SecretService().read() == "one\ntwo\n"
+
+    def test_a_keyring_that_refuses_is_an_error_that_names_no_password(self, folder: Path) -> None:
+        (folder / "flags.json").write_text(json.dumps({"refuse": True}), encoding="utf-8")
+        with pytest.raises(PasswordStoreError) as caught:
+            SecretService().write(line_of(LOGIN, "s3cret") + "\n")
+        assert "did not answer" in str(caught.value)
+        assert "s3cret" not in str(caught.value)
+
+    def test_a_tool_that_does_not_answer_in_time_is_refused(
+        self, folder: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (folder / "flags.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
+        monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
+        with pytest.raises(PasswordStoreError, match="did not answer in time"):
+            SecretService().read()
+
+    def test_a_head_that_is_not_a_number_is_another_record(self, folder: Path) -> None:
+        head = json.dumps({"account": "passwords", "kind": "head", "service": "pg-explorer-mcp"}, sort_keys=True)
+        (folder / "items.json").write_text(json.dumps({head: "not the server's"}), encoding="utf-8")
+        with pytest.raises(PasswordStoreError, match="another record under pg-explorer-mcp/passwords"):
+            SecretService().read()
+
+    def test_a_head_without_its_parts_is_an_error_not_an_empty_record(self, folder: Path) -> None:
+        SecretService().write("one\n")
+        items = {key: value for key, value in items_of(folder).items() if "part" not in json.loads(key)}
+        (folder / "items.json").write_text(json.dumps(items), encoding="utf-8")
+        with pytest.raises(PasswordStoreError, match="names generation 1 and has no parts"):
+            SecretService().read()
+
+    def test_a_record_rewritten_between_its_head_and_its_parts_is_read_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asked: list[tuple[tuple[str, str], ...]] = []
+
+        def item(_self: SecretService, *attributes: tuple[str, str]) -> str | None:
+            asked.append(attributes)
+            if attributes == (("kind", "head"),):
+                return "1" if asked.count(attributes) == 1 else "2"
+            return "kept" if attributes[:2] == (("generation", "2"), ("part", "0")) else None
+
+        monkeypatch.setattr(SecretService, "_item", item)
+        assert SecretService().read() == "kept"
+
+    def test_forget_removes_every_item(self, folder: Path) -> None:
+        SecretService().write(self.BIG)
+        SecretService().forget()
+        assert (items_of(folder), SecretService().read()) == ({}, "")
+
+    @pytest.mark.usefixtures("folder")
+    def test_the_label_names_the_record(self) -> None:
+        label = "the keyring of the desktop, record pg-explorer-mcp/passwords (Secret Service)"
+        assert SecretService().label == label
+
+
+KEYRING_TEST = "PG_EXPLORER_MCP_TEST_KEYRING"
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux") or shutil.which("secret-tool") is None or os.environ.get(KEYRING_TEST) != "1",
+    reason=f"the keyring of a Linux desktop, when {KEYRING_TEST}=1 asks for it and secret-tool is there",
+)
+def test_the_keyring_of_this_linux_keeps_the_record() -> None:
+    """On a record of the test's own, deleted afterwards: the user's own record is never touched."""
+    tool = shutil.which("secret-tool")
+    assert tool is not None
+    account = f"passwords-test-{os.getpid()}"
+    record = "".join(line_of((f"host{n}", "5432", "orders", "billing"), f"пароль-{n}") + "\n" for n in range(700))
+    try:
+        SecretService(tool, passwords.SERVICE, account).write(record)
+        assert SecretService(tool, passwords.SERVICE, account).read() == record
+        SecretService(tool, passwords.SERVICE, account).write("one\n")
+        assert SecretService(tool, passwords.SERVICE, account).read() == "one\n"  # the head updated in place
+    finally:
+        SecretService(tool, passwords.SERVICE, account).forget()
+    assert SecretService(tool, passwords.SERVICE, account).read() == ""

@@ -185,6 +185,31 @@ jobs:
         if: matrix.postgres != '16'
         run: uv run pytest -m integration
 
+  keyring:
+    # The password store of a Linux desktop (ADR 0012): secret-tool is the real one, gnome-keyring plays
+    # the keyring of the desktop on a D-Bus session of its own, unlocked with an empty password. A runner
+    # has neither a desktop nor a session, so everywhere else the test of the real keyring skips.
+    name: password store (Linux keyring)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PG_EXPLORER_MCP_TEST_KEYRING: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          persist-credentials: false  # no push follows
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: sudo apt-get update -q && sudo apt-get install -y -q gnome-keyring libsecret-tools
+      - name: the real secret-tool, against gnome-keyring
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            echo -n "" | gnome-keyring-daemon --unlock --components=secrets
+            uv run pytest tests/test_passwords.py'
+
   pgadmin:
     # What install.py export pgadmin writes, loaded by pgAdmin itself on its first start and read
     # back: every field of the export has to come back as written, under its own server. The Python

@@ -160,10 +160,12 @@ with `--schema` the login of a stand ([many stands](#many-stands)).
 |---|---|---|
 | macOS | the login keychain, record `pg-explorer-mcp` / `passwords` | nothing: the `security` tool is part of macOS |
 | Windows | `%APPDATA%\pg-explorer-mcp\passwords`, sealed by DPAPI for the Windows account | nothing |
+| Linux | the keyring of the desktop (Secret Service: GNOME Keyring, KWallet, KeePassXC), record `pg-explorer-mcp` / `passwords` | the `secret-tool` utility: `sudo apt install libsecret-tools` (Debian, Ubuntu), `sudo dnf install libsecret` (Fedora, RHEL) |
 
 A password changed in the store is used by the next connection without a restart. `status` says which
 store is in use and where the password came from. On a system that has none the server keeps no
-password, and `status` says that too.
+password, and `status` says that too; when the tool of Linux is missing, `install.py password` names
+what to install.
 
 **Those who already have `~/.pgpass`.** The server still reads the libpq password file, and warns in
 `status` that the password is in clear text. `python3 install.py password --move` carries the password

@@ -304,6 +304,17 @@ EN: dict[str, str] = {
         "the password file {path} cannot be read or written: {error}. It is sealed for the Windows "
         "account that made it."
     ),
+    "passwords.secret_service": "the keyring of the desktop, record {service}/{account} (Secret Service)",
+    "passwords.keyring_error": "the keyring did not answer: {error}",
+    "passwords.keyring_silent": (
+        "the keyring tool could not be started or did not answer in time: {error}. The keyring may be "
+        "locked and waiting for the desktop to ask for its password."
+    ),
+    "passwords.keyring_not_ours": "the keyring holds another record under {service}/{account}: {error}",
+    "passwords.keyring_missing": (
+        "the record {service}/{account} in the keyring names generation {generation} and has no parts: "
+        "the passwords have to be put in again"
+    ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
     # Arguments and answers of the tools.
@@ -641,6 +652,10 @@ EN: dict[str, str] = {
         "this system has no password store the server can use: the password can only come from PGPASSWORD"
     ),
     "install.nothing_to_move": "the password file has no line for {login}: nothing to move",
+    "install.secret_tool_missing": (
+        "To keep passwords in the keyring of the desktop, install the secret-tool utility: "
+        "`sudo apt install libsecret-tools` (Debian, Ubuntu), `sudo dnf install libsecret` (Fedora, RHEL)."
+    ),
     "install.password_moved": (
         "{count} line(s) of the password file moved into the password store; the old file is kept as {backup}"
     ),
@@ -985,6 +1000,17 @@ RU: dict[str, str] = {
     "passwords.dpapi_error": (
         "файл паролей {path} не читается или не записывается: {error}. Он запечатан для той учётной "
         "записи Windows, которая его создала."
+    ),
+    "passwords.secret_service": "связка ключей рабочего стола, запись {service}/{account} (Secret Service)",
+    "passwords.keyring_error": "связка ключей не ответила: {error}",
+    "passwords.keyring_silent": (
+        "не удалось запустить утилиту связки ключей или она не ответила вовремя: {error}. Связка может "
+        "быть заперта и ждать, пока рабочий стол спросит её пароль."
+    ),
+    "passwords.keyring_not_ours": "в связке ключей под именем {service}/{account} лежит чужая запись: {error}",
+    "passwords.keyring_missing": (
+        "запись {service}/{account} в связке ключей называет поколение {generation}, а частей у него нет: "
+        "пароли придётся положить заново"
     ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
@@ -1339,6 +1365,10 @@ RU: dict[str, str] = {
         "пароль может прийти только из PGPASSWORD"
     ),
     "install.nothing_to_move": "в файле паролей нет строки для {login}: переносить нечего",
+    "install.secret_tool_missing": (
+        "Чтобы держать пароли в связке ключей рабочего стола, поставьте утилиту secret-tool: "
+        "`sudo apt install libsecret-tools` (Debian, Ubuntu), `sudo dnf install libsecret` (Fedora, RHEL)."
+    ),
     "install.password_moved": (
         "строк файла паролей перенесено в хранилище паролей: {count}; прежний файл сохранён как {backup}"
     ),

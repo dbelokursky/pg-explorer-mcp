@@ -57,7 +57,9 @@ What bounds the decision:
 - Linux needs `secret-tool`, which is not on every desktop by default (`libsecret-tools` on Debian and
   Ubuntu, `libsecret` on Fedora and RHEL); `install.py password` names it. A server, a container or
   WSL has no keyring: there the server keeps no password.
-- The store of each system is small and its own; they arrive one system at a time.
+- secret-tool reads a secret of 8 KiB at most and cuts what is longer. On Linux the record lies in the
+  keyring as parts of 6000 bytes, under a generation that a head item names; the parts go in first and
+  the head last, so a writing that is interrupted leaves the record of the generation before whole.
 - A password put into the record is used by the next connection, at most 300 seconds later: the
   settings are read again before a session is opened.
 - `install.py export` cannot hand a password to another tool through the password file for those who

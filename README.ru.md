@@ -161,10 +161,12 @@ python3 install.py password        # спрашивает пароль и не �
 |---|---|---|
 | macOS | связка ключей входа, запись `pg-explorer-mcp` / `passwords` | ничего: утилита `security` входит в macOS |
 | Windows | `%APPDATA%\pg-explorer-mcp\passwords`, запечатанный DPAPI для учётной записи Windows | ничего |
+| Linux | связка ключей рабочего стола (Secret Service: GNOME Keyring, KWallet, KeePassXC), запись `pg-explorer-mcp` / `passwords` | утилита `secret-tool`: `sudo apt install libsecret-tools` (Debian, Ubuntu), `sudo dnf install libsecret` (Fedora, RHEL) |
 
 Пароль, изменённый в хранилище, подхватится при следующем подключении без перезапуска. `status`
 говорит, какое хранилище используется и откуда взят пароль. На системе без защищённого хранилища
-сервер паролей не хранит — и `status` об этом тоже говорит.
+сервер паролей не хранит — и `status` об этом тоже говорит; если в Linux нет утилиты, `install.py
+password` говорит, что поставить.
 
 **У кого уже есть `~/.pgpass`.** Сервер по-прежнему читает файл паролей libpq и предупреждает в
 `status`, что пароль лежит открытым текстом. `python3 install.py password --move` переносит пароль
