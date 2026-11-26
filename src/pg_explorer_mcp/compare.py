@@ -11,6 +11,7 @@ how a column's values are made, for a column may be an identity or a generated o
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -58,6 +59,46 @@ WHERE n.nspname = CAST(:schema AS text)
 """
 
 Members = dict[str, str]  # name -> definition, as the catalog states it
+_NAME = r'"(?:[^"]|"")+"|[A-Za-z_][\w$]*'  # an identifier as a server prints it: quoted, or folded to lower case
+_SOURCES = re.compile(r"\b(?:from|join)\b", re.IGNORECASE)
+_FROM_ITEM = re.compile(
+    rf"\bfrom\s+(?:(?:only|lateral)\s+)?(?:{_NAME}\.)?(?P<relation>{_NAME})"
+    rf"(?:\s+(?:as\s+)?(?P<alias>{_NAME}))?",
+    re.IGNORECASE,
+)
+_NOT_AN_ALIAS = frozenset(
+    [
+        "as",
+        "where",
+        "group",
+        "order",
+        "limit",
+        "offset",
+        "having",
+        "union",
+        "except",
+        "intersect",
+        "window",
+        "join",
+        "left",
+        "right",
+        "inner",
+        "outer",
+        "full",
+        "cross",
+        "on",
+        "using",
+        "select",
+        "from",
+        "fetch",
+        "for",
+        "with",
+        "lateral",
+        "only",
+        "tablesample",
+        "natural",
+    ]
+)
 LEAD = 80  # characters of a definition shown before the first place two of them differ
 
 
@@ -112,8 +153,7 @@ def _relations(db: Database, schema: str) -> dict[str, Relation] | None:
             continue  # the schema exists and holds nothing
         relation = relations.setdefault(name, Relation(kind))
         if definition is not None:
-            # On one line: servers print a definition on several, indented, lines.
-            relation.definition = " ".join(definition.split())
+            relation.definition = _one_line(definition)
         if column is not None:
             relation.columns[column] = _column(
                 data_type, not_null=not_null, default=default, identity=identity or "", generated=generated or ""
@@ -123,6 +163,26 @@ def _relations(db: Database, schema: str) -> dict[str, Relation] | None:
     for name, kind, index, definition in db.query(SCHEMA_INDEXES_SQL, schema=schema):
         relations.setdefault(name, Relation(kind)).indexes[index] = definition
     return relations
+
+
+def _one_line(definition: str) -> str:
+    """The definition on one line, the same whichever server printed it.
+
+    Servers print it on several indented lines. They also disagree on naming the relation at a column:
+    PostgreSQL 13 writes docs.id for a view of the one table docs, 16 and 18 write id, and all of them
+    name it when the view joins or nests several relations. Compared as printed, every simple view would
+    differ between a stand on an older server and one on a newer. The name is dropped where it cannot be
+    needed, in a view with a single source; in the others each server's text stands as it is.
+    """
+    text = " ".join(definition.split())
+    if len(_SOURCES.findall(text)) != 1:
+        return text
+    item = _FROM_ITEM.search(text)
+    if item is None:  # a nested query is the one source
+        return text
+    alias = item.group("alias")
+    qualifier = alias if alias is not None and alias.lower() not in _NOT_AN_ALIAS else item.group("relation")
+    return re.sub(rf"(?<![\w\".]){re.escape(qualifier)}\.(?={_NAME})", "", text)
 
 
 def _column(data_type: str, *, not_null: bool, default: str | None, identity: str = "", generated: str = "") -> str:

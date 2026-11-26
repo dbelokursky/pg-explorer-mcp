@@ -992,6 +992,43 @@ class TestCompareSchema:
         monkeypatch.setattr(Database, "query", query)
         assert read_structure(pool, pool.registry.targets[0]).relations == {}
 
+    @pytest.mark.parametrize(
+        ("printed", "one_line"),
+        [
+            (
+                " SELECT docs.id, docs.body\n   FROM docs\n  WHERE docs.body IS NOT NULL; ",
+                "SELECT id, body FROM docs WHERE body IS NOT NULL;",
+            ),  # what PostgreSQL 13.23 prints; 16 and 18 print the same view as on the right
+            (
+                " SELECT id, body\n  FROM docs\n WHERE body IS NOT NULL; ",
+                "SELECT id, body FROM docs WHERE body IS NOT NULL;",
+            ),
+            (
+                " SELECT d.id, d.body\n FROM shop.docs d\n WHERE d.body IS NOT NULL; ",
+                "SELECT id, body FROM shop.docs d WHERE body IS NOT NULL;",
+            ),
+            (' SELECT "Docs".id\n FROM "Docs"\n WHERE "Docs".id > 1; ', 'SELECT id FROM "Docs" WHERE id > 1;'),
+            (
+                " SELECT a.id, b.note\n FROM a JOIN b ON b.a_id = a.id; ",
+                "SELECT a.id, b.note FROM a JOIN b ON b.a_id = a.id;",
+            ),
+            (" SELECT s.id\n FROM (SELECT a.id FROM a) s; ", "SELECT s.id FROM (SELECT a.id FROM a) s;"),
+        ],
+    )
+    def test_the_way_a_server_prints_a_view_is_not_a_difference(
+        self, pool: Pool, monkeypatch: pytest.MonkeyPatch, printed: str, one_line: str
+    ) -> None:
+        """A view of one relation: its relation is not named at the columns, whichever server printed it."""
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            if sql is RELATIONS_SQL:
+                return [("open_docs", "v", printed, "id", "integer", False, None, "", "")]
+            return []
+
+        monkeypatch.setattr(Database, "query", query)
+        definition = read_structure(pool, pool.registry.targets[0]).relations["open_docs"].definition
+        assert definition == one_line
+
 
 def structure(stand: str, **relations: Relation) -> Structure:
     return Structure(Target(stand, "orders", "shop", {"host": "db"}, "stands.conf"), dict(relations))
