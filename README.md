@@ -46,7 +46,7 @@ English or Russian.
 | `list_schemas` | with [many stands](#many-stands): the databases of a stand and their schemas, those the server has logins for or all that a single login reads | all |
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
-| `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
+| `describe_table` | columns with types, `NOT NULL`, defaults and comments, and how an identity or generated column makes its values; keys, tables referencing it, indexes | all |
 | `schema_diagram` | the data model as a Mermaid diagram the agent shows as a picture: the tables of a schema with their keys and foreign keys, or one table with its neighbours | all |
 | `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, what a view selects, columns (identity and generated ones included), constraints, indexes | all |
 | `db_health` | catalog diagnostics: buffers, maintenance, index candidates, sequence headroom and sizes; no monitoring roles | `explore`, `analyst` |

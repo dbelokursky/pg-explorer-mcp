@@ -207,7 +207,7 @@ class ShopAndHr(Database):
         if sql == tools.FIND_RELATION_SQL and params["name"] == "customers":
             return [(1, *self.CUSTOMERS)]
         if sql == tools.COLUMNS_SQL:
-            return [("id", "integer", True, None, None)]
+            return [("id", "integer", True, None, None, "", "")]  # name, type, NOT NULL, default, comment, identity
         return []
 
 
