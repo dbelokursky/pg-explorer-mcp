@@ -18,7 +18,9 @@ import pg8000.exceptions
 import pg8000.native
 import pytest
 
+import install
 from pg_explorer_mcp import i18n
+from pg_explorer_mcp.budget import MIN_BUDGET
 from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
 from pg_explorer_mcp.glossary import Glossary
 from pg_explorer_mcp.queries import SavedQueries
@@ -827,3 +829,35 @@ class TestASchemaTheRoleMayNotEnter:
         tools = by_name(build_tools(locked_out, str(ROOT), profile="analyst"))
         assert lines_of(tools["list_tables"])[0].startswith(f"{LOCKED_SCHEMA}.secrets | table")
         assert "open" in tools["sample_rows"].call({"table": "secrets", "schema": LOCKED_SCHEMA})
+
+
+def test_the_line_about_the_database_survives_an_answer_cut_to_the_smallest_budget(db: Database) -> None:
+    """The smallest budget cuts the answer before its last lines. The line that says the database answers
+    stays: install.py reads it to tell whether the server is ready, and it is what the answer is asked for."""
+    tool = by_name(build_tools(db, str(ROOT), budget=MIN_BUDGET))["status"]
+    answer = tool.call({})
+    assert len(answer) <= MIN_BUDGET
+    assert answer.splitlines()[-1].startswith("…")  # something was cut
+    assert any(line.startswith("database: connected to") for line in answer.splitlines())
+    assert install.ready(answer)
+
+
+def test_the_line_about_an_unreachable_database_survives_the_cut_too(unreachable_env: dict[str, str]) -> None:
+    tool = by_name(build_tools(Database(unreachable_env), str(ROOT), budget=MIN_BUDGET))["status"]
+    answer = tool.call({})
+    assert any(line.startswith("database: unavailable.") for line in answer.splitlines())
+    assert not install.ready(answer)
+
+
+def test_check_passes_on_a_working_database_whatever_the_answer_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The smallest budget cuts the status answer before its last lines. The line about the database used to
+    go with them, and --check answered 1 for a database that answers."""
+    for key, value in {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("PG_EXPLORER_MCP_MAX_RESPONSE_CHARS", str(MIN_BUDGET))
+    assert install.main(["--check", "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    assert "database: connected to" in out
+    assert out.rstrip().splitlines()[-1].startswith("…")  # the rest of the answer was cut
