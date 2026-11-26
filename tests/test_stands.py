@@ -1329,7 +1329,11 @@ class Session:
 
     def execute_simple(self, sql: str) -> SimpleNamespace:
         self._send(sql)
-        return SimpleNamespace(columns=[{"name": "n"}], rows=self._rows)
+        rows = self._rows
+        if sql.startswith("FETCH"):  # as a cursor: each fetch takes what it asked for of what is left, then nothing
+            asked = int(sql.split()[2])
+            rows, self._rows = self._rows[:asked], self._rows[asked:]
+        return SimpleNamespace(columns=[{"name": "n"}], rows=rows)
 
     def execute_unnamed(self, sql: str) -> SimpleNamespace:
         self._send(sql)
@@ -1426,9 +1430,11 @@ class TestLateStand:
             (self.LATE, "BEGIN"),
             (self.LATE, "DECLARE"),
             (self.LATE, "FETCH"),
+            (self.LATE, "FETCH"),
             (self.LATE, "ROLLBACK"),
             (call, "BEGIN"),
             (call, "DECLARE"),
+            (call, "FETCH"),
             (call, "FETCH"),
             (call, "ROLLBACK"),
         ]
@@ -1477,7 +1483,14 @@ class TestLateStand:
             assert not thread.is_alive()  # its wait for the session ended with its call, not seconds later
         sessions.going.set()
         first.join(5)
-        assert [word for _thread, word in sessions.sent if word != "SET"] == ["BEGIN", "DECLARE", "FETCH", "ROLLBACK"]
+        # A reading is two fetches: one row, then as many as the data left allows (db._fetch)
+        assert [word for _thread, word in sessions.sent if word != "SET"] == [
+            "BEGIN",
+            "DECLARE",
+            "FETCH",
+            "FETCH",
+            "ROLLBACK",
+        ]
 
     def test_two_threads_that_find_no_session_open_one(
         self, monkeypatch: pytest.MonkeyPatch, sessions: Sessions

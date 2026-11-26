@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import getpass
+import json
 import math
 import os
 import socket
@@ -40,6 +41,23 @@ DEFAULT_STATEMENT_TIMEOUT_MS = 5000
 SOCKET_TIMEOUT_S = 30
 STATEMENT_GRACE_S = 5  # a socket outwaits the statement timeout, so PostgreSQL's own error comes first
 CURSOR_NAME = "pg_explorer_mcp_rows"  # the cursor of read_only: one transaction old, so the rename cost nothing
+MIB = 1024 * 1024
+ROWS_BYTES = MIB  # of data read for one answer: beyond it rows are left unread, and the answer says so
+FIRST_ROWS = 1  # the first batch through a cursor: from its weight the size of the next follows
+
+
+@dataclass(frozen=True)
+class Rows:
+    """What one statement returned through a cursor.
+
+    more: rows were left unread. heavy: they were left because of ROWS_BYTES and not because of the limit
+    of rows, which allows more than were read: the rows are large.
+    """
+
+    columns: list[str]
+    rows: list[Sequence[Any]]
+    more: bool
+    heavy: bool = False
 
 
 class DatabaseUnavailableError(Exception):
@@ -291,11 +309,19 @@ class Database:
     def read_only(self, sql: str, max_rows: int, *, cursor: bool) -> tuple[list[str], list[Sequence[Any]], bool]:
         """Run one statement inside a READ ONLY transaction that is always rolled back.
 
-        The text goes to PostgreSQL as is, through the extended protocol, so it can
+        The text goes to PostgreSQL as it is, through the extended protocol, so it can
         hold one statement only, and pg8000 never parses it for :name parameters.
         With cursor=True the rows come through a cursor, never more than max_rows + 1,
         to learn whether more exist. Returns column names, rows and that flag.
         """
+        found = self._read(sql, max_rows, cursor=cursor)
+        return found.columns, found.rows, found.more
+
+    def read_rows(self, sql: str, max_rows: int) -> Rows:
+        """What read_only gives for rows, and whether they were left unread because they are large."""
+        return self._read(sql, max_rows, cursor=True)
+
+    def _read(self, sql: str, max_rows: int, *, cursor: bool) -> Rows:
         with self._turn():
             for attempt in (1, 2):
                 conn = self._connection()
@@ -303,10 +329,11 @@ class Database:
                     conn.execute_simple(transaction_start(self.settings))
                     try:
                         if cursor:
-                            conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
-                            context = conn.execute_simple(f"FETCH FORWARD {int(max_rows) + 1} FROM {CURSOR_NAME}")
+                            columns, rows, more, heavy = _fetch(conn, sql, max_rows)
                         else:
                             context = conn.execute_unnamed(sql)
+                            columns = [str(column["name"]) for column in context.columns or []]
+                            rows, more, heavy = list(context.rows or []), False, False
                     finally:
                         conn.execute_simple("ROLLBACK")
                 except pg8000.exceptions.DatabaseError as exc:
@@ -316,12 +343,10 @@ class Database:
                     if attempt == 2:
                         raise DatabaseUnavailableError(self._lost(exc), host_down=True) from exc
                     continue
-                columns = [str(column["name"]) for column in context.columns or []]
-                rows = list(context.rows or [])
                 returned = rows[:max_rows]
                 if not overdue():  # rows that arrive after the call has answered count for no call
                     self._counters.count(len(returned))
-                return columns, returned, len(rows) > max_rows
+                return Rows(columns, returned, more or len(rows) > max_rows, heavy)
         raise AssertionError("unreachable")
 
     def server_info(self) -> dict[str, str]:
@@ -403,6 +428,53 @@ class Database:
         """
         with contextlib.suppress(ValueError):
             self.settings = Settings.from_env(self._env)
+
+
+def _fetch(
+    conn: pg8000.native.Connection, sql: str, max_rows: int
+) -> tuple[list[str], list[Sequence[Any]], bool, bool]:
+    """Rows through a cursor, a batch at a time, with what tells why the reading stopped.
+
+    The columns, the rows (one past max_rows at most), whether rows were left unread, and whether the
+    limit of data, not the limit of rows, is what stopped the reading.
+
+    A value in an answer is cut to 200 characters, so rows are loaded for nothing: a result of large ones
+    is read only as far as ROWS_BYTES. The first batch is one row: the batch that follows takes as many rows
+    as the data left allows at the weight of those read, so a result of small rows still takes two or three
+    round trips. The first row of a result is read whole, whatever its size.
+    """
+    conn.execute_unnamed(f"DECLARE {CURSOR_NAME} NO SCROLL CURSOR FOR {sql}")
+    columns: list[str] = []
+    rows: list[Sequence[Any]] = []
+    weight = 0
+    heavy = False
+    asked = min(FIRST_ROWS, max_rows + 1)  # one row past the limit only tells that there are more
+    while True:
+        context = conn.execute_simple(f"FETCH FORWARD {asked} FROM {CURSOR_NAME}")
+        columns = columns or [str(column["name"]) for column in context.columns or []]
+        batch = list(context.rows or [])
+        rows.extend(batch)
+        weight += sum(_weight(value) for row in batch for value in row)
+        if len(batch) < asked or len(rows) > max_rows:
+            break  # no rows left, or enough read to know that there are
+        if weight >= ROWS_BYTES:
+            heavy = True
+            break
+        per_row = max(weight / len(rows), 1.0)
+        asked = max(1, min(max_rows + 1 - len(rows), int((ROWS_BYTES - weight) // per_row)))
+    more = len(rows) > max_rows
+    if heavy and not more:
+        more = bool(conn.execute_simple(f"FETCH FORWARD 1 FROM {CURSOR_NAME}").rows)  # is any row left?
+    return columns, rows, more, heavy
+
+
+def _weight(value: Any) -> int:
+    """The bytes a value takes as text, roughly: what tells how much of ROWS_BYTES a row used."""
+    if isinstance(value, (str, bytes, bytearray, memoryview)):
+        return len(value)
+    if isinstance(value, (dict, list)):
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    return 16
 
 
 def _open(settings: Settings, endpoint: Endpoint) -> pg8000.native.Connection:

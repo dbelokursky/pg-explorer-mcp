@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import time
+import tracemalloc
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -861,3 +862,44 @@ def test_check_passes_on_a_working_database_whatever_the_answer_budget(
     out = capsys.readouterr().out
     assert "database: connected to" in out
     assert out.rstrip().splitlines()[-1].startswith("…")  # the rest of the answer was cut
+
+
+HEAVY = "SELECT n, repeat('x', 262144) AS text FROM generate_series(1, 80) AS n"  # 80 values of 256 KiB
+MIB = 1024 * 1024
+
+
+class TestLargeValues:
+    """A value in an answer is cut to 200 characters; the rows were loaded whole all the same, 200 at a time."""
+
+    def test_rows_are_read_a_batch_at_a_time_and_not_far_past_the_limit_of_data(self, db: Database) -> None:
+        """80 values of 256 KiB took 20 MiB of memory for an answer of 8000 characters."""
+        tracemalloc.start()
+        try:
+            names, rows, more = db.read_only(HEAVY, 200, cursor=True)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert (names, more) == (["n", "text"], True)
+        assert 0 < len(rows) <= 8, len(rows)
+        assert all(len(row[1]) == 262144 for row in rows)
+        assert peak < 6 * MIB, peak  # before: about 21 MiB
+
+    def test_the_answer_says_that_rows_were_left_unread_because_they_are_large(self, analyst: dict[str, Tool]) -> None:
+        lines = analyst["run_select"].call({"query": HEAVY}).splitlines()
+        assert lines[0] == "n | text"
+        assert lines[1] == "1 | " + "x" * 199 + "…"  # the value itself is cut, as every long one is
+        assert lines[-1] == (
+            f"({len(lines) - 2} rows); the rest is not read: the rows are large, and at most 1 MiB of data is "
+            "read at once. Select fewer or shorter columns, or narrow the query with WHERE or LIMIT."
+        )
+
+    def test_one_large_row_that_is_the_whole_answer_leaves_nothing_unread(self, analyst: dict[str, Tool]) -> None:
+        lines = analyst["run_select"].call({"query": "SELECT repeat('x', 5242880) AS text"}).splitlines()
+        assert lines[-1] == "(1 row)"
+
+    @pytest.mark.parametrize(("total", "expected"), [(5, (5, False)), (200, (200, False)), (201, (200, True))])
+    def test_small_rows_are_read_to_the_row_limit_as_before(
+        self, db: Database, total: int, expected: tuple[int, bool]
+    ) -> None:
+        _, rows, more = db.read_only(f"SELECT n FROM generate_series(1, {total}) AS n", 200, cursor=True)
+        assert (len(rows), more, rows[0][0], rows[-1][0]) == (*expected, 1, expected[0])

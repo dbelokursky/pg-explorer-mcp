@@ -393,6 +393,10 @@ EN: dict[str, str] = {
     "rows.count.other": "({count} rows)",
     "rows.more.one": "({count} row shown, there are more: narrow the query with WHERE, ORDER BY or LIMIT)",
     "rows.more.other": "({count} rows shown, there are more: narrow the query with WHERE, ORDER BY or LIMIT)",
+    "rows.heavy": (
+        "the rest is not read: the rows are large, and at most {limit} of data is read at once. "
+        "Select fewer or shorter columns, or narrow the query with WHERE or LIMIT."
+    ),
     "plan.more": "... plan longer than {limit} lines",
     "budget.notice": (
         "… answer cut to {budget} characters: {shown} of {total} lines shown. "
@@ -1153,6 +1157,10 @@ RU: dict[str, str] = {
     "rows.more.one": "(показана {count} строка, есть ещё: сузьте запрос через WHERE, ORDER BY или LIMIT)",
     "rows.more.few": "(показаны {count} строки, есть ещё: сузьте запрос через WHERE, ORDER BY или LIMIT)",
     "rows.more.many": "(показано {count} строк, есть ещё: сузьте запрос через WHERE, ORDER BY или LIMIT)",
+    "rows.heavy": (
+        "остальное не прочитано: строки крупные, за раз читается не больше {limit} данных. "
+        "Выберите меньше колонок или более короткие либо сузьте запрос через WHERE или LIMIT."
+    ),
     "plan.more": "... план длиннее {limit} строк",
     "budget.notice": (
         "… ответ обрезан до {budget} символов: показано строк — {shown} из {total}. "
