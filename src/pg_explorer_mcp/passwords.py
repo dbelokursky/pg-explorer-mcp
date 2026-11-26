@@ -235,6 +235,30 @@ def without(lines: Sequence[str], logins: Sequence[Login]) -> list[str]:
     return [line for line in lines if login_of(line) not in set(logins)]
 
 
+# --- the tools of the stores ----------------------------------------------------------------------------
+
+# What a store was doing when its tool failed: the keys of the messages that name the operation.
+READING = "passwords.reading"
+WRITING = "passwords.writing"
+REMOVING = "passwords.removing"
+
+
+def _silent(kind: str, failure: OSError | subprocess.TimeoutExpired, operation: str) -> str:
+    """Why the tool of a store could not do its work, quoting nothing of its exception.
+
+    operation names what the store was doing (READING, WRITING, REMOVING). The text of a TimeoutExpired
+    quotes the whole command, and on macOS the command of a writing carries the record as an argument.
+    Told are the operation and the cause alone.
+    """
+    if isinstance(failure, subprocess.TimeoutExpired):
+        return t(f"passwords.{kind}_timeout", operation=t(operation), seconds=TOOL_TIMEOUT_S)
+    return t(
+        f"passwords.{kind}_unstarted",
+        operation=t(operation),
+        error=failure.strerror or type(failure).__name__,
+    )
+
+
 # --- macOS: the login keychain ---------------------------------------------------------------------
 
 
@@ -275,13 +299,15 @@ class Keychain:
     def write(self, text: str) -> None:
         """Replace the record, or create it; the tool takes the text only as an argument, so base64 on one line."""
         record = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        code, _, err = _security("add-generic-password", "-U", "-s", self._service, "-a", self._account, "-w", record)
+        code, _, err = _security(
+            "add-generic-password", "-U", "-s", self._service, "-a", self._account, "-w", record, operation=WRITING
+        )
         if code != 0:
             raise PasswordStoreError(t("passwords.keychain_error", error=err.strip()))
 
     def forget(self) -> None:
         """Remove the record: the tests leave the keychain as they found it."""
-        _security("delete-generic-password", "-s", self._service, "-a", self._account)
+        _security("delete-generic-password", "-s", self._service, "-a", self._account, operation=REMOVING)
 
 
 TOOL_TIMEOUT_S = 30  # the tool answers in milliseconds; anything longer is a dialog waiting for the user
@@ -292,8 +318,13 @@ def _command(*args: str) -> list[str]:
     return [SECURITY, *args]
 
 
-def _security(*args: str) -> tuple[int, str, str]:
-    """Run the keychain tool as the agent runs the server: no terminal, and no endless waiting."""
+def _security(*args: str, operation: str = READING) -> tuple[int, str, str]:
+    """Run the keychain tool as the agent runs the server: no terminal, and no endless waiting.
+
+    A failure is told without the exception of the tool (_silent): the command of a writing carries the record,
+    and the exception quotes the command. Raised outside the except clause, so that the tool's exception
+    is chained to none of ours.
+    """
     try:
         done = subprocess.run(  # noqa: S603  (the system's own tool, by its full path, with arguments of ours)
             _command(*args),
@@ -304,8 +335,10 @@ def _security(*args: str) -> tuple[int, str, str]:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise PasswordStoreError(t("passwords.keychain_silent", error=exc)) from exc
-    return done.returncode, done.stdout, done.stderr
+        failure = exc
+    else:
+        return done.returncode, done.stdout, done.stderr
+    raise PasswordStoreError(_silent("keychain", failure, operation))
 
 
 # --- Windows: a file sealed by DPAPI -----------------------------------------------------------------
@@ -369,8 +402,11 @@ def _keyring_command(tool: str, *args: str) -> list[str]:
     return [tool, *args]
 
 
-def _secret_tool(tool: str, *args: str, secret: str = "") -> tuple[int, str, str]:
-    """Run the keyring tool as the agent runs the server: the secret on its input, a limited time to answer."""
+def _secret_tool(tool: str, *args: str, secret: str = "", operation: str = READING) -> tuple[int, str, str]:
+    """Run the keyring tool as the agent runs the server: the secret on its input, a limited time to answer.
+
+    A failure is told without the exception of the tool (_silent), which quotes its command.
+    """
     try:
         done = subprocess.run(  # noqa: S603  (the system's own tool, by its full path, with arguments of ours)
             _keyring_command(tool, *args),
@@ -381,8 +417,10 @@ def _secret_tool(tool: str, *args: str, secret: str = "") -> tuple[int, str, str
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise PasswordStoreError(t("passwords.keyring_silent", error=exc)) from exc
-    return done.returncode, done.stdout, done.stderr
+        failure = exc
+    else:
+        return done.returncode, done.stdout, done.stderr
+    raise PasswordStoreError(_silent("keyring", failure, operation))
 
 
 def _pieces(text: str) -> list[str]:
@@ -463,7 +501,7 @@ class SecretService:
 
     def write(self, text: str) -> None:
         """Replace the record: the parts of a new generation first, then the head that names them."""
-        previous = self._item(("kind", "head"))
+        previous = self._item(("kind", "head"), operation=WRITING)
         if previous is not None and not previous.isdigit():
             raise PasswordStoreError(self._not_ours(ValueError(previous)))
         generation = str(int(previous or "0") + 1)
@@ -476,11 +514,11 @@ class SecretService:
 
     def forget(self) -> None:
         """Remove every item of the record: the tests leave the keyring as they found it."""
-        self._clear()
+        self._clear(operation=REMOVING)
 
-    def _item(self, *attributes: Pair) -> str | None:
+    def _item(self, *attributes: Pair, operation: str = READING) -> str | None:
         """The secret of the item with these attributes; None when there is none."""
-        code, out, err = _secret_tool(self._tool, "lookup", *self._arguments(*attributes))
+        code, out, err = _secret_tool(self._tool, "lookup", *self._arguments(*attributes), operation=operation)
         if code == 1 and not err.strip():
             return None  # the utility's own answer to "no such item": it says nothing
         if code != 0:
@@ -490,7 +528,7 @@ class SecretService:
         except (binascii.Error, ValueError) as exc:
             raise PasswordStoreError(self._not_ours(exc)) from exc
 
-    def _store(self, secret: str, *attributes: Pair) -> None:
+    def _store(self, secret: str, *attributes: Pair, operation: str = WRITING) -> None:
         encoded = base64.b64encode(secret.encode("utf-8")).decode("ascii")
         code, _, err = _secret_tool(
             self._tool,
@@ -499,13 +537,14 @@ class SecretService:
             *([f"--collection={self._collection}"] if self._collection else []),
             *self._arguments(*attributes),
             secret=encoded,
+            operation=operation,
         )
         if code != 0:
             raise PasswordStoreError(self._failed(err))
 
-    def _clear(self, *attributes: Pair) -> None:
+    def _clear(self, *attributes: Pair, operation: str = WRITING) -> None:
         """Remove the items with these attributes: nothing to remove is the utility's exit code 1, as is an error."""
-        code, _, err = _secret_tool(self._tool, "clear", *self._arguments(*attributes))
+        code, _, err = _secret_tool(self._tool, "clear", *self._arguments(*attributes), operation=operation)
         if code != 0 and err.strip():
             raise PasswordStoreError(self._failed(err))
 
