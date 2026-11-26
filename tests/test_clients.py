@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pg_explorer_mcp import clients
+from pg_explorer_mcp import clients, user_files
 from pg_explorer_mcp.clients import CLIENTS, ClientConfigError
 
 ENTRY = {
@@ -178,3 +178,42 @@ class TestWrite:
         assert backup is not None
         assert '      - "/new/run.py"\n' in path.read_text(encoding="utf-8")
         assert '      - "/opt/pg-explorer-mcp/run.py"\n' in backup.read_text(encoding="utf-8")
+
+    def test_two_writings_within_a_second_keep_both_copies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both copies used to take the name of the second they were made in: the second wrote over the first."""
+        monkeypatch.setattr(user_files, "_now", lambda: "20261126-120000")
+        path = tmp_path / "mcp.json"
+        path.write_text('{"servers": {"old": {"command": "x"}}}\n', encoding="utf-8")
+        clients.write(CLIENTS["vscode"], path, "pg", ENTRY)
+        clients.write(CLIENTS["vscode"], path, "other", ENTRY)
+        assert sorted(child.name for child in tmp_path.iterdir()) == [
+            "mcp.json",
+            "mcp.json.bak-20261126-120000",
+            "mcp.json.bak-20261126-120000-2",
+        ]
+        first, second = (
+            json.loads((tmp_path / name).read_text(encoding="utf-8"))
+            for name in ("mcp.json.bak-20261126-120000", "mcp.json.bak-20261126-120000-2")
+        )
+        assert (set(first["servers"]), set(second["servers"])) == ({"old"}, {"old", "pg"})
+
+    def test_the_new_text_waits_in_a_file_of_its_own_and_nothing_is_left_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every text used to wait in one file, <name>.tmp: two commands wrote into it one after the other."""
+        waiting: list[str] = []
+        place = user_files.place
+
+        def keeping(staged: tuple[Path, Path, Path]) -> Path | None:
+            waiting.append(staged[2].name)
+            return place(staged)
+
+        monkeypatch.setattr("pg_explorer_mcp.clients.place", keeping)
+        path = tmp_path / "mcp.json"
+        clients.write(CLIENTS["vscode"], path, "pg", ENTRY)
+        clients.write(CLIENTS["vscode"], path, "other", ENTRY)
+        assert len(set(waiting)) == 2
+        assert all(name.startswith("mcp.json.pg-explorer-mcp-new-") for name in waiting)
+        assert not [child for child in tmp_path.iterdir() if child.name.endswith(".tmp")]
