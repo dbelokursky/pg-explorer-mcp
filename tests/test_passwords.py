@@ -390,9 +390,11 @@ class TestKeychain:
         assert "did not answer in time (writing the record, 0.5 s)" in str(caught.value)
         told = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
         assert (caught.value.__cause__, caught.value.__context__) == (None, None)  # the tool's exception is not chained
+        # The values of the run alone: a traceback quotes the lines of the source, the literals of ours included.
         quoted = base64.b64encode((record + "\n").encode("utf-8")).decode("ascii")
-        for secret in ("s3cret", quoted, "add-generic-password", "-w"):
-            assert secret not in told
+        for value in ("s3cret", quoted, str(folder / "security.py"), "timed out after"):
+            assert value not in str(caught.value)
+            assert value not in told
 
     def test_a_tool_that_cannot_be_started_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(passwords, "_command", lambda *_args: [str(tmp_path / "no-such-tool")])
