@@ -22,7 +22,9 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
+import install
 from pg_explorer_mcp import passwords, sqlguard, stand_tools
+from pg_explorer_mcp.budget import MIN_BUDGET
 from pg_explorer_mcp.db import Database, Settings
 from pg_explorer_mcp.querylog import QueryLog
 from pg_explorer_mcp.stand_tools import build_stand_tools
@@ -826,6 +828,15 @@ def test_the_query_log_names_the_stand_schema_and_login(pool: Pool, tmp_path: Pa
         "ok",
         3,
     )
+
+
+def test_the_line_about_the_stands_survives_an_answer_cut_to_the_smallest_budget(pool: Pool) -> None:
+    """install.py reads that line to tell an entry for stands is ready, whatever budget cuts the answer."""
+    tools = by_name(build_stand_tools(pool, str(ROOT), budget=MIN_BUDGET))
+    answer = tools["status"].call({})
+    assert len(answer) <= MIN_BUDGET
+    assert any(line.startswith("stands: ") for line in answer.splitlines())
+    assert install.ready(answer)
 
 
 class TestCompareSchemaBehaviour:
