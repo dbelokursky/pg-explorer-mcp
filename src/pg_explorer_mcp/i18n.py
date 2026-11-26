@@ -320,6 +320,10 @@ EN: dict[str, str] = {
         "the record {service}/{account} in the keyring names generation {generation} and has no parts: "
         "the passwords have to be put in again"
     ),
+    "passwords.keyring_incomplete": (
+        "the record {service}/{account} in the keyring names generation {generation} and has {found} of its "
+        "{count} parts: the passwords have to be put in again"
+    ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} is not one of {choices}; using {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} is not one of {choices}; using {fallback!r}",
     # Arguments and answers of the tools.
@@ -1049,6 +1053,10 @@ RU: dict[str, str] = {
     "passwords.keyring_missing": (
         "запись {service}/{account} в связке ключей называет поколение {generation}, а частей у него нет: "
         "пароли придётся положить заново"
+    ),
+    "passwords.keyring_incomplete": (
+        "запись {service}/{account} в связке ключей называет поколение {generation}, а частей у него {found} "
+        "из {count}: пароли придётся положить заново"
     ),
     "warning.profile": "PG_EXPLORER_MCP_PROFILE={value!r} — нет такого профиля (есть {choices}); включён {fallback!r}",
     "warning.language": "PG_EXPLORER_MCP_LANG={value!r} — нет такого языка (есть {choices}); включён {fallback!r}",
