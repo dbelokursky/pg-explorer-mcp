@@ -31,13 +31,11 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import datetime
 import getpass
 import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -113,7 +111,7 @@ def server_entry(profile: str | None = None, language: str | None = None, name: 
 
 
 def register(settings_path: str | Path, entry: dict[str, Any], name: str = SERVER_NAME) -> None:
-    """Write the entry into the settings file, under its name."""
+    """Write the entry into the settings file, under its name, keeping a dated copy of the old file (user_files)."""
     path = Path(settings_path)
     settings: Any = {}
     if path.exists():
@@ -125,14 +123,10 @@ def register(settings_path: str | Path, entry: dict[str, Any], name: str = SERVE
         if not isinstance(settings, dict) or not isinstance(settings.get("mcpServers", {}), dict):
             snippet = json.dumps({"mcpServers": {name: entry}}, indent=2, ensure_ascii=False)
             sys.exit(t("install.not_json", path=path, snippet=snippet))
-        backup = path.with_name(f"{path.name}.bak-{datetime.datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(path, backup)
-        print(t("install.backup", path=backup))
     settings.setdefault("mcpServers", {})[name] = entry
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    backup = place(stage(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n"))
+    if backup is not None:
+        print(t("install.backup", path=backup))
     print(t("install.registered", name=name, path=path))
 
 
@@ -265,24 +259,31 @@ def old_extension(client: str) -> Path | None:
 
 
 def install_into(key: str, name: str, entry: dict[str, Any]) -> bool:
-    """Register the entry with one client: its file, or the text to paste for a client without one."""
-    client = clients.CLIENTS[key]
-    if key in SETTINGS_FILES:
-        register(Path(SETTINGS_FILES[key]).expanduser(), entry, name)
+    """Register the entry with one client: its file, or the text to paste for a client without one.
+
+    The file is read, merged and written under the lock of user_files, as every writing is: the agent
+    rewrites its settings itself, and another command of ours may.
+    """
+    with _writing() as got_in:
+        if not got_in:
+            return False  # another command is writing: said by _writing, and nothing was registered
+        client = clients.CLIENTS[key]
+        if key in SETTINGS_FILES:
+            register(Path(SETTINGS_FILES[key]).expanduser(), entry, name)
+            return True
+        path = client.path(shell_env(), Path.home(), name)
+        if path is None:
+            show(client, name, entry)
+            return True
+        try:
+            backup = clients.write(client, path, name, entry)
+        except clients.ClientConfigError as exc:
+            print(t("install.not_json", path=path, snippet=exc))
+            return False
+        if backup is not None:
+            print(t("install.backup", path=backup))
+        print(t("install.registered", name=name, path=path))
         return True
-    path = client.path(shell_env(), Path.home(), name)
-    if path is None:
-        show(client, name, entry)
-        return True
-    try:
-        backup = clients.write(client, path, name, entry)
-    except clients.ClientConfigError as exc:
-        print(t("install.not_json", path=path, snippet=exc))
-        return False
-    if backup is not None:
-        print(t("install.backup", path=backup))
-    print(t("install.registered", name=name, path=path))
-    return True
 
 
 def show(client: clients.Client, name: str, entry: dict[str, Any]) -> None:

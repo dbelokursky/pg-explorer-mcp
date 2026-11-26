@@ -1164,3 +1164,94 @@ def test_export_write_holds_the_lock_from_the_reading_to_the_writing_and_a_previ
     held.clear()
     assert install.main(["export", "pg-service", "--lang", "en"]) == 0  # a preview writes nothing
     assert held == [False]
+
+
+# --- the settings of the agents and editors: written as every user's file is, under the lock -------------------
+
+
+def test_two_registrations_within_a_second_keep_both_copies(
+    settings_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both copies used to take the name of the second they were made in: the second wrote over the first."""
+    monkeypatch.setattr(user_files, "_now", lambda: "20261126-120000")
+    settings_path.parent.mkdir()
+    settings_path.write_text('{"theme": "dark"}\n', encoding="utf-8")
+    install.register(str(settings_path), ENTRY)
+    install.register(str(settings_path), ENTRY, "pg-sales")
+    assert sorted(child.name for child in settings_path.parent.iterdir()) == [
+        "settings.json",
+        "settings.json.bak-20261126-120000",
+        "settings.json.bak-20261126-120000-2",
+    ]
+    first, second = (
+        read(settings_path.parent / name)
+        for name in ("settings.json.bak-20261126-120000", "settings.json.bak-20261126-120000-2")
+    )
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    assert (first, set(second["mcpServers"])) == ({"theme": "dark"}, {"pg"})
+
+
+def test_registering_with_a_client_holds_the_lock_while_its_settings_are_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
+) -> None:
+    """The agent rewrites its settings itself, and another command of ours may: one at a time over the file."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    register = install.register
+    held: list[bool] = []
+
+    def registering(path: str | Path, entry: dict[str, object], name: str = install.SERVER_NAME) -> None:
+        held.append(lock_is_held_by_the_command())
+        register(path, entry, name)
+
+    monkeypatch.setattr(install, "register", registering)
+    assert install.install_into("gigacode", "pg", ENTRY) is True
+    assert held == [True]
+    assert not lock_is_held_by_the_command()
+    settings = read(tmp_path / ".gigacode" / "settings.json")
+    assert isinstance(settings, dict)
+    assert set(settings["mcpServers"]) == {"pg"}
+
+
+def test_registering_with_an_editor_holds_the_lock_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    (clients.app_data(os.environ, Path.home()) / "Code" / "User").mkdir(parents=True)
+    write = clients.write
+    held: list[bool] = []
+
+    def writing(*args: object, **options: object) -> Path | None:
+        held.append(lock_is_held_by_the_command())
+        return write(*args, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(clients, "write", writing)
+    assert install.install_into("vscode", "pg", {**ENTRY, "env": {}}) is True
+    assert held == [True]
+    assert not lock_is_held_by_the_command()
+
+
+def test_a_command_that_cannot_get_the_lock_registers_nothing_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unreachable_env: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setattr(user_files, "LOCK_TIMEOUT_S", 0.3)
+    folder = registry_files(install.shell_env())[0].parent
+    before = subprocess.Popen(  # another command, still writing
+        [sys.executable, "-I", "-c", HOLDER, str(ROOT / "src"), str(folder)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert before.stdout is not None
+        assert before.stdout.readline().strip() == "held"
+        assert install.install_into("gigacode", "pg", ENTRY) is False
+        assert "another command of pg-explorer-mcp is writing these files" in capsys.readouterr().out
+        assert not (tmp_path / ".gigacode" / "settings.json").exists()
+    finally:
+        before.kill()
+        before.wait(timeout=10)
