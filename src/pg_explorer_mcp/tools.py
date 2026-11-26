@@ -980,6 +980,11 @@ def relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> l
 def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:
     """The pg_class row of the one readable relation the arguments name, or a ToolError with a hint."""
     name, schema = split_name(table, schema)
+    carried = split_qualified(name)[0]
+    if carried is not None and schema is not None and not _guessed(db, schema):
+        # The name carries one schema and the argument names another that is no guess: which one was meant
+        # is not for the server to decide.
+        raise ToolError(t("error.schema_conflict", name=name, schema=carried.strip().strip('"'), argument=schema))
     name, matches = _relations_by_name(db, name, schema)
     if not matches and schema is not None and _guessed(db, schema):
         # "public" most often: the name alone finds the table, or the schema it carries, as in shop.orders
@@ -1003,15 +1008,33 @@ def _relations_by_name(db: Database, name: str, schema: str | None) -> tuple[str
 
 
 def split_name(table: Any, schema: Any) -> tuple[str, str | None]:
-    """A table argument into its name and schema: "shop.orders" carries its own schema."""
+    """A table argument into its name and schema: "shop.orders" carries its own schema.
+
+    With the schema argument given too, the name is taken as the bare table when both say the same schema:
+    a model often sends "shop.orders" with schema "shop". When they disagree the name keeps its schema,
+    and the callers say so: it is never read as a table of the schema the argument names.
+    """
     if not isinstance(table, str) or not table.strip():
         raise ToolError(t("error.table"))
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema_search"))
-    name = table.strip()
-    if schema is None and "." in name:
-        schema, name = name.split(".", 1)
-    return name.strip().strip('"'), schema.strip().strip('"') if schema else None
+    whole = table.strip()
+    given = schema.strip().strip('"') if schema else None
+    carried, bare = split_qualified(whole)
+    if carried is not None and (given is None or carried.strip().strip('"').lower() == given.lower()):
+        return bare.strip().strip('"'), carried.strip().strip('"') if given is None else given
+    return whole.strip().strip('"'), given
+
+
+def split_qualified(name: str) -> tuple[str | None, str]:
+    """A name into the schema it carries and the table, or None and the whole name: parted by a dot outside quotes."""
+    quoted = False
+    for place, char in enumerate(name):
+        if char == '"':
+            quoted = not quoted
+        elif char == "." and not quoted:
+            return name[:place], name[place + 1 :]
+    return None, name
 
 
 def _not_found(db: Database, name: str, schema: str | None) -> str:

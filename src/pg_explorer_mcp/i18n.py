@@ -353,6 +353,10 @@ EN: dict[str, str] = {
         "Schemas with readable tables: {visible}."
     ),
     "error.ambiguous": "{name!r} exists in several schemas: {options}. Pass schema to pick one.",
+    "error.schema_conflict": (
+        "{name!r} names schema {schema!r}, and the schema argument says {argument!r}: pass one of them. "
+        "Nothing was looked up."
+    ),
     "error.not_found": "No readable table or view named {name!r}{where}. Call list_tables to see what exists.",
     "error.not_found_similar": "No readable table or view named {name!r}{where}. Similar names: {similar}.",
     "error.no_schema_usage": (
@@ -1107,6 +1111,10 @@ RU: dict[str, str] = {
         "Схемы с таблицами, доступными для чтения: {visible}."
     ),
     "error.ambiguous": "{name!r} есть в нескольких схемах: {options}. Чтобы выбрать одну, передайте schema.",
+    "error.schema_conflict": (
+        "Имя {name!r} называет схему {schema!r}, а аргумент schema — {argument!r}: передайте что-то одно. "
+        "Таблица не искалась."
+    ),
     "error.not_found": (
         "Среди доступных для чтения нет таблицы или представления {name!r}{where}. "
         "Вызовите list_tables, чтобы увидеть, что есть."

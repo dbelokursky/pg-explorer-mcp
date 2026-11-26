@@ -903,3 +903,23 @@ class TestLargeValues:
     ) -> None:
         _, rows, more = db.read_only(f"SELECT n FROM generate_series(1, {total}) AS n", 200, cursor=True)
         assert (len(rows), more, rows[0][0], rows[-1][0]) == (*expected, 1, expected[0])
+
+
+def test_a_name_with_its_schema_and_the_same_schema_argument_is_one_table(tools: dict[str, Tool]) -> None:
+    """A model often sends both: "shop.orders" and schema "shop"."""
+    alone = tools["describe_table"].call({"table": "orders", "schema": SCHEMA})
+    assert tools["describe_table"].call({"table": f"{SCHEMA}.orders", "schema": SCHEMA}) == alone
+    assert tools["sample_rows"].call({"table": f"{SCHEMA}.orders", "schema": SCHEMA}) == tools["sample_rows"].call(
+        {"table": "orders", "schema": SCHEMA}
+    )
+    # The schema argument a model makes up is still no obstacle: "public" holds nothing here
+    assert tools["describe_table"].call({"table": f"{SCHEMA}.orders", "schema": "public"}) == alone
+
+
+def test_a_name_with_another_schema_than_the_argument_says_so(tools: dict[str, Tool]) -> None:
+    with pytest.raises(ToolError) as caught:
+        tools["describe_table"].call({"table": f"{ARCHIVE}.orders", "schema": SCHEMA})
+    assert str(caught.value) == (
+        f"'{ARCHIVE}.orders' names schema '{ARCHIVE}', and the schema argument says '{SCHEMA}': pass one of "
+        "them. Nothing was looked up."
+    )
