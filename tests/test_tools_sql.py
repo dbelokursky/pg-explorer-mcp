@@ -10,6 +10,7 @@ from __future__ import annotations
 from pg_explorer_mcp import tools
 
 PRIVILEGE = "has_table_privilege(c.oid, 'SELECT')"
+USAGE = "has_schema_privilege(n.oid, 'USAGE')"
 REGISTRY_SCHEMAS = "n.nspname = ANY (CAST(:schemas AS text[]))"
 
 PAIRS = (
@@ -20,16 +21,25 @@ PAIRS = (
 
 
 def test_the_single_database_queries_read_what_the_role_may() -> None:
-    for sql in (tools.LIST_TABLES_SQL, tools.FIND_RELATION_SQL, tools.SEARCH_SQL, tools.ALL_SCHEMAS_SQL):
-        assert PRIVILEGE in sql
+    """SELECT on a table is worth nothing without USAGE on its schema: the query for the table ends with 42501."""
+    for name in ("LIST_TABLES_SQL", "FIND_RELATION_SQL", "SEARCH_SQL", "ALL_SCHEMAS_SQL"):
+        sql = getattr(tools, name)
+        assert PRIVILEGE in sql, name
+        assert USAGE in sql, name
+    # The others name the privilege their own way: a relation found by a statement's name, the tables that
+    # refer to one, names similar to one.
+    assert f"{PRIVILEGE} AND {USAGE}" in tools.RELATION_BY_NAME_SQL
+    assert f"has_table_privilege(con.conrelid, 'SELECT') AND {USAGE}" in tools.REFERENCED_BY_SQL
+    assert f"{PRIVILEGE} AND {USAGE}" in tools.SIMILAR_RELATIONS_SQL
 
 
 def test_the_registry_variants_read_only_the_registry_schemas() -> None:
     for _base, registry_variant in PAIRS:
         assert REGISTRY_SCHEMAS in getattr(tools, registry_variant)
         assert PRIVILEGE not in getattr(tools, registry_variant)
+        assert USAGE not in getattr(tools, registry_variant)
 
 
 def test_the_registry_variant_differs_only_in_what_makes_a_relation_readable() -> None:
     for base, registry_variant in PAIRS:
-        assert getattr(tools, registry_variant) == getattr(tools, base).replace(PRIVILEGE, REGISTRY_SCHEMAS)
+        assert getattr(tools, registry_variant) == getattr(tools, base).replace(tools.READABLE, REGISTRY_SCHEMAS)

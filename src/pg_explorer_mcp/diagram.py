@@ -24,14 +24,14 @@ ALL, KEYS, NONE = "all", "keys", "none"
 DETAILS = (ALL, KEYS, NONE)
 COMMENT_LIMIT = 60  # characters of a column comment inside an attribute line
 
-# The tables of a schema the role can read.
+# The tables of a schema the role can read: SELECT is worth nothing without USAGE on the schema.
 SCHEMA_TABLES_SQL = """
 SELECT c.oid, n.nspname, c.relname
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = CAST(:schema AS text)
   AND c.relkind IN ('r', 'p', 'f')
-  AND has_table_privilege(c.oid, 'SELECT')
+  AND has_table_privilege(c.oid, 'SELECT') AND has_schema_privilege(n.oid, 'USAGE')
 ORDER BY c.relname COLLATE "C"
 """
 
