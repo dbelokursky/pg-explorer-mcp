@@ -185,6 +185,7 @@ class FakeConnection:
     def __init__(self) -> None:
         self.statements: list[str] = []
         self._usock = SimpleNamespace(settimeout=lambda _seconds: None)
+        self._left = 1  # the rows the cursor of a reading still holds: one
 
     def run(self, sql: str, **params: object) -> list[object]:
         self.statements.append(sql)
@@ -192,7 +193,12 @@ class FakeConnection:
 
     def execute_simple(self, sql: str) -> SimpleNamespace:
         self.statements.append(sql)
-        return SimpleNamespace(columns=[{"name": "n"}], rows=[[1]])
+        rows = [[1]]
+        if sql.startswith("FETCH"):  # as a cursor: a fetch gives what it asked for of what is left, then nothing
+            taken = min(int(sql.split()[2]), self._left)
+            self._left -= taken
+            rows = [[1]] * taken
+        return SimpleNamespace(columns=[{"name": "n"}], rows=rows)
 
     def execute_unnamed(self, sql: str) -> SimpleNamespace:
         self.statements.append(sql)
@@ -264,10 +270,12 @@ class TestEveryCallIsOneTransaction:
     def test_read_only_sets_the_limits_for_its_transaction_too(self, connection: FakeConnection) -> None:
         db = Database({"PGUSER": "app", "PGPASSFILE": os.devnull, "PG_EXPLORER_MCP_SEARCH_PATH": "shop"})
         assert db.read_only("SELECT 1", 5, cursor=True) == (["n"], [[1]], False)
-        assert connection.statements[-4:] == [
+        # One row first, then as many as the data left allows: one more than the five that may be shown.
+        assert connection.statements[-5:] == [
             'BEGIN TRANSACTION READ ONLY; SET LOCAL statement_timeout = 5000; SET LOCAL search_path = "shop", public',
             "DECLARE pg_explorer_mcp_rows NO SCROLL CURSOR FOR SELECT 1",
-            "FETCH FORWARD 6 FROM pg_explorer_mcp_rows",
+            "FETCH FORWARD 1 FROM pg_explorer_mcp_rows",
+            "FETCH FORWARD 5 FROM pg_explorer_mcp_rows",
             "ROLLBACK",
         ]
 

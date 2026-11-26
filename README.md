@@ -529,6 +529,7 @@ mermaid-cli turns it into an SVG. The reasoning is in [ADR 0008](docs/adr/0008-s
 | Rows from `run_select` | at most 200 |
 | Plan lines | at most 500 |
 | One value in an answer | at most 200 characters |
+| Data read for one answer | at most 1 MiB at a time; the rows beyond it are not read, and the answer says so |
 | A whole tool answer | 8000 characters (`PG_EXPLORER_MCP_MAX_RESPONSE_CHARS`) |
 | One query | 5 seconds (`PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS`) |
 | Open connections of an entry for stands | at most 8 (`PG_EXPLORER_MCP_MAX_CONNECTIONS`) |

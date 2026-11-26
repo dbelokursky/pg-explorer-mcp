@@ -17,8 +17,8 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
 from . import __version__, diagram, health, passwords
-from .budget import DEFAULT_BUDGET, Keep, fit_to_budget, shorten
-from .db import Database, DatabaseUnavailableError, QueryFailedError
+from .budget import DEFAULT_BUDGET, VALUE_LIMIT, Keep, fit_to_budget, shorten
+from .db import MIB, ROWS_BYTES, Database, DatabaseUnavailableError, QueryFailedError, Rows
 from .glossary import Glossary
 from .i18n import current, number, plural, t
 from .queries import SavedQueries
@@ -781,8 +781,8 @@ def sample_rows(db: Database, table: Any, schema: Any, columns: Any, limit: Any)
     # Every name comes from the catalog and is quoted, so this string cannot smuggle SQL in.
     columns_sql = ", ".join(map(_quote_ident, chosen))
     sql = f"SELECT {columns_sql} FROM {_quote_ident(schema_name)}.{_quote_ident(relation)}"  # noqa: S608
-    names, rows, more = db.read_only(sql, count, cursor=True)
-    return [f"{schema_name}.{relation}:", *_format_rows(names, rows, more=more)]
+    found = db.read_rows(sql, count)
+    return [f"{schema_name}.{relation}:", *_shown(found)]
 
 
 def diagram_properties() -> dict[str, Any]:
@@ -881,8 +881,7 @@ def run_select(
     kind = check_read_only(query)
     try:
         if kind in ROW_SOURCES:
-            names, rows, more = db.read_only(query, limit, cursor=True)
-            return _format_rows(names, rows, more=more)
+            return _shown(db.read_rows(query, limit))
         names, rows, more = db.read_only(query, PLAN_LINES_LIMIT, cursor=False)
     except QueryFailedError as exc:
         raise QueryFailedError(query_hint(db, exc, query, schemas)) from exc
@@ -900,10 +899,10 @@ def run_saved_query(db: Database, saved: SavedQueries, name: Any, schemas: Seque
         known = ", ".join(saved.names()) if saved is not None and saved.queries else t("error.none")
         raise ToolError(t("queries.unknown", name=name, known=known))
     try:
-        names, rows, more = db.read_only(query.sql, RUN_SELECT_LIMIT, cursor=True)
+        found = db.read_rows(query.sql, RUN_SELECT_LIMIT)
     except QueryFailedError as exc:
         raise QueryFailedError(query_hint(db, exc, query.sql, schemas)) from exc
-    return [t("queries.answer", name=query.name, description=query.text()), *_format_rows(names, rows, more=more)]
+    return [t("queries.answer", name=query.name, description=query.text()), *_shown(found)]
 
 
 def query_hint(db: Database, error: QueryFailedError, query: Any, schemas: Sequence[str] | None) -> str:
@@ -1125,9 +1124,16 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _format_rows(names: list[str], rows: list[Sequence[Any]], *, more: bool) -> list[str]:
+def _shown(found: Rows) -> list[str]:
+    """The lines of what a statement returned, with what was left unread and why."""
+    return _format_rows(found.columns, found.rows, more=found.more, heavy=found.heavy)
+
+
+def _format_rows(names: list[str], rows: list[Sequence[Any]], *, more: bool, heavy: bool = False) -> list[str]:
     lines = [" | ".join(names)] if names else []
     lines.extend(" | ".join(_cell(value) for value in row) for row in rows)
+    if more and heavy:  # fewer rows than the limit allows: said, for the answer does not show why
+        return [*lines, plural("rows.count", len(rows)) + "; " + t("rows.heavy", limit=f"{ROWS_BYTES // MIB} MiB")]
     lines.append(plural("rows.more" if more else "rows.count", len(rows)))
     return lines
 
@@ -1145,7 +1151,9 @@ def _cell(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (bytes, bytearray, memoryview)):
-        return shorten("\\x" + bytes(value).hex())
+        if len(value) > VALUE_LIMIT // 2:  # hex doubles: the whole value would be spelled out to be cut
+            return "\\x" + bytes(value[: VALUE_LIMIT // 2]).hex()[: VALUE_LIMIT - 3] + "…"
+        return "\\x" + bytes(value).hex()
     if isinstance(value, (dict, list)):
         return shorten(json.dumps(value, ensure_ascii=False, default=str))
     return shorten(str(value))
