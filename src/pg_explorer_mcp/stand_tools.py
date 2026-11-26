@@ -772,6 +772,8 @@ def _ask_stands(
         except Exception as exc:  # whatever stops a thread is the stand's line, not a lost stand
             pool.note(stand, ERROR)
             lines = [stand, f"  {exc}"]
+        finally:
+            pool.done()  # off its connections: one put away can be closed now
         if not overdue():
             answers[stand] = lines
 

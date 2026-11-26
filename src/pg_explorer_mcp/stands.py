@@ -432,6 +432,10 @@ class Pool:
     finishes its statement, and the next call that needs the session waits for it (Database), but
     the thread takes no new connection and changes nothing the next call reports: the login, the
     outcomes and the rows in the query log are that call's own.
+
+    A connection is made from the section as the registry holds it then. The registry is read again
+    at every call: a section changed since gets another connection, and the old one is closed once
+    no thread runs a statement on it.
     """
 
     def __init__(self, registry: Registry, env: Mapping[str, str], limit: int = DEFAULT_MAX_CONNECTIONS) -> None:
@@ -440,20 +444,33 @@ class Pool:
         self._limit = max(1, limit)
         self._open: OrderedDict[str, Database] = OrderedDict()
         self._users: dict[str, set[threading.Thread]] = {}  # name -> the stands' threads that took the connection
+        self._held: list[tuple[Database, set[threading.Thread]]] = []  # put away, a thread of a call still on them
         self._lock = threading.RLock()
         self._counters = Counters()
         self.current: Target | None = None
         self.outcomes: dict[str, str] = {}  # stand -> how a call over several stands ended there
+        self._named = {target.name: target for target in registry.targets}  # the sections as last read, by name
         # The server's password store (ADR 0012), as every Database of the pool will see it.
         self.passwords = passwords.current(env)
         self.passwords_off = passwords.is_off(env)
 
     def database(self, target: Target) -> Database:
-        """The target's connection, opened on first use; the call's own thread makes it the login the log names."""
+        """The target's connection, opened on first use; the call's own thread makes it the login the log names.
+
+        The section is taken as the registry holds it now, whoever asks: a thread of a call that is over
+        still holds the registry as it was. One changed since its connection was made gets another
+        connection, and the old one is put away (closed now, or when the threads on it are over).
+        """
         if overdue():
             raise OverdueError
         with self._lock:
-            database = self._open.pop(target.name, None) or Database(target.env(self._env), counters=self._counters)
+            target = self._named.get(target.name, target)
+            env = target.env(self._env)
+            database = self._open.pop(target.name, None)
+            if database is not None and not database.configured_with(env):
+                self._put_away(target.name, database)
+                database = None
+            database = database or Database(env, counters=self._counters)
             self._open[target.name] = database
             if deadline() is None:  # the call's own thread
                 self.current = target
@@ -461,6 +478,38 @@ class Pool:
             else:  # a thread of a call over several stands, which keeps the connection until it ends
                 self._users.setdefault(target.name, set()).add(threading.current_thread())
         return database
+
+    def done(self) -> None:
+        """The calling thread is over the connections it took: one put away that only it still served is closed now."""
+        thread = threading.current_thread()
+        with self._lock:
+            for users in self._users.values():
+                users.discard(thread)
+            for _database, users in self._held:
+                users.discard(thread)
+            self._sweep()
+
+    def _put_away(self, name: str, database: Database) -> None:
+        """Put away the connection of a section that changed; under the lock.
+
+        Closed at once when no thread runs on it; kept, with the threads that do, until they are over.
+        """
+        users = {user for user in self._users.pop(name, ()) if user.is_alive()}
+        if users:
+            self._held.append((database, users))
+        else:
+            database.close()
+
+    def _sweep(self) -> None:
+        """Close the connections put away whose threads are all over; under the lock."""
+        kept: list[tuple[Database, set[threading.Thread]]] = []
+        for database, users in self._held:
+            alive = {user for user in users if user.is_alive()}
+            if alive:
+                kept.append((database, alive))
+            else:
+                database.close()
+        self._held = kept
 
     def trim(self) -> None:
         """Close the oldest connections beyond the limit, except those a worker thread is still using.
@@ -472,6 +521,7 @@ class Pool:
         database() is handing out is among them.
         """
         with self._lock:
+            self._sweep()
             for name in list(self._open)[: -self._limit]:
                 users = {user for user in self._users.pop(name, ()) if user.is_alive()}
                 if users:
@@ -486,7 +536,7 @@ class Pool:
 
     def open_count(self) -> int:
         """How many connections are open now, held ones included."""
-        return len(self._open)
+        return len(self._open) + len(self._held)
 
     def close(self) -> None:
         """Close every open connection; the pool is done."""
@@ -494,6 +544,9 @@ class Pool:
             for database in self._open.values():
                 database.close()
             self._open.clear()
+            for database, _users in self._held:
+                database.close()
+            self._held.clear()
             self._users.clear()
 
     def refresh(self) -> bool:
@@ -506,6 +559,7 @@ class Pool:
         fresh = load_registry(self._env, self.registry.paths, self.registry.patterns)
         if fresh is not None and fresh.targets:
             self.registry = fresh
+            self._named = {target.name: target for target in fresh.targets}
             return True
         self.registry.state = _state(self.registry.paths)  # noted: no point re-reading until the next change
         kept = [

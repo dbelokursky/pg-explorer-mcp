@@ -114,6 +114,8 @@ pythonpath = [".", "scripts"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 filterwarnings = [
     # A warning is a finding: it becomes an error unless it is one of these, each named with why.
+    # A thread that died of an exception took its stand's answer with it, and pytest only warns of that.
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
     # testcontainers 4.x still waits the deprecated way inside its own PostgresContainer
     "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers.*",
     "ignore:testcontainers.postgres is deprecated:DeprecationWarning",
