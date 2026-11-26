@@ -22,7 +22,7 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
-from pg_explorer_mcp import sqlguard, stand_tools
+from pg_explorer_mcp import passwords, sqlguard, stand_tools
 from pg_explorer_mcp.db import Database, Settings
 from pg_explorer_mcp.querylog import QueryLog
 from pg_explorer_mcp.stand_tools import build_stand_tools
@@ -721,6 +721,91 @@ class TestChangedSections:
             assert current.describe_target().startswith(f"{READER}@")
         finally:
             changed.close()
+
+
+class TestMakingConnections:
+    """Making a connection reads the password store, which may be slow to answer: that delays its own stand alone."""
+
+    @staticmethod
+    def two_stands(tmp_path: Path) -> tuple[Pool, str]:
+        """dev1, the first database under the billing login, and dev9, where nothing answers; and dev9's port."""
+        settings = Settings.from_env(os.environ)
+        dead = unreachable_database_env()["PGPORT"]
+        (tmp_path / "stands.conf").write_text(
+            f"[dev1.shop.{BILLING}]\nhost={settings.host}\nport={settings.port}\ndbname={settings.database}\n"
+            f"[dev9.shop.{BILLING}]\nhost=127.0.0.1\nport={dead}\nconnect_timeout=2\n"
+            f"dbname={settings.database}\n",
+            encoding="utf-8",
+        )
+        passfile = tmp_path / "pgpass"
+        passfile.write_text(f"*:*:*:{BILLING}:{PASSWORDS[BILLING]}\n", encoding="utf-8")
+        passfile.chmod(0o600)
+        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [tmp_path / "stands.conf"])
+        assert registry is not None
+        return Pool(registry, dict(os.environ, PGPASSFILE=str(passfile)), limit=2), dead
+
+    @pytest.mark.usefixtures("pool")  # the login and the schema
+    def test_a_store_slow_to_answer_delays_its_own_stand_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A keyring waiting to be unlocked held the pool's lock: other stands waited for it, and so did the call."""
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0.06)
+        find = passwords.lookup
+        slow_pool, dead = self.two_stands(tmp_path)
+        tools = by_name(build_stand_tools(slow_pool, str(ROOT), profile="analyst"))
+
+        def unlocked_late(env, host, port, database, user) -> tuple[str | None, str | None]:
+            if port != int(dead):  # the store answers about dev1 after most of a second
+                time.sleep(0.6)
+            return find(env, host, port, database, user)
+
+        monkeypatch.setattr(passwords, "lookup", unlocked_late)
+        try:
+            started = time.monotonic()
+            lines = lines_of(tools["run_select"], stands="dev1,dev9", schema=BILLING, query="SELECT 1")
+            elapsed = time.monotonic() - started
+            assert "no answer within the 0.06 seconds" in "\n".join(lines)  # dev1 is named among those still at work
+            assert elapsed < 0.45, elapsed  # the call answers at its budget, not when the store has answered
+        finally:
+            for thread in threading.enumerate():
+                if thread.name == "pg-explorer-mcp dev1":
+                    thread.join(10)
+            slow_pool.close()
+
+    def test_two_threads_that_make_the_connection_of_a_stand_at_once_leave_one(
+        self, pool: Pool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The connection is made outside the lock, so two threads may each make one: the pool keeps the first."""
+        name = f"dev1.shop.{BILLING}"
+        with pool._lock:
+            old = pool._open.pop(name, None)
+        if old is not None:
+            old.close()
+        make = Database
+        together = threading.Barrier(2, timeout=10)  # both have made theirs before either goes on
+        made: list[Database] = []
+
+        def making(env, counters=None) -> Database:
+            made.append(make(env, counters=counters))
+            together.wait()
+            return made[-1]
+
+        monkeypatch.setattr("pg_explorer_mcp.stands.Database", making)
+        taken: list[Database] = []
+
+        def take() -> None:
+            taken.append(pool.database(pool.registry.target("dev1", BILLING)))
+
+        threads = [threading.Thread(target=take) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        assert len(made) == 2
+        assert taken[0] is taken[1]
+        assert taken[0] in made  # one of the two, not a third
+        with pool._lock:
+            assert pool._open[name] is taken[0]
 
 
 def test_only_the_recent_connections_stay_open(pool: Pool, tools: dict[str, Tool]) -> None:

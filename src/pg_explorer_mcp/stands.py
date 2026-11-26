@@ -460,23 +460,41 @@ class Pool:
         The section is taken as the registry holds it now, whoever asks: a thread of a call that is over
         still holds the registry as it was. One changed since its connection was made gets another
         connection, and the old one is put away (closed now, or when the threads on it are over).
+
+        A connection is made outside the lock: making one reads the password store, which may be slow
+        to answer (a keyring waiting to be unlocked). It delays its own stand alone, then, and neither
+        the stands asked with it nor the end of their call. Two threads may so each make the connection
+        of a stand: the pool keeps one, and both take it.
         """
         if overdue():
             raise OverdueError
         with self._lock:
             target = self._named.get(target.name, target)
             env = target.env(self._env)
-            database = self._open.pop(target.name, None)
-            if database is not None and not database.configured_with(env):
-                self._put_away(target.name, database)
-                database = None
-            database = database or Database(env, counters=self._counters)
+            database = self._pooled(target.name, env)
+        if database is None:
+            database = Database(env, counters=self._counters)
+        with self._lock:
+            database = self._pooled(target.name, env) or database
             self._open[target.name] = database
             if deadline() is None:  # the call's own thread
                 self.current = target
                 self.trim()
             else:  # a thread of a call over several stands, which keeps the connection until it ends
                 self._users.setdefault(target.name, set()).add(threading.current_thread())
+        return database
+
+    def _pooled(self, name: str, env: Mapping[str, str]) -> Database | None:
+        """Under the lock: the stand's connection, taken out of the pool, when it was made from these variables.
+
+        None when there is none, or when the section changed since it was made: that one is put away.
+        """
+        database = self._open.pop(name, None)
+        if database is None:
+            return None
+        if not database.configured_with(env):
+            self._put_away(name, database)
+            return None
         return database
 
     def done(self) -> None:
