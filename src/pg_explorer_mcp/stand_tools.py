@@ -69,6 +69,7 @@ from .tools import (
     schema_diagram,
     search_schema,
     split_name,
+    split_qualified,
     store_lines,
 )
 
@@ -976,6 +977,9 @@ def _table_target(pool: Pool, args: Arguments) -> tuple[Target, str]:
     """The login of the schema the table lives in, and the table's bare name."""
     stand = pool.registry.stand(args.get("stand"))
     table, schema = split_name(args.get("table"), args.get("schema") or None)
+    carried = split_qualified(table)[0]
+    if schema and carried is not None:  # the name carries another schema than the argument: no guessing which
+        raise ToolError(t("error.schema_conflict", name=table, schema=carried.strip().strip('"'), argument=schema))
     if schema:
         return pool.registry.target(stand, schema, args.get("database")), table
     found: list[tuple[str, str]] = []
