@@ -675,7 +675,8 @@ class TestChangedSections:
             assert "(1 row)" in lines_of(tools["run_select"], **ask)
             dead = unreachable_database_env()["PGPORT"]
             self.edit(changed, stands_file, f"host=127.0.0.1\nport={dead}\nconnect_timeout=2\n")
-            with pytest.raises(ToolError, match=r"Nothing accepts connections at 127\.0\.0\.1"):
+            # Refused at once on macOS and Linux; Windows waits the two seconds of the section first.
+            with pytest.raises(ToolError, match=rf"127\.0\.0\.1:{dead}"):
                 tools["run_select"].call(ask)  # not from the host the section named before
         finally:
             changed.close()
