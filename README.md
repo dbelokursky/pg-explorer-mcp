@@ -189,7 +189,8 @@ What the script does:
 2. adds the server `pg` to `mcpServers`: the Python that runs the script, the path to `run.py`, the
    `PG*` variables from the terminal (except `PGPASSWORD`), the profile and the language;
 3. starts the server the way the agent will, calls `status` and prints the answer. Exit code 0 means
-   the database is reachable.
+   the database is reachable. It is 1 also when the server could not be added to the settings at step 2:
+   the reason is printed, and the check is not run.
 
 `python3 install.py --check` only starts the server and calls `status`; it changes nothing.
 

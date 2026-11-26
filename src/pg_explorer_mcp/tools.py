@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
 from . import __version__, diagram, health, passwords
-from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
+from .budget import DEFAULT_BUDGET, Keep, fit_to_budget, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .glossary import Glossary
 from .i18n import current, number, plural, t
@@ -520,7 +520,11 @@ def status(
     glossary: Glossary | None = None,
     saved: SavedQueries | None = None,
 ) -> list[str]:
-    """The status answer: server, target, profile, language, limits and warnings."""
+    """The status answer: server, target, profile, language, limits and warnings.
+
+    The line about the database survives the cut of a small answer budget (budget.Keep): it is what the
+    answer is asked for, and install.py reads it to tell whether the server is ready.
+    """
     about, password_warnings = password_lines(db)
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
@@ -559,9 +563,11 @@ def status(
     try:
         info = db.server_info()
     except DatabaseUnavailableError as exc:
-        lines.append(t("status.unavailable", reason=exc))
+        lines.append(Keep(t("status.unavailable", reason=exc)))
         return lines
-    lines.append(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+    lines.append(
+        Keep(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+    )
     lines.append(
         t(
             "status.limits",

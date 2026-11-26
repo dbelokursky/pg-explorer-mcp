@@ -349,7 +349,8 @@ def stand_status(
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
         t("status.read_only"),
-        t("status.stands", count=len(stands), stands=summarize(stands), connections=len(registry.targets)),
+        # Survives the cut of a small budget: install.py reads it to tell whether the entry is ready.
+        Keep(t("status.stands", count=len(stands), stands=summarize(stands), connections=len(registry.targets))),
         t("status.registry", files=", ".join(registry.files) or t("error.none")),
         *about,
         t("status.profile", profile=profile, tools=", ".join(names)),
@@ -415,8 +416,10 @@ def _check(pool: Pool, target: Target, budget: int) -> tuple[DatabaseUnavailable
     try:
         info = database.server_info()
     except DatabaseUnavailableError as exc:
-        return exc, [*lines, t("status.unavailable", reason=exc)]
-    lines.append(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+        return exc, [*lines, Keep(t("status.unavailable", reason=exc))]
+    lines.append(
+        Keep(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+    )
     lines.append(
         t(
             "status.limits",
