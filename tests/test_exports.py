@@ -637,17 +637,20 @@ class TestPreviewAndWrite:
         assert (tmp_path / "settings.json.bak-20261023-120000-2").read_text(encoding="utf-8") == "first\n"
         assert path.read_text(encoding="utf-8") == "second\n"
 
-    def test_a_new_text_that_cannot_be_written_changes_nothing(self, tmp_path: Path) -> None:
+    def test_a_new_text_that_cannot_be_written_changes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         path = tmp_path / "settings.json"
         path.write_text("old\n", encoding="utf-8")
-        (tmp_path / "settings.json.pg-explorer-mcp-new").mkdir()  # where the new text would go
+
+        def refused(*_args: object, **_options: object) -> None:
+            raise PermissionError(13, "Permission denied", str(tmp_path))  # a folder that cannot be written
+
+        monkeypatch.setattr("tempfile.mkstemp", refused)
         with pytest.raises(ExportRefusedError, match="cannot write"):
             exports.write(Export("sqltools", [], [(path, "new\n")], ""))
         assert path.read_text(encoding="utf-8") == "old\n"
-        assert sorted(child.name for child in tmp_path.iterdir()) == [
-            "settings.json",
-            "settings.json.pg-explorer-mcp-new",
-        ]
+        assert [child.name for child in tmp_path.iterdir()] == ["settings.json"]  # and nothing waits next to it
 
     def test_a_file_that_cannot_be_replaced_stays_as_it_was(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -657,7 +660,7 @@ class TestPreviewAndWrite:
         replace = Path.replace
 
         def busy(self: Path, target: Path) -> Path:
-            if Path(target) == second and self.name.endswith(".pg-explorer-mcp-new"):
+            if Path(target) == second and user_files.NEW in self.name:
                 raise PermissionError("the file is in use")
             return replace(self, target)
 

@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 
 import install
-from pg_explorer_mcp import clients, exports, i18n, imports, passwords
+from pg_explorer_mcp import clients, exports, i18n, imports, passwords, user_files
 from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
+from pg_explorer_mcp.stands import registry_files
 from tests.helpers import ROOT, Memory
 from tests.test_imports import data_source, datagrip_files, dbeaver_workspace, postgres, ssh_configs, ssh_properties
 
@@ -840,10 +841,12 @@ class TestPassword:
     LOGIN = "billing@db.example:5432/orders"
 
     @pytest.fixture
-    def shell(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def shell(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A terminal to type into, and a shell that names one database, whatever the machine's shell has."""
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
         monkeypatch.setenv("PG_EXPLORER_MCP_LANG", "en")
+        # The command keeps its lock next to the registry: in a folder of the test's own, not the user's.
+        monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
         for key in ("PGPORT", "PGPASSWORD"):
             monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("PGHOST", "db.example")
@@ -1016,8 +1019,239 @@ class TestPassword:
         assert install.main(["password", "--stand", "dev7", "--schema", "billing", "--database", "archive"]) == 0
         assert own_password_store.text == "dev7-db.example:5432:archive_ift:billing:s3cret\n"
 
+    def test_the_lock_is_held_while_the_password_is_put_into_the_store_and_let_go_after(
+        self, monkeypatch: pytest.MonkeyPatch, own_password_store: Memory
+    ) -> None:
+        """What the command reads and writes is one cycle, made under the lock of user_files (ADR 0012)."""
+        put = passwords.Passwords.put
+        held: list[bool] = []
+
+        def putting(store: passwords.Passwords, found: dict[passwords.Login, str]) -> None:
+            held.append(lock_is_held_by_the_command())
+            put(store, found)
+
+        monkeypatch.setattr(passwords.Passwords, "put", putting)
+        self.typed(monkeypatch, "s3cret", "s3cret")
+        assert not lock_is_held_by_the_command()
+        assert install.main(["password"]) == 0
+        assert held == [True]
+        assert not lock_is_held_by_the_command()
+        assert own_password_store.text == "db.example:5432:orders:billing:s3cret\n"
+
+    def test_a_command_that_cannot_get_the_lock_in_time_writes_nothing_and_says_why(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        own_password_store: Memory,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(user_files, "LOCK_TIMEOUT_S", 0.3)
+        folder = registry_files(install.shell_env())[0].parent
+        before = subprocess.Popen(  # another command, still writing
+            [sys.executable, "-I", "-c", HOLDER, str(ROOT / "src"), str(folder)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert before.stdout is not None
+            assert before.stdout.readline().strip() == "held"
+            self.typed(monkeypatch, "s3cret", "s3cret")
+            assert install.main(["password"]) == 1
+            out = capsys.readouterr().out
+            assert (
+                "another command of pg-explorer-mcp is writing these files and did not finish in 0.3 seconds. "
+                "Nothing was written: try again when it has."
+            ) in out
+            assert "s3cret" not in out
+            assert own_password_store.text == ""
+        finally:
+            before.kill()
+            before.wait(timeout=10)
+
 
 def test_the_switch_of_the_store_is_copied_into_the_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PG_EXPLORER_MCP_PASSWORD_STORE", "off")
     # The next line compares the name of a variable, not a password.
     assert install.server_entry()["env"]["PG_EXPLORER_MCP_PASSWORD_STORE"] == "off"  # noqa: S105
+
+
+# --- one command at a time over the user's files (user_files.exclusive) ---
+
+
+HOLDER = """
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from pg_explorer_mcp.user_files import exclusive
+
+with exclusive(Path(sys.argv[2])):
+    print("held", flush=True)
+    sys.stdin.readline()  # until the test says so
+"""
+
+PROBE = """
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from pg_explorer_mcp.user_files import StillLockedError, exclusive
+
+try:
+    with exclusive(Path(sys.argv[2]), timeout=0):
+        print("free")
+except StillLockedError:
+    print("held")
+"""
+
+
+def lock_is_held_by_the_command() -> bool:
+    """Whether another process can take the lock right now, asked of a process of its own: no while a command writes."""
+    folder = registry_files(install.shell_env())[0].parent
+    probe = subprocess.run(
+        [sys.executable, "-I", "-c", PROBE, str(ROOT / "src"), str(folder)],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert probe.stdout.strip() in {"free", "held"}, probe.stdout + probe.stderr
+    return probe.stdout.strip() == "held"
+
+
+def test_import_write_holds_the_lock_while_it_reads_merges_and_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str], own_password_store: Memory
+) -> None:
+    """Two imports at once would each write the registry from what they read before the other wrote."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setenv("PG_EXPLORER_MCP_STANDS_FILE", str(tmp_path / "stands.conf"))
+    monkeypatch.setattr(install, "offer_export", lambda **_kwargs: None)
+    write = imports.write
+    held: list[bool] = []
+
+    def writing(*args: object, **options: object) -> list[str]:
+        held.append(lock_is_held_by_the_command())
+        return write(*args, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(imports, "write", writing)
+    argv = ["import", "dbeaver", "--workspace", str(dbeaver_folder(tmp_path)), "--write", "--lang", "en"]
+    assert install.main(argv) == 0
+    assert held == [True]
+    assert not lock_is_held_by_the_command()
+    assert own_password_store.text != ""  # the import itself went as it does
+
+
+def test_export_write_holds_the_lock_from_the_reading_to_the_writing_and_a_preview_takes_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
+) -> None:
+    stands_home(monkeypatch, tmp_path, unreachable_env)
+    prepare, write = exports.prepare, exports.write
+    held: list[bool] = []
+
+    def preparing(*args: object, **options: object) -> exports.Export:
+        held.append(lock_is_held_by_the_command())  # the files it merges with are read under the lock too
+        return prepare(*args, **options)  # type: ignore[arg-type]
+
+    def writing(export: exports.Export) -> list[str]:
+        held.append(lock_is_held_by_the_command())
+        return write(export)
+
+    monkeypatch.setattr(exports, "prepare", preparing)
+    monkeypatch.setattr(exports, "write", writing)
+    assert install.main(["export", "pg-service", "--write", "--lang", "en"]) == 0
+    assert held == [True, True]
+    assert not lock_is_held_by_the_command()
+    held.clear()
+    assert install.main(["export", "pg-service", "--lang", "en"]) == 0  # a preview writes nothing
+    assert held == [False]
+
+
+# --- the settings of the agents and editors: written as every user's file is, under the lock -------------------
+
+
+def test_two_registrations_within_a_second_keep_both_copies(
+    settings_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both copies used to take the name of the second they were made in: the second wrote over the first."""
+    monkeypatch.setattr(user_files, "_now", lambda: "20261126-120000")
+    settings_path.parent.mkdir()
+    settings_path.write_text('{"theme": "dark"}\n', encoding="utf-8")
+    install.register(str(settings_path), ENTRY)
+    install.register(str(settings_path), ENTRY, "pg-sales")
+    assert sorted(child.name for child in settings_path.parent.iterdir()) == [
+        "settings.json",
+        "settings.json.bak-20261126-120000",
+        "settings.json.bak-20261126-120000-2",
+    ]
+    first, second = (
+        read(settings_path.parent / name)
+        for name in ("settings.json.bak-20261126-120000", "settings.json.bak-20261126-120000-2")
+    )
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    assert (first, set(second["mcpServers"])) == ({"theme": "dark"}, {"pg"})
+
+
+def test_registering_with_a_client_holds_the_lock_while_its_settings_are_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
+) -> None:
+    """The agent rewrites its settings itself, and another command of ours may: one at a time over the file."""
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    register = install.register
+    held: list[bool] = []
+
+    def registering(path: str | Path, entry: dict[str, object], name: str = install.SERVER_NAME) -> None:
+        held.append(lock_is_held_by_the_command())
+        register(path, entry, name)
+
+    monkeypatch.setattr(install, "register", registering)
+    assert install.install_into("gigacode", "pg", ENTRY) is True
+    assert held == [True]
+    assert not lock_is_held_by_the_command()
+    settings = read(tmp_path / ".gigacode" / "settings.json")
+    assert isinstance(settings, dict)
+    assert set(settings["mcpServers"]) == {"pg"}
+
+
+def test_registering_with_an_editor_holds_the_lock_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    (clients.app_data(os.environ, Path.home()) / "Code" / "User").mkdir(parents=True)
+    write = clients.write
+    held: list[bool] = []
+
+    def writing(*args: object, **options: object) -> Path | None:
+        held.append(lock_is_held_by_the_command())
+        return write(*args, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(clients, "write", writing)
+    assert install.install_into("vscode", "pg", {**ENTRY, "env": {}}) is True
+    assert held == [True]
+    assert not lock_is_held_by_the_command()
+
+
+def test_a_command_that_cannot_get_the_lock_registers_nothing_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unreachable_env: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setattr(user_files, "LOCK_TIMEOUT_S", 0.3)
+    folder = registry_files(install.shell_env())[0].parent
+    before = subprocess.Popen(  # another command, still writing
+        [sys.executable, "-I", "-c", HOLDER, str(ROOT / "src"), str(folder)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert before.stdout is not None
+        assert before.stdout.readline().strip() == "held"
+        assert install.install_into("gigacode", "pg", ENTRY) is False
+        assert "another command of pg-explorer-mcp is writing these files" in capsys.readouterr().out
+        assert not (tmp_path / ".gigacode" / "settings.json").exists()
+    finally:
+        before.kill()
+        before.wait(timeout=10)

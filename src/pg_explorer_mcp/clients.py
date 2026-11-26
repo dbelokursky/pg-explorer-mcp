@@ -8,14 +8,14 @@ YAML block of its own, and JetBrains AI Assistant in its settings window, so it 
 
 from __future__ import annotations
 
-import datetime
 import json
-import shutil
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .user_files import place, stage
 
 MCP_SERVERS = "mcpServers"
 VSCODE = "vscode"
@@ -213,6 +213,9 @@ def write(client: Client, path: Path, name: str, entry: Mapping[str, Any]) -> Pa
     """Put the server into the client's file, keeping a dated copy of the old file; the copy's path, if any.
 
     A file that is not plain JSON (comments, say) is left alone: ClientConfigError carries the snippet.
+    The text waits next to the file in a file of its own and takes the file's place in one rename
+    (user_files): two commands writing one file do not write into one waiting file, and the file is
+    never missing while it is replaced. The commands of install.py write one at a time (its lock).
     """
     one = server(client, entry)
     if client.style == CONTINUE:
@@ -224,15 +227,7 @@ def write(client: Client, path: Path, name: str, entry: Mapping[str, Any]) -> Pa
             raise ClientConfigError(snippet(client, name, entry))
         settings.setdefault(key, {})[name] = one
         text = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
-    backup = None
-    if path.exists():
-        backup = path.with_name(f"{path.name}.bak-{datetime.datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(path, backup)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(text, encoding="utf-8")
-    temporary.replace(path)
-    return backup
+    return place(stage(path, text))
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:

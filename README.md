@@ -293,7 +293,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-explorer-mcp 0.11.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
+pg-explorer-mcp 0.12.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
@@ -612,8 +612,9 @@ what would be written and what is left out and why; passwords are never shown. `
 `~/.pg-explorer-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`) and puts the
 passwords into the [password store](#4-the-password-goes-into-the-password-store), a line per login; a
 dated copy of the registry is kept, and when anything fails, nothing is changed: the passwords are kept
-after the registry is written, and the registry is taken back when they cannot be. Where the system has
-no password store, an import with passwords is refused: they would go nowhere. DBeaver's saved
+after the registry is written, and the registry is taken back when they cannot be. The commands of
+`install.py` that write take turns: while one writes, it holds a `lock` file next to the registry. Where
+the system has no password store, an import with passwords is refused: they would go nowhere. DBeaver's saved
 passwords are read from its own files while DBeaver keeps them under its default key; with its secure
 storage switched on they stay unknown, and the preview names the `install.py password` command for each
 login that needs one by hand. The agent does the same with `/pg:import`, writing only after you confirm.
@@ -1088,6 +1089,11 @@ the new `pg-explorer-mcp-<version>.zip` from the
 [Releases page](https://github.com/dbelokursky/pg-explorer-mcp/releases), delete the old folder, unpack the new
 one in its place and restart the agent. Run `install.py` again only if the folder's path changed or
 you changed Python, the profile or the language.
+
+**From 0.11.0 and earlier.** Nothing to redo after the update. A section of the stands registry that changed
+gets a new connection without a restart. The commands of `install.py` that write take turns and keep a `lock`
+file next to the registry. On Linux, a record written by 0.12.0 is not read by 0.11.0: going back, clear it
+first with `secret-tool clear service pg-explorer-mcp account passwords` and put the passwords in again.
 
 **From 0.10.0 and earlier.** Nothing to redo after the update. The server now keeps passwords in the
 [password store](#4-the-password-goes-into-the-password-store) of the system; a `~/.pgpass` that exists still

@@ -58,8 +58,11 @@ What bounds the decision:
   Ubuntu, `libsecret` on Fedora and RHEL); `install.py password` names it. A server, a container or
   WSL has no keyring: there the server keeps no password.
 - secret-tool reads a secret of 8 KiB at most and cuts what is longer. On Linux the record lies in the
-  keyring as parts of 6000 bytes, under a generation that a head item names; the parts go in first and
-  the head last, so a writing that is interrupted leaves the record of the generation before whole.
+  keyring as parts of 6000 bytes, under a generation that a head item names, saying how many parts it
+  has; the parts go in first and the head last, so a writing that is interrupted leaves the record of
+  the generation before whole. The generation is new to each writing (`<number>-<random name>`): a
+  writing that failed leaves no head, and the next one would else find the failed one's parts under
+  its own name.
 - A password put into the record is used by the next connection, at most 300 seconds later: the
   settings are read again before a session is opened.
 - `install.py export` cannot hand a password to another tool through the password file for those who

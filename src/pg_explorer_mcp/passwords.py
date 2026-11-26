@@ -17,6 +17,8 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -25,7 +27,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from . import dpapi
 from .i18n import t
@@ -235,6 +237,30 @@ def without(lines: Sequence[str], logins: Sequence[Login]) -> list[str]:
     return [line for line in lines if login_of(line) not in set(logins)]
 
 
+# --- the tools of the stores ----------------------------------------------------------------------------
+
+# What a store was doing when its tool failed: the keys of the messages that name the operation.
+READING = "passwords.reading"
+WRITING = "passwords.writing"
+REMOVING = "passwords.removing"
+
+
+def _silent(kind: str, failure: OSError | subprocess.TimeoutExpired, operation: str) -> str:
+    """Why the tool of a store could not do its work, quoting nothing of its exception.
+
+    operation names what the store was doing (READING, WRITING, REMOVING). The text of a TimeoutExpired
+    quotes the whole command, and on macOS the command of a writing carries the record as an argument.
+    Told are the operation and the cause alone.
+    """
+    if isinstance(failure, subprocess.TimeoutExpired):
+        return t(f"passwords.{kind}_timeout", operation=t(operation), seconds=TOOL_TIMEOUT_S)
+    return t(
+        f"passwords.{kind}_unstarted",
+        operation=t(operation),
+        error=failure.strerror or type(failure).__name__,
+    )
+
+
 # --- macOS: the login keychain ---------------------------------------------------------------------
 
 
@@ -275,13 +301,15 @@ class Keychain:
     def write(self, text: str) -> None:
         """Replace the record, or create it; the tool takes the text only as an argument, so base64 on one line."""
         record = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        code, _, err = _security("add-generic-password", "-U", "-s", self._service, "-a", self._account, "-w", record)
+        code, _, err = _security(
+            "add-generic-password", "-U", "-s", self._service, "-a", self._account, "-w", record, operation=WRITING
+        )
         if code != 0:
             raise PasswordStoreError(t("passwords.keychain_error", error=err.strip()))
 
     def forget(self) -> None:
         """Remove the record: the tests leave the keychain as they found it."""
-        _security("delete-generic-password", "-s", self._service, "-a", self._account)
+        _security("delete-generic-password", "-s", self._service, "-a", self._account, operation=REMOVING)
 
 
 TOOL_TIMEOUT_S = 30  # the tool answers in milliseconds; anything longer is a dialog waiting for the user
@@ -292,8 +320,13 @@ def _command(*args: str) -> list[str]:
     return [SECURITY, *args]
 
 
-def _security(*args: str) -> tuple[int, str, str]:
-    """Run the keychain tool as the agent runs the server: no terminal, and no endless waiting."""
+def _security(*args: str, operation: str = READING) -> tuple[int, str, str]:
+    """Run the keychain tool as the agent runs the server: no terminal, and no endless waiting.
+
+    A failure is told without the exception of the tool (_silent): the command of a writing carries the record,
+    and the exception quotes the command. Raised outside the except clause, so that the tool's exception
+    is chained to none of ours.
+    """
     try:
         done = subprocess.run(  # noqa: S603  (the system's own tool, by its full path, with arguments of ours)
             _command(*args),
@@ -304,8 +337,10 @@ def _security(*args: str) -> tuple[int, str, str]:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise PasswordStoreError(t("passwords.keychain_silent", error=exc)) from exc
-    return done.returncode, done.stdout, done.stderr
+        failure = exc
+    else:
+        return done.returncode, done.stdout, done.stderr
+    raise PasswordStoreError(_silent("keychain", failure, operation))
 
 
 # --- Windows: a file sealed by DPAPI -----------------------------------------------------------------
@@ -369,8 +404,11 @@ def _keyring_command(tool: str, *args: str) -> list[str]:
     return [tool, *args]
 
 
-def _secret_tool(tool: str, *args: str, secret: str = "") -> tuple[int, str, str]:
-    """Run the keyring tool as the agent runs the server: the secret on its input, a limited time to answer."""
+def _secret_tool(tool: str, *args: str, secret: str = "", operation: str = READING) -> tuple[int, str, str]:
+    """Run the keyring tool as the agent runs the server: the secret on its input, a limited time to answer.
+
+    A failure is told without the exception of the tool (_silent), which quotes its command.
+    """
     try:
         done = subprocess.run(  # noqa: S603  (the system's own tool, by its full path, with arguments of ours)
             _keyring_command(tool, *args),
@@ -381,8 +419,10 @@ def _secret_tool(tool: str, *args: str, secret: str = "") -> tuple[int, str, str
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise PasswordStoreError(t("passwords.keyring_silent", error=exc)) from exc
-    return done.returncode, done.stdout, done.stderr
+        failure = exc
+    else:
+        return done.returncode, done.stdout, done.stderr
+    raise PasswordStoreError(_silent("keyring", failure, operation))
 
 
 def _pieces(text: str) -> list[str]:
@@ -401,14 +441,39 @@ def _pieces(text: str) -> list[str]:
     return pieces
 
 
+_HEAD = re.compile(r"(\d+)(?:-([0-9a-f]{8}))?(?::(\d+))?")
+
+
+class Head(NamedTuple):
+    """What the head of the record says: the number of the writing, the generation its parts lie under, and how many.
+
+    part_count is None for the head of a writing before there was one (0.11.0), a number alone.
+    """
+
+    number: int
+    generation: str
+    part_count: int | None
+
+
+def _head(text: str) -> Head:
+    """The head as it is written, "<number>-<name>:<count>"; ValueError when it is not one of ours."""
+    found = _HEAD.fullmatch(text)
+    if found is None:
+        raise ValueError(text)
+    number, name, count = found.groups()
+    return Head(int(number), f"{number}-{name}" if name else number, int(count) if count is not None else None)
+
+
 class SecretService:
     """The keyring of the Linux desktop, through the secret-tool utility of libsecret (Secret Service).
 
     GNOME Keyring, KWallet and KeePassXC keep such a keyring, encrypted with a key unlocked at login.
     The utility reads a secret of 8 KiB at most, and one user may have hundreds of logins: the record
-    lies there as the parts of a generation, and the head, an item of its own, names the generation.
-    The parts go in first and the head last, so whatever interrupts a writing, the head names parts
-    that are all there. A secret goes in on the standard input and comes out on the standard output,
+    lies there as the parts of a generation, and the head, an item of its own, names the generation
+    and says how many parts it has. The parts go in first and the head last, so whatever interrupts
+    a writing, the head names parts that are all there. The generation is new to each writing alone:
+    a writing that failed left no head behind, and the next one must not find its parts under the
+    failed one's name. A secret goes in on the standard input and comes out on the standard output,
     never as an argument.
     """
 
@@ -435,52 +500,88 @@ class SecretService:
         return t("passwords.secret_service", service=self._service, account=self._account)
 
     def read(self) -> str:
-        """The record as the server wrote it; "" when nothing is stored yet."""
+        """The record as the server wrote it; "" when nothing is stored yet.
+
+        Every part the head names must be there: one gone from the middle makes an error, not a shorter
+        record. A head from before the count was kept cannot tell.
+        """
         head = ""
         for _ in range(3):
-            head = self._item(("kind", "head")) or ""
-            if not head:
+            found = self._item(("kind", "head")) or ""
+            if not found:
                 return ""
-            if not head.isdigit():
-                raise PasswordStoreError(self._not_ours(ValueError(head)))
-            parts = self._parts(head)
-            if parts:
+            named = self._ours(found)
+            parts = self._parts(named.generation, named.part_count)
+            if parts and (named.part_count is None or len(parts) == named.part_count):
                 return "".join(parts)
-            # A record always has a part. Without one, the record was rewritten between its head and its
-            # parts: the old generation is gone and the head is about to name the new one. Once more.
-        raise PasswordStoreError(
-            t("passwords.keyring_missing", generation=head, service=self._service, account=self._account)
-        )
+            if parts and found == head:
+                raise PasswordStoreError(self._incomplete(found, named.part_count, len(parts)))
+            head = found
+            # A record always has a part. Without all of them, the record was rewritten between its head and
+            # its parts: the old generation is going and the head is about to name the new one. Once more.
+        raise PasswordStoreError(self._incomplete(head, None, 0))
 
-    def _parts(self, generation: str) -> list[str]:
-        """The parts of a generation in order, as long as there is a part: an absent one ends the record."""
+    def _parts(self, generation: str, count: int | None) -> list[str]:
+        """The parts of a generation in order: an absent one ends them, and none is asked for past the count."""
         parts: list[str] = []
         number = 0
-        while (part := self._item(("generation", generation), ("part", str(number)))) is not None:
+        while count is None or number < count:
+            part = self._item(("generation", generation), ("part", str(number)))
+            if part is None:
+                break
             parts.append(part)
             number += 1
         return parts
 
+    def _ours(self, head: str) -> Head:
+        """The head as read; PasswordStoreError when another record lies under our name."""
+        try:
+            return _head(head)
+        except ValueError as exc:
+            raise PasswordStoreError(self._not_ours(exc)) from exc
+
+    def _incomplete(self, head: str, count: int | None, found: int) -> str:
+        """Why the record cannot be read: its head names a generation with fewer parts than it says, or none."""
+        return t(
+            "passwords.keyring_incomplete" if found else "passwords.keyring_missing",
+            generation=head,
+            count=count,
+            found=found,
+            service=self._service,
+            account=self._account,
+        )
+
     def write(self, text: str) -> None:
-        """Replace the record: the parts of a new generation first, then the head that names them."""
-        previous = self._item(("kind", "head"))
-        if previous is not None and not previous.isdigit():
-            raise PasswordStoreError(self._not_ours(ValueError(previous)))
-        generation = str(int(previous or "0") + 1)
-        for number, piece in enumerate(_pieces(text)):
-            self._store(piece, ("generation", generation), ("part", str(number)))
-        self._store(generation, ("kind", "head"))
-        if previous is not None:
+        """Replace the record: the parts of a new generation first, then the head that names them and says how many.
+
+        The generation is this writing's alone, so that the parts of a writing that failed are never
+        taken for its own, however far that one got. A writing that cannot put its parts in takes them
+        away again; one whose head is refused leaves them, for its head may have gone in after all, and
+        then they are the record.
+        """
+        found = self._item(("kind", "head"), operation=WRITING)
+        before = self._ours(found) if found is not None else None
+        generation = f"{before.number + 1 if before else 1}-{secrets.token_hex(4)}"
+        pieces = _pieces(text)
+        try:
+            for number, piece in enumerate(pieces):
+                self._store(piece, ("generation", generation), ("part", str(number)))
+        except PasswordStoreError:
             with contextlib.suppress(PasswordStoreError):
-                self._clear(("generation", previous))  # the best effort: a leftover is sealed and unused
+                self._clear(("generation", generation))
+            raise
+        self._store(f"{generation}:{len(pieces)}", ("kind", "head"))
+        if before is not None:
+            with contextlib.suppress(PasswordStoreError):
+                self._clear(("generation", before.generation))  # the best effort: a leftover is sealed and unused
 
     def forget(self) -> None:
         """Remove every item of the record: the tests leave the keyring as they found it."""
-        self._clear()
+        self._clear(operation=REMOVING)
 
-    def _item(self, *attributes: Pair) -> str | None:
+    def _item(self, *attributes: Pair, operation: str = READING) -> str | None:
         """The secret of the item with these attributes; None when there is none."""
-        code, out, err = _secret_tool(self._tool, "lookup", *self._arguments(*attributes))
+        code, out, err = _secret_tool(self._tool, "lookup", *self._arguments(*attributes), operation=operation)
         if code == 1 and not err.strip():
             return None  # the utility's own answer to "no such item": it says nothing
         if code != 0:
@@ -490,7 +591,7 @@ class SecretService:
         except (binascii.Error, ValueError) as exc:
             raise PasswordStoreError(self._not_ours(exc)) from exc
 
-    def _store(self, secret: str, *attributes: Pair) -> None:
+    def _store(self, secret: str, *attributes: Pair, operation: str = WRITING) -> None:
         encoded = base64.b64encode(secret.encode("utf-8")).decode("ascii")
         code, _, err = _secret_tool(
             self._tool,
@@ -499,13 +600,14 @@ class SecretService:
             *([f"--collection={self._collection}"] if self._collection else []),
             *self._arguments(*attributes),
             secret=encoded,
+            operation=operation,
         )
         if code != 0:
             raise PasswordStoreError(self._failed(err))
 
-    def _clear(self, *attributes: Pair) -> None:
+    def _clear(self, *attributes: Pair, operation: str = WRITING) -> None:
         """Remove the items with these attributes: nothing to remove is the utility's exit code 1, as is an error."""
-        code, _, err = _secret_tool(self._tool, "clear", *self._arguments(*attributes))
+        code, _, err = _secret_tool(self._tool, "clear", *self._arguments(*attributes), operation=operation)
         if code != 0 and err.strip():
             raise PasswordStoreError(self._failed(err))
 

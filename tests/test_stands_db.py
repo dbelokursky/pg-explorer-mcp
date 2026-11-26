@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,8 +22,8 @@ from pathlib import Path
 import pg8000.native
 import pytest
 
-from pg_explorer_mcp import sqlguard, stand_tools
-from pg_explorer_mcp.db import Settings
+from pg_explorer_mcp import passwords, sqlguard, stand_tools
+from pg_explorer_mcp.db import Database, Settings
 from pg_explorer_mcp.querylog import QueryLog
 from pg_explorer_mcp.stand_tools import build_stand_tools
 from pg_explorer_mcp.stands import Pool, load_registry
@@ -605,6 +606,206 @@ class TestManyStands:
         assert entry["stands"] == {"dev1": "ok", "dev4": "ok", "dev9": "unavailable"}
         assert (entry["outcome"], entry["rows"], entry["role"], entry["database"]) == ("ok", 5, None, None)
         assert "stand" not in entry
+
+
+class TestChangedSections:
+    """The registry is read again at every call: a section changed since its connection was made gets another."""
+
+    SECTION = f"dev1.shop.{BILLING}"
+    LABEL = f"dev1 / shop / {BILLING}"
+
+    @staticmethod
+    def stand(tmp_path: Path) -> tuple[Pool, dict[str, Tool], Path]:
+        """One stand with its tools and its registry file: the billing login and the reader may both log in."""
+        changed = billing_stands(tmp_path, 1)
+        (tmp_path / "pgpass").write_text(
+            f"*:*:*:{BILLING}:{PASSWORDS[BILLING]}\n*:*:*:{READER}:{PASSWORDS[READER]}\n", encoding="utf-8"
+        )
+        tools = by_name(build_stand_tools(changed, str(ROOT), profile="analyst"))
+        return changed, tools, tmp_path / "billing.conf"
+
+    @staticmethod
+    def edit(pool: Pool, stands_file: Path, lines: str) -> None:
+        """Add settings to the section of dev1, the last of the file: the last setting of a name wins, as with libpq."""
+        stands_file.write_text(stands_file.read_text(encoding="utf-8") + lines, encoding="utf-8")
+        assert pool.refresh()  # what the next call does first
+
+    @staticmethod
+    def noted_when_closed(database: Database, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        """Where every closing of this connection is put, the closing itself going on."""
+        closed: list[int] = []
+        close = database.close
+
+        def closing() -> None:
+            closed.append(1)
+            close()
+
+        monkeypatch.setattr(database, "close", closing)
+        return closed
+
+    @classmethod
+    def logged_in_as(cls, role: str) -> list[str]:
+        """What run_select answers to SELECT current_user on the stand, logged in as this role."""
+        return [cls.LABEL, "current_user", role, "(1 row)"]
+
+    @pytest.mark.usefixtures("pool")  # the logins and the schemas
+    def test_a_section_with_another_login_gets_another_connection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        changed, tools, stands_file = self.stand(tmp_path)
+        try:
+            ask = {"stand": "dev1", "schema": BILLING, "query": "SELECT current_user"}
+            assert lines_of(tools["run_select"], **ask) == self.logged_in_as(BILLING)
+            old = changed._open[self.SECTION]
+            closed = self.noted_when_closed(old, monkeypatch)
+            self.edit(changed, stands_file, f"user={READER}\n")
+            assert lines_of(tools["run_select"], **ask) == self.logged_in_as(READER)
+            assert changed._open[self.SECTION] is not old
+            assert closed == [1]  # no statement ran on the old connection: it was closed at once
+        finally:
+            changed.close()
+
+    @pytest.mark.usefixtures("pool")  # the logins and the schemas
+    def test_a_section_that_now_points_where_nothing_answers_does_not_answer_from_the_old_host(
+        self, tmp_path: Path
+    ) -> None:
+        changed, tools, stands_file = self.stand(tmp_path)
+        try:
+            ask = {"stand": "dev1", "schema": BILLING, "query": "SELECT 42 AS answer"}
+            assert "(1 row)" in lines_of(tools["run_select"], **ask)
+            dead = unreachable_database_env()["PGPORT"]
+            self.edit(changed, stands_file, f"host=127.0.0.1\nport={dead}\nconnect_timeout=2\n")
+            # Refused at once on macOS and Linux; Windows waits the two seconds of the section first.
+            with pytest.raises(ToolError, match=rf"127\.0\.0\.1:{dead}"):
+                tools["run_select"].call(ask)  # not from the host the section named before
+        finally:
+            changed.close()
+
+    @pytest.mark.usefixtures("pool")  # the logins and the schemas
+    def test_the_old_connection_is_closed_when_the_statement_a_late_thread_runs_on_it_is_over(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A thread of a call that answered without its stand goes on with its statement: nothing closes under it."""
+        monkeypatch.delitem(sqlguard.FORBIDDEN_FUNCTIONS, "pg_sleep")
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0.5)
+        changed, tools, stands_file = self.stand(tmp_path)
+        try:
+            slow = "SELECT n, pg_sleep(0.5) FROM generate_series(1, 6) AS n"  # three seconds
+            assert lines_of(tools["run_select"], stands="dev1", schema=BILLING, query=slow) == [
+                "dev1: no answer within the 0.5 seconds of the call; ask about them in another call."
+            ]
+            old = changed._open[self.SECTION]
+            closed = self.noted_when_closed(old, monkeypatch)
+            self.edit(changed, stands_file, f"user={READER}\n")
+            started = time.monotonic()
+            ask = {"stand": "dev1", "schema": BILLING, "query": "SELECT current_user"}
+            assert lines_of(tools["run_select"], **ask) == self.logged_in_as(READER)
+            assert time.monotonic() - started < 2  # it did not wait for the statement of the old connection
+            assert closed == []  # which goes on: the old connection is the late thread's until it is over
+            [thread] = [thread for thread in threading.enumerate() if thread.name == "pg-explorer-mcp dev1"]
+            thread.join(10)
+            assert closed == [1]
+        finally:
+            changed.close()
+
+    @pytest.mark.usefixtures("pool")  # the logins and the schemas
+    def test_a_thread_of_a_call_that_is_over_asks_with_the_section_as_it_is_now(self, tmp_path: Path) -> None:
+        """A late thread holds the registry as it was when its call began: it must not bring the old section back."""
+        changed, tools, stands_file = self.stand(tmp_path)
+        try:
+            lines_of(tools["run_select"], stand="dev1", schema=BILLING, query="SELECT 1")
+            stale = changed.registry.target("dev1", BILLING)
+            self.edit(changed, stands_file, f"user={READER}\n")
+            current = changed.database(changed.registry.target("dev1", BILLING))
+            assert changed.database(stale) is current
+            assert current.describe_target().startswith(f"{READER}@")
+        finally:
+            changed.close()
+
+
+class TestMakingConnections:
+    """Making a connection reads the password store, which may be slow to answer: that delays its own stand alone."""
+
+    @staticmethod
+    def two_stands(tmp_path: Path) -> tuple[Pool, str]:
+        """dev1, the first database under the billing login, and dev9, where nothing answers; and dev9's port."""
+        settings = Settings.from_env(os.environ)
+        dead = unreachable_database_env()["PGPORT"]
+        (tmp_path / "stands.conf").write_text(
+            f"[dev1.shop.{BILLING}]\nhost={settings.host}\nport={settings.port}\ndbname={settings.database}\n"
+            f"[dev9.shop.{BILLING}]\nhost=127.0.0.1\nport={dead}\nconnect_timeout=2\n"
+            f"dbname={settings.database}\n",
+            encoding="utf-8",
+        )
+        passfile = tmp_path / "pgpass"
+        passfile.write_text(f"*:*:*:{BILLING}:{PASSWORDS[BILLING]}\n", encoding="utf-8")
+        passfile.chmod(0o600)
+        registry = load_registry({"PG_EXPLORER_MCP_STANDS": "*"}, [tmp_path / "stands.conf"])
+        assert registry is not None
+        return Pool(registry, dict(os.environ, PGPASSFILE=str(passfile)), limit=2), dead
+
+    @pytest.mark.usefixtures("pool")  # the login and the schema
+    def test_a_store_slow_to_answer_delays_its_own_stand_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A keyring waiting to be unlocked held the pool's lock: other stands waited for it, and so did the call."""
+        monkeypatch.setattr(stand_tools, "CALL_TIME_BUDGET_S", 0.06)
+        find = passwords.lookup
+        slow_pool, dead = self.two_stands(tmp_path)
+        tools = by_name(build_stand_tools(slow_pool, str(ROOT), profile="analyst"))
+
+        def unlocked_late(env, host, port, database, user) -> tuple[str | None, str | None]:
+            if port != int(dead):  # the store answers about dev1 after most of a second
+                time.sleep(0.6)
+            return find(env, host, port, database, user)
+
+        monkeypatch.setattr(passwords, "lookup", unlocked_late)
+        try:
+            started = time.monotonic()
+            lines = lines_of(tools["run_select"], stands="dev1,dev9", schema=BILLING, query="SELECT 1")
+            elapsed = time.monotonic() - started
+            assert "no answer within the 0.06 seconds" in "\n".join(lines)  # dev1 is named among those still at work
+            assert elapsed < 0.45, elapsed  # the call answers at its budget, not when the store has answered
+        finally:
+            for thread in threading.enumerate():
+                if thread.name == "pg-explorer-mcp dev1":
+                    thread.join(10)
+            slow_pool.close()
+
+    def test_two_threads_that_make_the_connection_of_a_stand_at_once_leave_one(
+        self, pool: Pool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The connection is made outside the lock, so two threads may each make one: the pool keeps the first."""
+        name = f"dev1.shop.{BILLING}"
+        with pool._lock:
+            old = pool._open.pop(name, None)
+        if old is not None:
+            old.close()
+        make = Database
+        together = threading.Barrier(2, timeout=10)  # both have made theirs before either goes on
+        made: list[Database] = []
+
+        def making(env, counters=None) -> Database:
+            made.append(make(env, counters=counters))
+            together.wait()
+            return made[-1]
+
+        monkeypatch.setattr("pg_explorer_mcp.stands.Database", making)
+        taken: list[Database] = []
+
+        def take() -> None:
+            taken.append(pool.database(pool.registry.target("dev1", BILLING)))
+
+        threads = [threading.Thread(target=take) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        assert len(made) == 2
+        assert taken[0] is taken[1]
+        assert taken[0] in made  # one of the two, not a third
+        with pool._lock:
+            assert pool._open[name] is taken[0]
 
 
 def test_only_the_recent_connections_stay_open(pool: Pool, tools: dict[str, Tool]) -> None:

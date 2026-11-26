@@ -249,6 +249,10 @@ class Database:
         except ValueError as exc:
             self._config_error = str(exc)
 
+    def configured_with(self, env: Mapping[str, str]) -> bool:
+        """Whether this connection was made from exactly these variables: a section changed since makes another."""
+        return dict(self._env) == dict(env)
+
     @property
     def statements_run(self) -> int:
         """Statements this connection has run: for the query log."""

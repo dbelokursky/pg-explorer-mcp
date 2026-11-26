@@ -8,8 +8,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import sys
+import traceback
 from pathlib import Path
 
 import pytest
@@ -374,13 +376,32 @@ class TestKeychain:
     ) -> None:
         (folder / "state.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
         monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
-        with pytest.raises(PasswordStoreError, match="did not answer in time"):
+        with pytest.raises(PasswordStoreError, match=r"did not answer in time \(reading the record, 0\.5 s\)"):
             Keychain().read()
+
+    def test_a_writing_that_times_out_is_told_without_the_record(
+        self, folder: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exception of a timeout quotes the whole command, and the command of a writing carries the record."""
+        (folder / "state.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
+        monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
+        record = line_of(LOGIN, "s3cret")
+        with pytest.raises(PasswordStoreError) as caught:
+            Keychain().write(record + "\n")
+        assert "did not answer in time (writing the record, 0.5 s)" in str(caught.value)
+        told = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+        assert (caught.value.__cause__, caught.value.__context__) == (None, None)  # the tool's exception is not chained
+        # The values of the run alone: a traceback quotes the lines of the source, the literals of ours included.
+        quoted = base64.b64encode((record + "\n").encode("utf-8")).decode("ascii")
+        for value in ("s3cret", quoted, str(folder / "security.py"), "timed out after"):
+            assert value not in str(caught.value)
+            assert value not in told
 
     def test_a_tool_that_cannot_be_started_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(passwords, "_command", lambda *_args: [str(tmp_path / "no-such-tool")])
-        with pytest.raises(PasswordStoreError, match="could not be started"):
+        with pytest.raises(PasswordStoreError, match=r"could not be started \(reading the record\)") as caught:
             Keychain().read()
+        assert str(tmp_path / "no-such-tool") not in str(caught.value)
 
     def test_forget_removes_the_record(self, folder: Path) -> None:
         keychain = Keychain()
@@ -573,6 +594,17 @@ if action == "store":
     rest = rest[1:]  # --label=...
 attributes = dict(zip(rest[::2], rest[1::2]))
 key = json.dumps(attributes, sort_keys=True)
+# What a test makes fail once: the head of a writing, or the part of this number.
+if action == "store" and extra.get("refuse_head") and "head" in attributes.values():
+    extra["refuse_head"] -= 1
+    flags.write_text(json.dumps(extra))
+    sys.stderr.write("secret-tool: Cannot create item: the session was disconnected")
+    sys.exit(1)
+if action == "store" and "refuse_part" in extra and extra["refuse_part"] == attributes.get("part"):
+    extra.pop("refuse_part")
+    flags.write_text(json.dumps(extra))
+    sys.stderr.write("secret-tool: Cannot create item: the session was disconnected")
+    sys.exit(1)
 if action == "lookup":
     if key not in items:
         sys.exit(1)
@@ -611,6 +643,27 @@ def calls_of(folder: Path) -> list[tuple[list[str], str]]:
     return asked
 
 
+def generations_of(folder: Path) -> set[str]:
+    """The generations the items of the fake keyring lie under."""
+    return {json.loads(key)["generation"] for key in items_of(folder) if "generation" in json.loads(key)}
+
+
+def head_of(folder: Path) -> str:
+    """What the head of the fake keyring says."""
+    [item] = [value for key, value in items_of(folder).items() if json.loads(key).get("kind") == "head"]
+    return base64.b64decode(item).decode("utf-8")
+
+
+def item_key(**attributes: str) -> str:
+    """The key of an item in the fake keyring: its attributes."""
+    return json.dumps(attributes, sort_keys=True)
+
+
+def sealed(text: str) -> str:
+    """A secret as the fake keyring keeps it: what the store gives it on its input."""
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
 class TestSecretService:
     """secret-tool reads 8 KiB at most: the record lies in the keyring as parts, under a generation (ADR 0012)."""
 
@@ -642,19 +695,21 @@ class TestSecretService:
         assert max(len(secret) for secret in stored) <= 8192
         assert sum("part" in args for args, _ in calls_of(folder) if args[0] == "store") >= 3
 
-    def test_the_head_goes_in_last_and_names_the_generation(self, folder: Path) -> None:
-        SecretService().write("one\n")
+    def test_the_head_goes_in_last_and_names_the_generation_and_its_parts(self, folder: Path) -> None:
+        SecretService().write("one\n" * 5000)
         stores = [args for args, _ in calls_of(folder) if args[0] == "store"]
         assert stores[-1][-2:] == ["kind", "head"]
-        [head] = [secret for args, secret in calls_of(folder) if args[0] == "store" and "head" in args]
-        assert base64.b64decode(head) == b"1"
+        number = sum("part" in args for args in stores)
+        assert re.fullmatch(rf"1-[0-9a-f]{{8}}:{number}", head_of(folder))  # the writing, a name of its own, the count
 
     def test_a_second_writing_makes_a_new_generation_and_clears_the_old_one(self, folder: Path) -> None:
         SecretService().write("one\n" * 5000)
+        first = passwords._head(head_of(folder)).generation
         SecretService().write("two\n")
         assert SecretService().read() == "two\n"
-        generations = {json.loads(key)["generation"] for key in items_of(folder) if "generation" in json.loads(key)}
-        assert generations == {"2"}
+        [second] = generations_of(folder)
+        assert second != first
+        assert second.startswith("2-")
         heads = [key for key in items_of(folder) if json.loads(key).get("kind") == "head"]
         assert len(heads) == 1  # the tool updates the item of the same attributes and makes no duplicate
 
@@ -682,8 +737,22 @@ class TestSecretService:
     ) -> None:
         (folder / "flags.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
         monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
-        with pytest.raises(PasswordStoreError, match="did not answer in time"):
+        with pytest.raises(PasswordStoreError, match=r"did not answer in time \(reading the record, 0\.5 s\)"):
             SecretService().read()
+
+    def test_a_failure_of_the_tool_is_told_without_its_command(
+        self, folder: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """What is told of the tool's own exception holds its command: told is the operation and the cause alone."""
+        (folder / "flags.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
+        monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
+        with pytest.raises(PasswordStoreError) as caught:
+            SecretService().write(line_of(LOGIN, "s3cret") + "\n")
+        assert "did not answer in time (writing the record, 0.5 s)" in str(caught.value)
+        assert (caught.value.__cause__, caught.value.__context__) == (None, None)
+        told = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+        assert told.count("Traceback (most recent call last)") == 1  # nothing of the tool's exception is chained
+        assert "secret-tool" not in told
 
     def test_a_head_that_is_not_a_number_is_another_record(self, folder: Path) -> None:
         head = json.dumps({"account": "passwords", "kind": "head", "service": "pg-explorer-mcp"}, sort_keys=True)
@@ -695,8 +764,68 @@ class TestSecretService:
         SecretService().write("one\n")
         items = {key: value for key, value in items_of(folder).items() if "part" not in json.loads(key)}
         (folder / "items.json").write_text(json.dumps(items), encoding="utf-8")
-        with pytest.raises(PasswordStoreError, match="names generation 1 and has no parts"):
+        with pytest.raises(PasswordStoreError, match=r"names generation 1-[0-9a-f]{8}:1 and has no parts"):
             SecretService().read()
+
+    def test_a_part_that_is_gone_is_an_error_not_a_shorter_record(self, folder: Path) -> None:
+        SecretService().write(self.BIG)
+        kept = {key: value for key, value in items_of(folder).items() if json.loads(key).get("part") != "1"}
+        (folder / "items.json").write_text(json.dumps(kept), encoding="utf-8")
+        parts = len([key for key in items_of(folder) if "part" in json.loads(key)]) + 1
+        with pytest.raises(
+            PasswordStoreError, match=rf"names generation 1-[0-9a-f]{{8}}:{parts} and has 1 of its {parts}"
+        ):
+            SecretService().read()
+
+    def test_a_writing_tried_again_after_a_failure_meets_nothing_of_the_failed_one(self, folder: Path) -> None:
+        """A failed writing left no head, so the next one takes its number: its parts must not lie under its name."""
+        (folder / "flags.json").write_text(json.dumps({"refuse_head": 1}), encoding="utf-8")
+        with pytest.raises(PasswordStoreError, match="did not answer"):
+            SecretService().write(self.BIG)  # every part went in, the head did not
+        SecretService().write("two\n")
+        assert SecretService().read() == "two\n"
+        assert len(generations_of(folder)) == 2  # the failed one's parts are a leftover nobody names
+
+    def test_two_writings_that_find_the_same_head_do_not_share_a_generation(
+        self, folder: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two commands writing at once both read the head that was: their parts must not share a name."""
+        find = SecretService._item
+
+        def item(_self: SecretService, *attributes: tuple[str, str], operation: str) -> str | None:
+            return None if attributes == (("kind", "head"),) else find(_self, *attributes, operation=operation)
+
+        monkeypatch.setattr(SecretService, "_item", item)
+        SecretService().write("one\n" * 5000)
+        SecretService().write("two\n" * 5000)
+        assert len(generations_of(folder)) == 2
+
+    def test_the_parts_of_a_writing_that_cannot_finish_are_taken_away(self, folder: Path) -> None:
+        SecretService().write("before\n")
+        (folder / "flags.json").write_text(json.dumps({"refuse_part": "2"}), encoding="utf-8")
+        with pytest.raises(PasswordStoreError, match="did not answer"):
+            SecretService().write(self.BIG)
+        assert SecretService().read() == "before\n"  # the record is as it was
+        assert len(generations_of(folder)) == 1  # and nothing is left of the writing that failed
+
+    def test_a_record_from_before_the_count_was_kept_is_read_and_then_written_afresh(self, folder: Path) -> None:
+        ours = {"service": passwords.SERVICE, "account": passwords.ACCOUNT}
+        (folder / "items.json").write_text(
+            json.dumps(
+                {
+                    item_key(kind="head", **ours): sealed("7"),
+                    item_key(generation="7", part="0", **ours): sealed("one\n"),
+                    item_key(generation="7", part="1", **ours): sealed("two\n"),
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert SecretService().read() == "one\ntwo\n"
+        SecretService().write("x")
+        assert SecretService().read() == "x"
+        [generation] = generations_of(folder)
+        assert generation.startswith("8-")  # the parts of the old generation are gone, a new one is there
+        assert head_of(folder) == f"{generation}:1"
 
     def test_a_record_rewritten_between_its_head_and_its_parts_is_read_again(
         self, monkeypatch: pytest.MonkeyPatch
