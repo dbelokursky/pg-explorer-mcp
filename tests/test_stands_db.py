@@ -217,11 +217,19 @@ class TestStructure:
         ]
 
     def test_one_schema_is_listed_with_its_own_login(self, tools: dict[str, Tool]) -> None:
+
         assert names_of(lines_of(tools["list_tables"], stand="dev1", schema=ORDERS)) == [
             f"dev1 / shop / {ORDERS}",
             f"{ORDERS}.invoices",
             f"{ORDERS}.orders",
         ]
+
+    def test_a_name_with_its_schema_and_the_same_schema_argument_is_one_table(self, tools: dict[str, Tool]) -> None:
+        """A model often sends both: "mcp_it_billing.invoices" and schema "mcp_it_billing"."""
+        alone = lines_of(tools["describe_table"], stand="dev1", table="invoices", schema=BILLING)
+        assert lines_of(tools["describe_table"], stand="dev1", table=f"{BILLING}.invoices", schema=BILLING) == alone
+        with pytest.raises(ToolError, match="names schema"):
+            lines_of(tools["describe_table"], stand="dev1", table=f"{ORDERS}.orders", schema=BILLING)
 
     def test_the_catalog_falls_back_to_the_next_login(self, tools: dict[str, Tool]) -> None:
         assert names_of(lines_of(tools["list_tables"], stand="dev2")) == ["dev2 / shop", f"{BILLING}.invoices"]
