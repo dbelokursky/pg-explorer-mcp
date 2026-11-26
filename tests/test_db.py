@@ -780,6 +780,57 @@ class TestConnectionHints:
         assert "PGSSLMODE" in text
 
 
+LOCKED, LOCKED_PASSWORD, LOCKED_SCHEMA = f"mcp_it_locked{it_suffix()}", "locked-secret-1", f"mcp_it_vault{it_suffix()}"
+
+
+@pytest.fixture
+def locked_out(admin: pg8000.native.Connection) -> Iterator[Database]:
+    """A login with SELECT on one table and no USAGE on its schema: a query for it ends with 42501."""
+    admin.run(f"DROP SCHEMA IF EXISTS {LOCKED_SCHEMA} CASCADE")
+    drop_role(admin, LOCKED)
+    admin.run(f"CREATE SCHEMA {LOCKED_SCHEMA}")
+    admin.run(f"CREATE TABLE {LOCKED_SCHEMA}.secrets (id int PRIMARY KEY, body text)")
+    admin.run(f"INSERT INTO {LOCKED_SCHEMA}.secrets VALUES (1, 'open')")
+    admin.run(f"CREATE ROLE {LOCKED} LOGIN PASSWORD '{LOCKED_PASSWORD}'")
+    admin.run(f"GRANT SELECT ON {LOCKED_SCHEMA}.secrets TO {LOCKED}")
+    database = Database(env_with(PGUSER=LOCKED, PGPASSWORD=LOCKED_PASSWORD))
+    yield database
+    database.close()
+    admin.run(f"DROP SCHEMA {LOCKED_SCHEMA} CASCADE")
+    drop_role(admin, LOCKED)
+
+
+class TestASchemaTheRoleMayNotEnter:
+    """SELECT on a table is worth nothing without USAGE on its schema: PostgreSQL answers 42501 to the query."""
+
+    def test_the_table_is_not_among_the_readable_ones(self, locked_out: Database) -> None:
+        tools = by_name(build_tools(locked_out, str(ROOT), profile="analyst"))
+        with pytest.raises(ToolError) as caught:
+            tools["list_tables"].call({})
+        assert f"schemas it may not enter ({LOCKED_SCHEMA})" in str(caught.value)  # and what to ask for
+        assert "GRANT USAGE ON SCHEMA" in str(caught.value)
+        found = tools["search_schema"].call({"text": "secret"})
+        assert found.startswith("Nothing matches 'secret'.")
+
+    def test_naming_the_table_says_what_the_role_lacks(self, locked_out: Database) -> None:
+        tools = by_name(build_tools(locked_out, str(ROOT), profile="analyst"))
+        for tool, arguments in (
+            ("sample_rows", {"table": "secrets", "schema": LOCKED_SCHEMA}),
+            ("describe_table", {"table": f"{LOCKED_SCHEMA}.secrets"}),
+        ):
+            with pytest.raises(ToolError) as caught:
+                tools[tool].call(arguments)
+            assert f"may not enter schema {LOCKED_SCHEMA}" in str(caught.value), (tool, caught.value)
+
+    def test_with_usage_on_the_schema_the_table_is_listed_and_read(
+        self, locked_out: Database, admin: pg8000.native.Connection
+    ) -> None:
+        admin.run(f"GRANT USAGE ON SCHEMA {LOCKED_SCHEMA} TO {LOCKED}")
+        tools = by_name(build_tools(locked_out, str(ROOT), profile="analyst"))
+        assert lines_of(tools["list_tables"])[0].startswith(f"{LOCKED_SCHEMA}.secrets | table")
+        assert "open" in tools["sample_rows"].call({"table": "secrets", "schema": LOCKED_SCHEMA})
+
+
 def test_the_line_about_the_database_survives_an_answer_cut_to_the_smallest_budget(db: Database) -> None:
     """The smallest budget cuts the answer before its last lines. The line that says the database answers
     stays: install.py reads it to tell whether the server is ready, and it is what the answer is asked for."""

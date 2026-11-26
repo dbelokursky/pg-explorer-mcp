@@ -340,6 +340,11 @@ EN: dict[str, str] = {
     "error.out_of_range": "{name} must be from {low} to {high}, got {number}",
     "error.flag": "{name} must be true or false",
     "error.no_tables": "The current role cannot read any table in this database. Ask the DBA to grant SELECT.",
+    "error.no_tables_sealed": (
+        "The current role cannot read any table in this database. It may select from tables in schemas it "
+        "may not enter ({schemas}): with USAGE on a schema its tables become readable. Ask the DBA for "
+        "GRANT USAGE ON SCHEMA <schema> TO <role>, or for SELECT on the tables to read."
+    ),
     "error.no_tables_in_schema": (
         "The current role cannot read any table in schema {schema!r}. Schemas with readable tables: {visible}."
     ),
@@ -354,6 +359,11 @@ EN: dict[str, str] = {
     ),
     "error.not_found": "No readable table or view named {name!r}{where}. Call list_tables to see what exists.",
     "error.not_found_similar": "No readable table or view named {name!r}{where}. Similar names: {similar}.",
+    "error.no_schema_usage": (
+        "{schema}.{name} is there, and the role may select from it, but it may not enter schema {schema}: "
+        "a query for it ends with 42501 (permission denied). Ask for the privilege on the schema: "
+        "GRANT USAGE ON SCHEMA {schema} TO <role>."
+    ),
     "error.table_elsewhere": "{error} A table of that name is readable as {tables}: write the name with its schema.",
     "error.columns_of": "{error} Columns of the tables the query reads: {tables}.",
     "error.in_schema": " in schema {schema!r}",
@@ -1083,6 +1093,11 @@ RU: dict[str, str] = {
     "error.out_of_range": "Параметр {name} должен быть от {low} до {high}, а передано {number}",
     "error.flag": "Параметр {name} должен быть true или false",
     "error.no_tables": "Текущая роль не может читать ни одну таблицу в этой базе. Попросите DBA выдать права SELECT.",
+    "error.no_tables_sealed": (
+        "Текущая роль не может читать ни одну таблицу в этой базе. Она может делать SELECT из таблиц схем, "
+        "куда ей входить нельзя ({schemas}): с правом USAGE на схему её таблицы станут доступными. Попросите "
+        "DBA: GRANT USAGE ON SCHEMA <схема> TO <роль> — либо SELECT на таблицы, которые нужно читать."
+    ),
     "error.no_tables_in_schema": (
         "Текущая роль не может читать ни одну таблицу в схеме {schema!r}. "
         "Схемы с таблицами, доступными для чтения: {visible}."
@@ -1102,6 +1117,11 @@ RU: dict[str, str] = {
     ),
     "error.not_found_similar": (
         "Среди доступных для чтения нет таблицы или представления {name!r}{where}. Похожие имена: {similar}."
+    ),
+    "error.no_schema_usage": (
+        "{schema}.{name} есть, и роль может читать её, но входить в схему {schema} она не может: запрос к ней "
+        "заканчивается ошибкой 42501 (permission denied). Попросите право на схему: "
+        "GRANT USAGE ON SCHEMA {schema} TO <роль>."
     ),
     "error.table_elsewhere": "{error} Таблица с таким именем доступна как {tables}: укажите имя вместе со схемой.",
     "error.columns_of": "{error} Колонки таблиц запроса: {tables}.",
