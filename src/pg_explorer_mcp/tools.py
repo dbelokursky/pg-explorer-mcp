@@ -99,7 +99,10 @@ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
 """
 
 
-_READABLE_RELATIONS = _readable_relations("has_table_privilege(c.oid, 'SELECT')")
+# What the role reads: a relation it may select from, in a schema it may enter. The privilege on the table
+# is worth nothing without the one on its schema: the query for the table ends with 42501.
+READABLE = "has_table_privilege(c.oid, 'SELECT') AND has_schema_privilege(n.oid, 'USAGE')"
+_READABLE_RELATIONS = _readable_relations(READABLE)
 
 # Estimated rows. PostgreSQL 14+ keeps -1 until a table is first analyzed; before 14 such a
 # table shows 0 rows in 0 pages, exactly like an empty one, so that case becomes NULL.
@@ -131,12 +134,36 @@ LIMIT 1
 # A relation as the statement found it: to_regclass reads the name with its schema and quotes, or on
 # the search path of the session, as the statement did. Only one the role reads, as everywhere else:
 # PostgreSQL reports a missing column before it checks the privilege to read the table.
-RELATION_BY_NAME_SQL = """
+RELATION_BY_NAME_SQL = (
+    """
 SELECT c.oid, n.nspname, c.relname
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.oid = to_regclass(CAST(:name AS text))
+  AND """
+    + READABLE
+    + "\n"
+)
+
+# Schemas with tables the role may select from and may not enter: with USAGE on the schema they become readable.
+SEALED_SCHEMAS_SQL = (
+    "SELECT DISTINCT n.nspname"
+    + _readable_relations("has_table_privilege(c.oid, 'SELECT') AND NOT has_schema_privilege(n.oid, 'USAGE')")
+    + "ORDER BY 1 LIMIT 10"
+)
+
+# A relation that is there and may be selected from, in a schema the role may not enter: named, it is not
+# "not found" but exactly this, so that a model asks for the privilege instead of looking for another name.
+SEALED_SCHEMA_SQL = """
+SELECT 1
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = CAST(:name AS text)
+  AND n.nspname = CAST(:schema AS text)
+  AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
   AND has_table_privilege(c.oid, 'SELECT')
+  AND NOT has_schema_privilege(n.oid, 'USAGE')
+LIMIT 1
 """
 
 FIND_RELATION_SQL = (
@@ -214,8 +241,10 @@ ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3
 REFERENCED_BY_SQL = """
 SELECT con.conrelid::regclass::text, pg_get_constraintdef(con.oid, true)
 FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE con.confrelid = CAST(:oid AS oid) AND con.contype = 'f'
-  AND has_table_privilege(con.conrelid, 'SELECT')
+  AND has_table_privilege(con.conrelid, 'SELECT') AND has_schema_privilege(n.oid, 'USAGE')
 ORDER BY con.conrelid::regclass::text COLLATE "C", con.conname COLLATE "C"
 LIMIT :limit
 """
@@ -591,7 +620,7 @@ def list_tables(
         if schemas is not None:  # the catalog does not depend on privileges here: the schemas are empty or gone
             raise ToolError(t("stands.no_tables", schemas=", ".join(schemas)))
         if schema is None:
-            raise ToolError(t("error.no_tables"))
+            raise ToolError(_no_tables(db))
         if _guessed(db, schema):  # the question was what tables there are: those of every schema answer it
             return [t("list.guessed_schema", schema=schema), *list_tables(db, None, glossary=glossary)]
         raise ToolError(_closed_schema(db, schema))
@@ -693,6 +722,14 @@ def _system(schema: str) -> bool:
 def _guessed(db: Database, schema: str) -> bool:
     """A schema without a single table or view, readable or not: the model made it up."""
     return not _system(schema) and not db.query(SCHEMA_HOLDS_RELATIONS_SQL, schema=schema)
+
+
+def _no_tables(db: Database) -> str:
+    """Why no table is readable: none was granted, or the ones that were sit in schemas the role may not enter."""
+    sealed = [row[0] for row in db.query(SEALED_SCHEMAS_SQL)]
+    if sealed:
+        return t("error.no_tables_sealed", schemas=", ".join(sealed))
+    return t("error.no_tables")
 
 
 def _closed_schema(db: Database, schema: str, visible: Sequence[str] | None = None) -> str:
@@ -974,6 +1011,8 @@ def split_name(table: Any, schema: Any) -> tuple[str, str | None]:
 
 def _not_found(db: Database, name: str, schema: str | None) -> str:
     where = t("error.in_schema", schema=schema) if schema else ""
+    if schema is not None and db.query(SEALED_SCHEMA_SQL, name=name, schema=schema):
+        return t("error.no_schema_usage", schema=schema, name=name)
     similar = [row[0] for row in db.query(SIMILAR_RELATIONS_SQL, fragment=_like_escape(name))]
     if similar:
         return t("error.not_found_similar", name=name, where=where, similar=", ".join(similar))
