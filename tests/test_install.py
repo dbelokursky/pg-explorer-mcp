@@ -1216,7 +1216,7 @@ def test_registering_with_a_client_holds_the_lock_while_its_settings_are_written
 def test_registering_with_an_editor_holds_the_lock_too(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
 ) -> None:
-    use_env(monkeypatch, unreachable_env, tmp_path)
+    isolated(monkeypatch, tmp_path, unreachable_env)  # an editor's settings live where XDG_CONFIG_HOME says
     (clients.app_data(os.environ, Path.home()) / "Code" / "User").mkdir(parents=True)
     write = clients.write
     held: list[bool] = []
@@ -1271,7 +1271,7 @@ def test_a_client_whose_settings_cannot_be_written_fails_the_command(
 ) -> None:
     """The command used to answer 0: it paid no attention to whether the server got registered at all."""
     name, where, key = client
-    use_env(monkeypatch, unreachable_env, tmp_path)
+    isolated(monkeypatch, tmp_path, unreachable_env)  # an editor's settings live where XDG_CONFIG_HOME says
     base = Path.home() if name == "cursor" else clients.app_data(os.environ, Path.home())
     folder = base.joinpath(*where)
     folder.mkdir(parents=True)
