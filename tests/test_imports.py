@@ -876,14 +876,19 @@ class TestWrite:
         assert memory.text == other + line_of(BILLING, "s3cret") + "\n"
 
     def test_a_registry_that_cannot_be_written_leaves_it_unwritten_and_the_store_untouched(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         registry_file = tmp_path / "stands.conf"
-        (tmp_path / "stands.conf.pg-explorer-mcp-new").mkdir()  # where the new registry would go
+
+        def refused(*_args: object, **_options: object) -> None:
+            raise PermissionError(13, "Permission denied", str(tmp_path))  # a folder that cannot be written
+
+        monkeypatch.setattr("tempfile.mkstemp", refused)
         memory = Memory()
         with pytest.raises(ImportRefusedError, match="Nothing was changed"):
             write(plan([connection()], PATTERN), registry_file, Passwords(memory))
         assert not registry_file.exists()
+        assert list(tmp_path.iterdir()) == []  # and no waiting text was left behind
         assert (memory.text, memory.readings) == ("", 0)
 
     def test_a_registry_that_cannot_be_replaced_stays_as_it_was_and_the_store_untouched(
@@ -895,7 +900,7 @@ class TestWrite:
         replace = Path.replace
 
         def busy(self: Path, target: Path) -> Path:
-            if Path(target) == real_registry and self.name.endswith(".pg-explorer-mcp-new"):
+            if Path(target) == real_registry and user_files.NEW in self.name:
                 raise PermissionError("the file is in use")
             return replace(self, target)
 
