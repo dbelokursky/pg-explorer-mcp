@@ -289,15 +289,19 @@ EN: dict[str, str] = {
     "passwords.the_store": "the password store",
     "passwords.the_environment": "PGPASSWORD in the environment",
     "passwords.the_registry": "a password= line of the registry",
+    "passwords.reading": "reading the record",
+    "passwords.writing": "writing the record",
+    "passwords.removing": "removing the record",
     "passwords.store_unreadable": "the password store cannot be read: {error}",
     "passwords.clear_text": (
         "the password comes from {path} in clear text: move it into the password store with {command} --move"
     ),
     "passwords.keychain_error": "the login keychain did not answer: {error}",
-    "passwords.keychain_silent": (
-        "the keychain tool could not be started or did not answer in time: {error}. "
-        "The keychain may be locked or asking for permission: unlock it and try again."
+    "passwords.keychain_timeout": (
+        "the keychain tool did not answer in time ({operation}, {seconds} s). The keychain may be locked "
+        "or asking for permission: unlock it and try again."
     ),
+    "passwords.keychain_unstarted": "the keychain tool could not be started ({operation}): {error}",
     "passwords.not_ours": "the keychain holds another record under {service}/{account}: {error}",
     "passwords.dpapi": "the file {path}, sealed by DPAPI for this Windows account",
     "passwords.dpapi_error": (
@@ -306,10 +310,11 @@ EN: dict[str, str] = {
     ),
     "passwords.secret_service": "the keyring of the desktop, record {service}/{account} (Secret Service)",
     "passwords.keyring_error": "the keyring did not answer: {error}",
-    "passwords.keyring_silent": (
-        "the keyring tool could not be started or did not answer in time: {error}. The keyring may be "
-        "locked and waiting for the desktop to ask for its password."
+    "passwords.keyring_timeout": (
+        "the keyring tool did not answer in time ({operation}, {seconds} s). The keyring may be locked "
+        "and waiting for the desktop to ask for its password."
     ),
+    "passwords.keyring_unstarted": "the keyring tool could not be started ({operation}): {error}",
     "passwords.keyring_not_ours": "the keyring holds another record under {service}/{account}: {error}",
     "passwords.keyring_missing": (
         "the record {service}/{account} in the keyring names generation {generation} and has no parts: "
@@ -1014,15 +1019,19 @@ RU: dict[str, str] = {
     "passwords.the_store": "хранилища паролей",
     "passwords.the_environment": "переменной PGPASSWORD",
     "passwords.the_registry": "строки password= реестра",
+    "passwords.reading": "чтение записи",
+    "passwords.writing": "запись паролей",
+    "passwords.removing": "удаление записи",
     "passwords.store_unreadable": "хранилище паролей не читается: {error}",
     "passwords.clear_text": (
         "пароль лежит в {path} открытым текстом: перенесите его в хранилище паролей командой {command} --move"
     ),
     "passwords.keychain_error": "связка ключей не ответила: {error}",
-    "passwords.keychain_silent": (
-        "не удалось запустить утилиту связки ключей или она не ответила вовремя: {error}. "
-        "Связка может быть заперта или спрашивать разрешение: разблокируйте её и повторите."
+    "passwords.keychain_timeout": (
+        "утилита связки ключей не ответила вовремя ({operation}, {seconds} с). Связка может быть заперта "
+        "или спрашивать разрешение: разблокируйте её и повторите."
     ),
+    "passwords.keychain_unstarted": "не удалось запустить утилиту связки ключей ({operation}): {error}",
     "passwords.not_ours": "в связке ключей под именем {service}/{account} лежит чужая запись: {error}",
     "passwords.dpapi": "файл {path}, запечатанный DPAPI для этой учётной записи Windows",
     "passwords.dpapi_error": (
@@ -1031,10 +1040,11 @@ RU: dict[str, str] = {
     ),
     "passwords.secret_service": "связка ключей рабочего стола, запись {service}/{account} (Secret Service)",
     "passwords.keyring_error": "связка ключей не ответила: {error}",
-    "passwords.keyring_silent": (
-        "не удалось запустить утилиту связки ключей или она не ответила вовремя: {error}. Связка может "
-        "быть заперта и ждать, пока рабочий стол спросит её пароль."
+    "passwords.keyring_timeout": (
+        "утилита связки ключей не ответила вовремя ({operation}, {seconds} с). Связка может быть заперта "
+        "и ждать, пока рабочий стол спросит её пароль."
     ),
+    "passwords.keyring_unstarted": "не удалось запустить утилиту связки ключей ({operation}): {error}",
     "passwords.keyring_not_ours": "в связке ключей под именем {service}/{account} лежит чужая запись: {error}",
     "passwords.keyring_missing": (
         "запись {service}/{account} в связке ключей называет поколение {generation}, а частей у него нет: "

@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import sys
+import traceback
 from pathlib import Path
 
 import pytest
@@ -374,13 +375,32 @@ class TestKeychain:
     ) -> None:
         (folder / "state.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
         monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
-        with pytest.raises(PasswordStoreError, match="did not answer in time"):
+        with pytest.raises(PasswordStoreError, match=r"did not answer in time \(reading the record, 0\.5 s\)"):
             Keychain().read()
+
+    def test_a_writing_that_times_out_is_told_without_the_record(
+        self, folder: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exception of a timeout quotes the whole command, and the command of a writing carries the record."""
+        (folder / "state.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
+        monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
+        record = line_of(LOGIN, "s3cret")
+        with pytest.raises(PasswordStoreError) as caught:
+            Keychain().write(record + "\n")
+        assert "did not answer in time (writing the record, 0.5 s)" in str(caught.value)
+        told = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+        assert (caught.value.__cause__, caught.value.__context__) == (None, None)  # the tool's exception is not chained
+        # The values of the run alone: a traceback quotes the lines of the source, the literals of ours included.
+        quoted = base64.b64encode((record + "\n").encode("utf-8")).decode("ascii")
+        for value in ("s3cret", quoted, str(folder / "security.py"), "timed out after"):
+            assert value not in str(caught.value)
+            assert value not in told
 
     def test_a_tool_that_cannot_be_started_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(passwords, "_command", lambda *_args: [str(tmp_path / "no-such-tool")])
-        with pytest.raises(PasswordStoreError, match="could not be started"):
+        with pytest.raises(PasswordStoreError, match=r"could not be started \(reading the record\)") as caught:
             Keychain().read()
+        assert str(tmp_path / "no-such-tool") not in str(caught.value)
 
     def test_forget_removes_the_record(self, folder: Path) -> None:
         keychain = Keychain()
@@ -682,8 +702,22 @@ class TestSecretService:
     ) -> None:
         (folder / "flags.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
         monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
-        with pytest.raises(PasswordStoreError, match="did not answer in time"):
+        with pytest.raises(PasswordStoreError, match=r"did not answer in time \(reading the record, 0\.5 s\)"):
             SecretService().read()
+
+    def test_a_failure_of_the_tool_is_told_without_its_command(
+        self, folder: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """What is told of the tool's own exception holds its command: told is the operation and the cause alone."""
+        (folder / "flags.json").write_text(json.dumps({"sleep": 5}), encoding="utf-8")
+        monkeypatch.setattr(passwords, "TOOL_TIMEOUT_S", 0.5)
+        with pytest.raises(PasswordStoreError) as caught:
+            SecretService().write(line_of(LOGIN, "s3cret") + "\n")
+        assert "did not answer in time (writing the record, 0.5 s)" in str(caught.value)
+        assert (caught.value.__cause__, caught.value.__context__) == (None, None)
+        told = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+        assert told.count("Traceback (most recent call last)") == 1  # nothing of the tool's exception is chained
+        assert "secret-tool" not in told
 
     def test_a_head_that_is_not_a_number_is_another_record(self, folder: Path) -> None:
         head = json.dumps({"account": "passwords", "kind": "head", "service": "pg-explorer-mcp"}, sort_keys=True)
