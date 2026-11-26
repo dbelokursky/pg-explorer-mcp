@@ -662,6 +662,10 @@ EN: dict[str, str] = {
         "name the login with --host, --port, --database and --user, or with --stand and --schema; "
         "or set PGHOST in the shell"
     ),
+    "install.locked": (
+        "another command of pg-explorer-mcp is writing these files and did not finish in {seconds} seconds. "
+        "Nothing was written: try again when it has."
+    ),
     "install.no_store": (
         "this system has no password store the server can use: the password can only come from PGPASSWORD"
     ),
@@ -1407,6 +1411,10 @@ RU: dict[str, str] = {
     "install.password_login": (
         "назовите подключение: --host, --port, --database и --user либо --stand и --schema; "
         "или задайте PGHOST в оболочке"
+    ),
+    "install.locked": (
+        "другая команда pg-explorer-mcp записывает эти файлы и не закончила за {seconds} с. "
+        "Ничего не записано: повторите, когда она закончит."
     ),
     "install.no_store": (
         "на этой системе нет хранилища паролей, которое сервер умеет использовать: "

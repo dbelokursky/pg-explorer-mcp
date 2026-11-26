@@ -30,6 +30,7 @@ without the locale variables of this shell.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import getpass
 import json
@@ -39,12 +40,13 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from pg_explorer_mcp import clients, environment, exports, i18n, imports, passwords
+from pg_explorer_mcp import clients, environment, exports, i18n, imports, passwords, user_files
 from pg_explorer_mcp.db import split_hosts
 from pg_explorer_mcp.i18n import t
 from pg_explorer_mcp.protocol import SUPPORTED_PROTOCOL_VERSIONS
@@ -374,11 +376,16 @@ def import_command(args: argparse.Namespace, language: str) -> int:
     if not args.write:
         print(t("import.dry_run"))
         return 0
+    written: list[str] = []
     try:
-        written = imports.write(result, registry_file, store, prune=args.prune)
+        with _writing() as got_in:
+            if got_in:
+                written = imports.write(result, registry_file, store, prune=args.prune)
     except imports.ImportRefusedError as exc:
         print(exc)
         return 1
+    if not got_in:
+        return 1  # another command is writing, and _writing said so
     for line in written:
         print(line)
     entry = server_entry(args.profile, language, STANDS_NAME)
@@ -411,7 +418,8 @@ def password_command(args: argparse.Namespace) -> int:
         return 1
     named = ", ".join(f"{user}@{host}:{port}/{database}" for host, port, database, user in logins)
     if args.move:
-        return _move_password(env, store, logins, named)
+        with _writing() as got_in:
+            return _move_password(env, store, logins, named) if got_in else 1
     if not sys.stdin.isatty():
         print(t("install.password_needs_terminal"))
         return 2
@@ -422,7 +430,29 @@ def password_command(args: argparse.Namespace) -> int:
     if not typed:
         print(t("install.password_empty"))
         return 1
-    return _saved(store, dict.fromkeys(logins, typed), named)
+    with _writing() as got_in:
+        return _saved(store, dict.fromkeys(logins, typed), named) if got_in else 1
+
+
+@contextlib.contextmanager
+def _writing() -> Iterator[bool]:
+    """A command's writing under the lock of user_files.exclusive: one command at a time reads, merges, writes.
+
+    Two commands making the same cycle at once would each write from what they read before the other
+    wrote, and one change would be lost. The block gets whether the command got in: False when the one
+    before it held the lock for longer than it may be waited for. That was said, and the block writes nothing.
+    """
+    with contextlib.ExitStack() as lock:
+        try:
+            # The folder of our own files, next to the stands registry.
+            lock.enter_context(
+                user_files.exclusive(registry_files(shell_env())[0].parent, timeout=user_files.LOCK_TIMEOUT_S)
+            )
+        except user_files.StillLockedError:
+            print(t("install.locked", seconds=user_files.LOCK_TIMEOUT_S))
+            yield False
+        else:
+            yield True
 
 
 def _saved(store: passwords.Passwords, found: dict[passwords.Login, str], named: str) -> int:
@@ -569,6 +599,19 @@ def offer_import(language: str) -> None:
 def export_command(args: argparse.Namespace) -> int:
     """Preview, or with --write make, the stand connections in a database tool."""
     try:
+        if args.write:
+            with _writing() as got_in:
+                return _export_of(args)() if got_in else 1  # read and merged under the lock it is written under
+        return _export_of(args)()
+    except exports.ExportRefusedError as exc:
+        print(exc)
+        return 1
+
+
+def _export_of(args: argparse.Namespace) -> Callable[[], int]:
+    """The export of the command: its preview, and with --write its files; refused before anything is written."""
+
+    def export() -> int:
         items, warnings = exports.connections(shell_env(), args.stands.split(","))
         export = exports.prepare(
             args.tool,
@@ -579,17 +622,16 @@ def export_command(args: argparse.Namespace) -> int:
             project=_folder(args.project),
             editor=args.editor,
         )
-    except exports.ExportRefusedError as exc:
-        print(exc)
-        return 1
-    for line in [*warnings, *exports.preview(export)]:
-        print(line)
-    if not export.files:
-        return 0
-    if not args.write:
-        print(t("export.dry_run"))
-        return 0
-    return _write_export(export) or (_write_pgpass(items) if args.pgpass else 0)
+        for line in [*warnings, *exports.preview(export)]:
+            print(line)
+        if not export.files:
+            return 0
+        if not args.write:
+            print(t("export.dry_run"))
+            return 0
+        return _write_export(export) or (_write_pgpass(items) if args.pgpass else 0)
+
+    return export
 
 
 def _write_pgpass(items: list[exports.Connection]) -> int:
@@ -693,16 +735,26 @@ def offer_export(*, besides: str | None = None) -> None:
 
 
 def _export_now(tool: str, items: list[exports.Connection], editor: str) -> None:
-    """Prepare one export and write it. It is prepared only now: both VS Code extensions change one file."""
+    """Prepare one export and write it, under the lock as every writing is.
+
+    It is prepared only now: both VS Code extensions change one file.
+    """
+    with _writing() as got_in:
+        if got_in:
+            _export_written(tool, items, editor)
+
+
+def _export_written(tool: str, items: list[exports.Connection], editor: str) -> int:
     try:
         export = exports.prepare(tool, items, shell_env(), Path.home(), editor=editor or "vscode")
     except exports.ExportRefusedError as exc:
         print(exc)
-        return
+        return 1
     for line in exports.preview(export):
         print(line)
     if export.files:
-        _write_export(export)
+        return _write_export(export)
+    return 0
 
 
 if __name__ == "__main__":

@@ -612,8 +612,9 @@ what would be written and what is left out and why; passwords are never shown. `
 `~/.pg-explorer-mcp/stands.conf` (adding to what is there, or replacing it with `--prune`) and puts the
 passwords into the [password store](#4-the-password-goes-into-the-password-store), a line per login; a
 dated copy of the registry is kept, and when anything fails, nothing is changed: the passwords are kept
-after the registry is written, and the registry is taken back when they cannot be. Where the system has
-no password store, an import with passwords is refused: they would go nowhere. DBeaver's saved
+after the registry is written, and the registry is taken back when they cannot be. The commands of
+`install.py` that write take turns: while one writes, it holds a `lock` file next to the registry. Where
+the system has no password store, an import with passwords is refused: they would go nowhere. DBeaver's saved
 passwords are read from its own files while DBeaver keeps them under its default key; with its secure
 storage switched on they stay unknown, and the preview names the `install.py password` command for each
 login that needs one by hand. The agent does the same with `/pg:import`, writing only after you confirm.
