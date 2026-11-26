@@ -48,7 +48,7 @@ English or Russian.
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
 | `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
 | `schema_diagram` | the data model as a Mermaid diagram the agent shows as a picture: the tables of a schema with their keys and foreign keys, or one table with its neighbours | all |
-| `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, columns, constraints, indexes | all |
+| `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, what a view selects, columns (identity and generated ones included), constraints, indexes | all |
 | `db_health` | catalog diagnostics: buffers, maintenance, index candidates, sequence headroom and sizes; no monitoring roles | `explore`, `analyst` |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
