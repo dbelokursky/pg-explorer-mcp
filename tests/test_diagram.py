@@ -25,6 +25,7 @@ from pg_explorer_mcp.tools import (
     PROFILES,
     SCHEMA_HOLDS_RELATIONS_SQL,
     SCHEMAS_SQL,
+    SEALED_SCHEMA_SQL,
     SIMILAR_RELATIONS_SQL,
     Tool,
     ToolError,
@@ -142,7 +143,7 @@ def catalog(sql: str, **params: Any) -> list[tuple[Any, ...]]:
         return [(1,)] if any(schema == params["schema"] for schema, _ in TABLES.values()) else []
     if sql is SCHEMAS_SQL:
         return [(schema,) for schema in sorted({schema for schema, _ in TABLES.values()})]
-    if sql is SIMILAR_RELATIONS_SQL:
+    if sql in (SIMILAR_RELATIONS_SQL, SEALED_SCHEMA_SQL):
         return []
     raise AssertionError(f"unexpected query: {sql}")
 

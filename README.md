@@ -46,9 +46,9 @@ English or Russian.
 | `list_schemas` | with [many stands](#many-stands): the databases of a stand and their schemas, those the server has logins for or all that a single login reads | all |
 | `list_tables` | tables, views and foreign tables the role can read, with estimated row counts and comments | all |
 | `search_schema` | tables, views and columns whose name or comment contains a piece of text, in every readable schema; for large databases | all |
-| `describe_table` | columns with types, `NOT NULL`, defaults and comments; keys, tables referencing it, indexes | all |
+| `describe_table` | columns with types, `NOT NULL`, defaults and comments, and how an identity or generated column makes its values; keys, tables referencing it, indexes | all |
 | `schema_diagram` | the data model as a Mermaid diagram the agent shows as a picture: the tables of a schema with their keys and foreign keys, or one table with its neighbours | all |
-| `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, columns, constraints, indexes | all |
+| `compare_schema` | with [many stands](#many-stands): how one schema differs between two stands: tables and views, what a view selects, columns (identity and generated ones included), constraints, indexes | all |
 | `db_health` | catalog diagnostics: buffers, maintenance, index candidates, sequence headroom and sizes; no monitoring roles | `explore`, `analyst` |
 | `sample_rows` | a few rows of a table, optionally only some columns | `explore`, `analyst` |
 | `explain_query` | a query plan without running the query; in the `analyst` profile also with real timings (`ANALYZE`) | `explore`, `analyst` |
@@ -189,7 +189,8 @@ What the script does:
 2. adds the server `pg` to `mcpServers`: the Python that runs the script, the path to `run.py`, the
    `PG*` variables from the terminal (except `PGPASSWORD`), the profile and the language;
 3. starts the server the way the agent will, calls `status` and prints the answer. Exit code 0 means
-   the database is reachable.
+   the database is reachable. It is 1 also when the server could not be added to the settings at step 2:
+   the reason is printed, and the check is not run.
 
 `python3 install.py --check` only starts the server and calls `status`; it changes nothing.
 
@@ -293,7 +294,7 @@ agent's interface.
 `status`:
 
 ```text
-pg-explorer-mcp 0.12.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
+pg-explorer-mcp 0.13.0 on Python 3.9.6, installed at /Users/me/pg-explorer-mcp
 server name: pg
 access: read only. Nothing can be inserted, changed or deleted through this server: decline such requests instead of asking the user to confirm them.
 target: mcp_demo_agent@localhost:5432/pg_mcp_demo (sslmode=prefer)
@@ -528,6 +529,7 @@ mermaid-cli turns it into an SVG. The reasoning is in [ADR 0008](docs/adr/0008-s
 | Rows from `run_select` | at most 200 |
 | Plan lines | at most 500 |
 | One value in an answer | at most 200 characters |
+| Data read for one answer | at most 1 MiB at a time; the rows beyond it are not read, and the answer says so |
 | A whole tool answer | 8000 characters (`PG_EXPLORER_MCP_MAX_RESPONSE_CHARS`) |
 | One query | 5 seconds (`PG_EXPLORER_MCP_STATEMENT_TIMEOUT_MS`) |
 | Open connections of an entry for stands | at most 8 (`PG_EXPLORER_MCP_MAX_CONNECTIONS`) |
@@ -1089,6 +1091,11 @@ the new `pg-explorer-mcp-<version>.zip` from the
 [Releases page](https://github.com/dbelokursky/pg-explorer-mcp/releases), delete the old folder, unpack the new
 one in its place and restart the agent. Run `install.py` again only if the folder's path changed or
 you changed Python, the profile or the language.
+
+**From 0.12.0 and earlier.** Nothing to redo after the update. `list_tables` and `search_schema` now leave
+out the tables of schemas the role may not enter: reading one ended with error 42501, and naming one now
+says what the role lacks. `compare_schema` reports a difference in what a view selects and in how a
+column's values are made. One answer reads at most 1 MiB of rows and says when it left the rest unread.
 
 **From 0.11.0 and earlier.** Nothing to redo after the update. A section of the stands registry that changed
 gets a new connection without a restart. The commands of `install.py` that write take turns and keep a `lock`

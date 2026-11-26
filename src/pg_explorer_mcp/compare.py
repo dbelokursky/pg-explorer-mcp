@@ -4,25 +4,31 @@ The structure comes from the system catalog through the schema's own login on ea
 stand, in three queries per stand however many tables it has: relations with their
 columns, then constraints, then indexes. The answer names what exists on one stand
 only and what differs; the data is never read (ADR 0006).
+
+What a relation does is compared with what it is made of: what a view selects, and
+how a column's values are made, for a column may be an identity or a generated one.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .budget import shorten
+from .budget import VALUE_LIMIT, shorten
 from .db import Database, DatabaseUnavailableError, QueryFailedError
 from .i18n import plural, t
 from .stands import Pool, Target
-from .tools import ToolError
+from .tools import ToolError, column_definition
 
 # The schema comes first, so the rows tell a schema the database lacks (no rows at all) from an
 # empty one (a row without a relation) and a relation without columns (a row without a column).
 # The kinds are RELATION_KINDS of tools.py.
 RELATIONS_SQL = """
-SELECT c.relname, c.relkind, a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull,
-       pg_get_expr(d.adbin, d.adrelid)
+SELECT c.relname, c.relkind,
+       CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, true) END,
+       a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull,
+       pg_get_expr(d.adbin, d.adrelid), a.attidentity, a.attgenerated
 FROM pg_catalog.pg_namespace n
 LEFT JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
 LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -53,16 +59,61 @@ WHERE n.nspname = CAST(:schema AS text)
 """
 
 Members = dict[str, str]  # name -> definition, as the catalog states it
+_NAME = r'"(?:[^"]|"")+"|[A-Za-z_][\w$]*'  # an identifier as a server prints it: quoted, or folded to lower case
+_SOURCES = re.compile(r"\b(?:from|join)\b", re.IGNORECASE)
+_FROM_ITEM = re.compile(
+    rf"\bfrom\s+(?:(?:only|lateral)\s+)?(?:{_NAME}\.)?(?P<relation>{_NAME})"
+    rf"(?:\s+(?:as\s+)?(?P<alias>{_NAME}))?",
+    re.IGNORECASE,
+)
+_NOT_AN_ALIAS = frozenset(
+    [
+        "as",
+        "where",
+        "group",
+        "order",
+        "limit",
+        "offset",
+        "having",
+        "union",
+        "except",
+        "intersect",
+        "window",
+        "join",
+        "left",
+        "right",
+        "inner",
+        "outer",
+        "full",
+        "cross",
+        "on",
+        "using",
+        "select",
+        "from",
+        "fetch",
+        "for",
+        "with",
+        "lateral",
+        "only",
+        "tablesample",
+        "natural",
+    ]
+)
+LEAD = 80  # characters of a definition shown before the first place two of them differ
 
 
 @dataclass
 class Relation:
-    """A table or view of the schema: its kind and what the catalog says about its parts."""
+    """A table or view of the schema: its kind and what the catalog says about its parts.
+
+    definition is what a view or a materialized view selects, on one line; None for a table.
+    """
 
     kind: str
     columns: Members = field(default_factory=dict)
     constraints: Members = field(default_factory=dict)
     indexes: Members = field(default_factory=dict)
+    definition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,12 +148,16 @@ def _relations(db: Database, schema: str) -> dict[str, Relation] | None:
     if not rows:
         return None
     relations: dict[str, Relation] = {}
-    for name, kind, column, data_type, not_null, default in rows:
+    for name, kind, definition, column, data_type, not_null, default, identity, generated in rows:
         if name is None:
             continue  # the schema exists and holds nothing
         relation = relations.setdefault(name, Relation(kind))
+        if definition is not None:
+            relation.definition = _one_line(definition)
         if column is not None:
-            relation.columns[column] = _column(data_type, not_null=not_null, default=default)
+            relation.columns[column] = column_definition(
+                data_type, not_null=not_null, default=default, identity=identity or "", generated=generated or ""
+            )
     for name, kind, constraint, definition in db.query(SCHEMA_CONSTRAINTS_SQL, schema=schema):
         relations.setdefault(name, Relation(kind)).constraints[constraint] = definition
     for name, kind, index, definition in db.query(SCHEMA_INDEXES_SQL, schema=schema):
@@ -110,14 +165,24 @@ def _relations(db: Database, schema: str) -> dict[str, Relation] | None:
     return relations
 
 
-def _column(data_type: str, *, not_null: bool, default: str | None) -> str:
-    """Type, NOT NULL and default, as describe_table shows them after the name."""
-    definition = data_type
-    if not_null:
-        definition += " NOT NULL"
-    if default:
-        definition += f" DEFAULT {default}"
-    return definition
+def _one_line(definition: str) -> str:
+    """The definition on one line, the same whichever server printed it.
+
+    Servers print it on several indented lines. They also disagree on naming the relation at a column:
+    PostgreSQL 13 writes docs.id for a view of the one table docs, 16 and 18 write id, and all of them
+    name it when the view joins or nests several relations. Compared as printed, every simple view would
+    differ between a stand on an older server and one on a newer. The name is dropped where it cannot be
+    needed, in a view with a single source; in the others each server's text stands as it is.
+    """
+    text = " ".join(definition.split())
+    if len(_SOURCES.findall(text)) != 1:
+        return text
+    item = _FROM_ITEM.search(text)
+    if item is None:  # a nested query is the one source
+        return text
+    alias = item.group("alias")
+    qualifier = alias if alias is not None and alias.lower() not in _NOT_AN_ALIAS else item.group("relation")
+    return re.sub(rf"(?<![\w\".]){re.escape(qualifier)}\.(?={_NAME})", "", text)
 
 
 @dataclass(frozen=True)
@@ -211,10 +276,13 @@ def _kind(kind: str) -> str:
 
 
 def _relation_differences(name: str, left: Relation, right: Relation, a: str, b: str) -> list[str]:
-    """A relation both stands have: its kind, then its columns, constraints and indexes."""
+    """A relation both stands have: its kind, then what a view selects, its columns, constraints and indexes."""
     lines: list[str] = []
     if left.kind != right.kind:
         lines.append(_differs(name, a, _kind(left.kind), b, _kind(right.kind)))
+    elif left.definition != right.definition:
+        theirs = _around(left.definition or "", right.definition or "")
+        lines.append(_differs(name, a, theirs[0], b, theirs[1]))
     lines.extend(_member_differences(left.columns, right.columns, lambda column: f"{name}.{column}", a, b))
     lines.extend(
         _member_differences(
@@ -225,6 +293,24 @@ def _relation_differences(name: str, left: Relation, right: Relation, a: str, b:
         _member_differences(left.indexes, right.indexes, lambda i: t("compare.index", table=name, name=i), a, b)
     )
     return lines
+
+
+def _around(left: str, right: str) -> tuple[str, str]:
+    """Both definitions from some way before the first place they differ, each in at most VALUE_LIMIT characters.
+
+    Read from the start, two long definitions that differ only near their end look alike in the answer.
+    """
+    first = min(len(left), len(right))
+    for place, (one, other) in enumerate(zip(left, right)):
+        if one != other:
+            first = place
+            break
+    start = max(0, first - LEAD)
+    return _cut(left, start), _cut(right, start)
+
+
+def _cut(text: str, start: int) -> str:
+    return ("…" if start else "") + text[start : start + VALUE_LIMIT] + ("…" if len(text) > start + VALUE_LIMIT else "")
 
 
 def _member_differences(left: Members, right: Members, what: Callable[[str], str], a: str, b: str) -> list[str]:

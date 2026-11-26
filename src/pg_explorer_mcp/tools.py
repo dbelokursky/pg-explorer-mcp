@@ -17,8 +17,8 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Union
 
 from . import __version__, diagram, health, passwords
-from .budget import DEFAULT_BUDGET, fit_to_budget, shorten
-from .db import Database, DatabaseUnavailableError, QueryFailedError
+from .budget import DEFAULT_BUDGET, VALUE_LIMIT, Keep, fit_to_budget, shorten
+from .db import MIB, ROWS_BYTES, Database, DatabaseUnavailableError, QueryFailedError, Rows
 from .glossary import Glossary
 from .i18n import current, number, plural, t
 from .queries import SavedQueries
@@ -99,7 +99,10 @@ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
 """
 
 
-_READABLE_RELATIONS = _readable_relations("has_table_privilege(c.oid, 'SELECT')")
+# What the role reads: a relation it may select from, in a schema it may enter. The privilege on the table
+# is worth nothing without the one on its schema: the query for the table ends with 42501.
+READABLE = "has_table_privilege(c.oid, 'SELECT') AND has_schema_privilege(n.oid, 'USAGE')"
+_READABLE_RELATIONS = _readable_relations(READABLE)
 
 # Estimated rows. PostgreSQL 14+ keeps -1 until a table is first analyzed; before 14 such a
 # table shows 0 rows in 0 pages, exactly like an empty one, so that case becomes NULL.
@@ -131,12 +134,36 @@ LIMIT 1
 # A relation as the statement found it: to_regclass reads the name with its schema and quotes, or on
 # the search path of the session, as the statement did. Only one the role reads, as everywhere else:
 # PostgreSQL reports a missing column before it checks the privilege to read the table.
-RELATION_BY_NAME_SQL = """
+RELATION_BY_NAME_SQL = (
+    """
 SELECT c.oid, n.nspname, c.relname
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.oid = to_regclass(CAST(:name AS text))
+  AND """
+    + READABLE
+    + "\n"
+)
+
+# Schemas with tables the role may select from and may not enter: with USAGE on the schema they become readable.
+SEALED_SCHEMAS_SQL = (
+    "SELECT DISTINCT n.nspname"
+    + _readable_relations("has_table_privilege(c.oid, 'SELECT') AND NOT has_schema_privilege(n.oid, 'USAGE')")
+    + "ORDER BY 1 LIMIT 10"
+)
+
+# A relation that is there and may be selected from, in a schema the role may not enter: named, it is not
+# "not found" but exactly this, so that a model asks for the privilege instead of looking for another name.
+SEALED_SCHEMA_SQL = """
+SELECT 1
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = CAST(:name AS text)
+  AND n.nspname = CAST(:schema AS text)
+  AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
   AND has_table_privilege(c.oid, 'SELECT')
+  AND NOT has_schema_privilege(n.oid, 'USAGE')
+LIMIT 1
 """
 
 FIND_RELATION_SQL = (
@@ -196,7 +223,8 @@ SEARCH_IN_SCHEMAS_SQL = SEARCH_SQL.replace(_READABLE_RELATIONS, _REGISTRY_RELATI
 
 COLUMNS_SQL = """
 SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull,
-       pg_get_expr(d.adbin, d.adrelid), col_description(a.attrelid, a.attnum)
+       pg_get_expr(d.adbin, d.adrelid), col_description(a.attrelid, a.attnum),
+       a.attidentity, a.attgenerated
 FROM pg_catalog.pg_attribute a
 LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
 WHERE a.attrelid = CAST(:oid AS oid) AND a.attnum > 0 AND NOT a.attisdropped
@@ -214,8 +242,10 @@ ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3
 REFERENCED_BY_SQL = """
 SELECT con.conrelid::regclass::text, pg_get_constraintdef(con.oid, true)
 FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE con.confrelid = CAST(:oid AS oid) AND con.contype = 'f'
-  AND has_table_privilege(con.conrelid, 'SELECT')
+  AND has_table_privilege(con.conrelid, 'SELECT') AND has_schema_privilege(n.oid, 'USAGE')
 ORDER BY con.conrelid::regclass::text COLLATE "C", con.conname COLLATE "C"
 LIMIT :limit
 """
@@ -520,7 +550,11 @@ def status(
     glossary: Glossary | None = None,
     saved: SavedQueries | None = None,
 ) -> list[str]:
-    """The status answer: server, target, profile, language, limits and warnings."""
+    """The status answer: server, target, profile, language, limits and warnings.
+
+    The line about the database survives the cut of a small answer budget (budget.Keep): it is what the
+    answer is asked for, and install.py reads it to tell whether the server is ready.
+    """
     about, password_warnings = password_lines(db)
     lines = [
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
@@ -559,9 +593,11 @@ def status(
     try:
         info = db.server_info()
     except DatabaseUnavailableError as exc:
-        lines.append(t("status.unavailable", reason=exc))
+        lines.append(Keep(t("status.unavailable", reason=exc)))
         return lines
-    lines.append(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+    lines.append(
+        Keep(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+    )
     lines.append(
         t(
             "status.limits",
@@ -591,7 +627,7 @@ def list_tables(
         if schemas is not None:  # the catalog does not depend on privileges here: the schemas are empty or gone
             raise ToolError(t("stands.no_tables", schemas=", ".join(schemas)))
         if schema is None:
-            raise ToolError(t("error.no_tables"))
+            raise ToolError(_no_tables(db))
         if _guessed(db, schema):  # the question was what tables there are: those of every schema answer it
             return [t("list.guessed_schema", schema=schema), *list_tables(db, None, glossary=glossary)]
         raise ToolError(_closed_schema(db, schema))
@@ -695,6 +731,14 @@ def _guessed(db: Database, schema: str) -> bool:
     return not _system(schema) and not db.query(SCHEMA_HOLDS_RELATIONS_SQL, schema=schema)
 
 
+def _no_tables(db: Database) -> str:
+    """Why no table is readable: none was granted, or the ones that were sit in schemas the role may not enter."""
+    sealed = [row[0] for row in db.query(SEALED_SCHEMAS_SQL)]
+    if sealed:
+        return t("error.no_tables_sealed", schemas=", ".join(sealed))
+    return t("error.no_tables")
+
+
 def _closed_schema(db: Database, schema: str, visible: Sequence[str] | None = None) -> str:
     """Why a schema that holds tables shows none: the tools leave system schemas out, or the role reads none.
 
@@ -712,9 +756,17 @@ def describe_table(db: Database, table: Any, schema: Any, glossary: Glossary | N
     oid, schema_name, relation, kind, estimate, comment = _resolve_relation(db, table, schema)
     described = comment or _glossary_text(glossary, "table", f"{schema_name}.{relation}")
     lines = [_describe_relation(schema_name, relation, kind, estimate, described), t("describe.columns")]
-    for column, data_type, not_null, default, column_comment in db.query(COLUMNS_SQL, oid=oid):
+    for column, data_type, not_null, default, column_comment, identity, generated in db.query(COLUMNS_SQL, oid=oid):
         noted = column_comment or _glossary_text(glossary, "column", f"{schema_name}.{relation}.{column}")
-        line = _column_line(column, data_type, not_null=not_null, default=default, comment=noted)
+        line = _column_line(
+            column,
+            data_type,
+            not_null=not_null,
+            default=shorten(default) if default else None,
+            comment=noted,
+            identity=identity or "",
+            generated=generated or "",
+        )
         lines.append(f"  {line}")
     constraints = db.query(CONSTRAINTS_SQL, oid=oid)
     _section(lines, t("describe.constraints"), (f"{name}: {shorten(definition)}" for name, definition in constraints))
@@ -738,8 +790,8 @@ def sample_rows(db: Database, table: Any, schema: Any, columns: Any, limit: Any)
     # Every name comes from the catalog and is quoted, so this string cannot smuggle SQL in.
     columns_sql = ", ".join(map(_quote_ident, chosen))
     sql = f"SELECT {columns_sql} FROM {_quote_ident(schema_name)}.{_quote_ident(relation)}"  # noqa: S608
-    names, rows, more = db.read_only(sql, count, cursor=True)
-    return [f"{schema_name}.{relation}:", *_format_rows(names, rows, more=more)]
+    found = db.read_rows(sql, count)
+    return [f"{schema_name}.{relation}:", *_shown(found)]
 
 
 def diagram_properties() -> dict[str, Any]:
@@ -838,8 +890,7 @@ def run_select(
     kind = check_read_only(query)
     try:
         if kind in ROW_SOURCES:
-            names, rows, more = db.read_only(query, limit, cursor=True)
-            return _format_rows(names, rows, more=more)
+            return _shown(db.read_rows(query, limit))
         names, rows, more = db.read_only(query, PLAN_LINES_LIMIT, cursor=False)
     except QueryFailedError as exc:
         raise QueryFailedError(query_hint(db, exc, query, schemas)) from exc
@@ -857,10 +908,10 @@ def run_saved_query(db: Database, saved: SavedQueries, name: Any, schemas: Seque
         known = ", ".join(saved.names()) if saved is not None and saved.queries else t("error.none")
         raise ToolError(t("queries.unknown", name=name, known=known))
     try:
-        names, rows, more = db.read_only(query.sql, RUN_SELECT_LIMIT, cursor=True)
+        found = db.read_rows(query.sql, RUN_SELECT_LIMIT)
     except QueryFailedError as exc:
         raise QueryFailedError(query_hint(db, exc, query.sql, schemas)) from exc
-    return [t("queries.answer", name=query.name, description=query.text()), *_format_rows(names, rows, more=more)]
+    return [t("queries.answer", name=query.name, description=query.text()), *_shown(found)]
 
 
 def query_hint(db: Database, error: QueryFailedError, query: Any, schemas: Sequence[str] | None) -> str:
@@ -938,6 +989,11 @@ def relations_named(db: Database, name: str, schemas: Sequence[str] | None) -> l
 def _resolve_relation(db: Database, table: Any, schema: Any) -> tuple[Any, ...]:
     """The pg_class row of the one readable relation the arguments name, or a ToolError with a hint."""
     name, schema = split_name(table, schema)
+    carried = split_qualified(name)[0]
+    if carried is not None and schema is not None and not _guessed(db, schema):
+        # The name carries one schema and the argument names another that is no guess: which one was meant
+        # is not for the server to decide.
+        raise ToolError(t("error.schema_conflict", name=name, schema=carried.strip().strip('"'), argument=schema))
     name, matches = _relations_by_name(db, name, schema)
     if not matches and schema is not None and _guessed(db, schema):
         # "public" most often: the name alone finds the table, or the schema it carries, as in shop.orders
@@ -961,19 +1017,39 @@ def _relations_by_name(db: Database, name: str, schema: str | None) -> tuple[str
 
 
 def split_name(table: Any, schema: Any) -> tuple[str, str | None]:
-    """A table argument into its name and schema: "shop.orders" carries its own schema."""
+    """A table argument into its name and schema: "shop.orders" carries its own schema.
+
+    With the schema argument given too, the name is taken as the bare table when both say the same schema:
+    a model often sends "shop.orders" with schema "shop". When they disagree the name keeps its schema,
+    and the callers say so: it is never read as a table of the schema the argument names.
+    """
     if not isinstance(table, str) or not table.strip():
         raise ToolError(t("error.table"))
     if schema is not None and (not isinstance(schema, str) or not schema.strip()):
         raise ToolError(t("error.schema_search"))
-    name = table.strip()
-    if schema is None and "." in name:
-        schema, name = name.split(".", 1)
-    return name.strip().strip('"'), schema.strip().strip('"') if schema else None
+    whole = table.strip()
+    given = schema.strip().strip('"') if schema else None
+    carried, bare = split_qualified(whole)
+    if carried is not None and (given is None or carried.strip().strip('"').lower() == given.lower()):
+        return bare.strip().strip('"'), carried.strip().strip('"') if given is None else given
+    return whole.strip().strip('"'), given
+
+
+def split_qualified(name: str) -> tuple[str | None, str]:
+    """A name into the schema it carries and the table, or None and the whole name: parted by a dot outside quotes."""
+    quoted = False
+    for place, char in enumerate(name):
+        if char == '"':
+            quoted = not quoted
+        elif char == "." and not quoted:
+            return name[:place], name[place + 1 :]
+    return None, name
 
 
 def _not_found(db: Database, name: str, schema: str | None) -> str:
     where = t("error.in_schema", schema=schema) if schema else ""
+    if schema is not None and db.query(SEALED_SCHEMA_SQL, name=name, schema=schema):
+        return t("error.no_schema_usage", schema=schema, name=name)
     similar = [row[0] for row in db.query(SIMILAR_RELATIONS_SQL, fragment=_like_escape(name))]
     if similar:
         return t("error.not_found_similar", name=name, where=where, similar=", ".join(similar))
@@ -996,14 +1072,42 @@ def _like_patterns(fragment: str) -> list[str]:
     return [f"%{spelling}%" for spelling in spellings]
 
 
-def _column_line(
-    name: str, data_type: str, *, not_null: bool, default: str | None = None, comment: str | None = None
+def column_definition(
+    data_type: str, *, not_null: bool, default: str | None, identity: str = "", generated: str = ""
 ) -> str:
-    line = f"{name} {data_type}"
+    """What follows a column's name: its type, NOT NULL, and how a value is there when more than by assignment.
+
+    An identity column is said to be one and in which mode, always or by default: the catalog keeps no
+    default for it. A generated column keeps its expression where defaults are kept, and is not a default.
+    describe_table shows this and compare_schema compares on it, from this one place. default comes as it
+    is to be shown or compared: describe_table shortens it first, the comparison does not.
+    """
+    definition = data_type
     if not_null:
-        line += " NOT NULL"
-    if default:
-        line += f" DEFAULT {shorten(default)}"
+        definition += " NOT NULL"
+    if identity:
+        definition += " GENERATED ALWAYS AS IDENTITY" if identity == "a" else " GENERATED BY DEFAULT AS IDENTITY"
+    elif generated:
+        expression = default or ""
+        definition += f" GENERATED ALWAYS AS {expression if expression.startswith('(') else f'({expression})'} STORED"
+    elif default:
+        definition += f" DEFAULT {default}"
+    return definition
+
+
+def _column_line(
+    name: str,
+    data_type: str,
+    *,
+    not_null: bool,
+    default: str | None = None,
+    comment: str | None = None,
+    identity: str = "",
+    generated: str = "",
+) -> str:
+    line = f"{name} " + column_definition(
+        data_type, not_null=not_null, default=default, identity=identity, generated=generated
+    )
     if comment:
         line += f"  -- {shorten(comment)}"
     return line
@@ -1057,9 +1161,16 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _format_rows(names: list[str], rows: list[Sequence[Any]], *, more: bool) -> list[str]:
+def _shown(found: Rows) -> list[str]:
+    """The lines of what a statement returned, with what was left unread and why."""
+    return _format_rows(found.columns, found.rows, more=found.more, heavy=found.heavy)
+
+
+def _format_rows(names: list[str], rows: list[Sequence[Any]], *, more: bool, heavy: bool = False) -> list[str]:
     lines = [" | ".join(names)] if names else []
     lines.extend(" | ".join(_cell(value) for value in row) for row in rows)
+    if more and heavy:  # fewer rows than the limit allows: said, for the answer does not show why
+        return [*lines, plural("rows.count", len(rows)) + "; " + t("rows.heavy", limit=f"{ROWS_BYTES // MIB} MiB")]
     lines.append(plural("rows.more" if more else "rows.count", len(rows)))
     return lines
 
@@ -1077,7 +1188,9 @@ def _cell(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (bytes, bytearray, memoryview)):
-        return shorten("\\x" + bytes(value).hex())
+        if len(value) > VALUE_LIMIT // 2:  # hex doubles: the whole value would be spelled out to be cut
+            return "\\x" + bytes(value[: VALUE_LIMIT // 2]).hex()[: VALUE_LIMIT - 3] + "…"
+        return "\\x" + bytes(value).hex()
     if isinstance(value, (dict, list)):
         return shorten(json.dumps(value, ensure_ascii=False, default=str))
     return shorten(str(value))

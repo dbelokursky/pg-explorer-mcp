@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import time
+import tracemalloc
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -18,7 +19,9 @@ import pg8000.exceptions
 import pg8000.native
 import pytest
 
+import install
 from pg_explorer_mcp import i18n
+from pg_explorer_mcp.budget import MIN_BUDGET
 from pg_explorer_mcp.db import Database, DatabaseUnavailableError, QueryFailedError, Settings
 from pg_explorer_mcp.glossary import Glossary
 from pg_explorer_mcp.queries import SavedQueries
@@ -776,3 +779,173 @@ class TestConnectionHints:
         text = status_with(PGSSLMODE="require")
         assert "TLS with" in text
         assert "PGSSLMODE" in text
+
+
+LOCKED, LOCKED_PASSWORD, LOCKED_SCHEMA = f"mcp_it_locked{it_suffix()}", "locked-secret-1", f"mcp_it_vault{it_suffix()}"
+
+
+@pytest.fixture
+def locked_out(admin: pg8000.native.Connection) -> Iterator[Database]:
+    """A login with SELECT on one table and no USAGE on its schema: a query for it ends with 42501."""
+    admin.run(f"DROP SCHEMA IF EXISTS {LOCKED_SCHEMA} CASCADE")
+    drop_role(admin, LOCKED)
+    admin.run(f"CREATE SCHEMA {LOCKED_SCHEMA}")
+    admin.run(f"CREATE TABLE {LOCKED_SCHEMA}.secrets (id int PRIMARY KEY, body text)")
+    admin.run(f"INSERT INTO {LOCKED_SCHEMA}.secrets VALUES (1, 'open')")
+    admin.run(f"CREATE ROLE {LOCKED} LOGIN PASSWORD '{LOCKED_PASSWORD}'")
+    admin.run(f"GRANT SELECT ON {LOCKED_SCHEMA}.secrets TO {LOCKED}")
+    database = Database(env_with(PGUSER=LOCKED, PGPASSWORD=LOCKED_PASSWORD))
+    yield database
+    database.close()
+    admin.run(f"DROP SCHEMA {LOCKED_SCHEMA} CASCADE")
+    drop_role(admin, LOCKED)
+
+
+class TestASchemaTheRoleMayNotEnter:
+    """SELECT on a table is worth nothing without USAGE on its schema: PostgreSQL answers 42501 to the query."""
+
+    def test_the_table_is_not_among_the_readable_ones(self, locked_out: Database) -> None:
+        tools = by_name(build_tools(locked_out, str(ROOT), profile="analyst"))
+        with pytest.raises(ToolError) as caught:
+            tools["list_tables"].call({})
+        assert f"schemas it may not enter ({LOCKED_SCHEMA})" in str(caught.value)  # and what to ask for
+        assert "GRANT USAGE ON SCHEMA" in str(caught.value)
+        found = tools["search_schema"].call({"text": "secret"})
+        assert found.startswith("Nothing matches 'secret'.")
+
+    def test_naming_the_table_says_what_the_role_lacks(self, locked_out: Database) -> None:
+        tools = by_name(build_tools(locked_out, str(ROOT), profile="analyst"))
+        for tool, arguments in (
+            ("sample_rows", {"table": "secrets", "schema": LOCKED_SCHEMA}),
+            ("describe_table", {"table": f"{LOCKED_SCHEMA}.secrets"}),
+        ):
+            with pytest.raises(ToolError) as caught:
+                tools[tool].call(arguments)
+            assert f"may not enter schema {LOCKED_SCHEMA}" in str(caught.value), (tool, caught.value)
+
+    def test_with_usage_on_the_schema_the_table_is_listed_and_read(
+        self, locked_out: Database, admin: pg8000.native.Connection
+    ) -> None:
+        admin.run(f"GRANT USAGE ON SCHEMA {LOCKED_SCHEMA} TO {LOCKED}")
+        tools = by_name(build_tools(locked_out, str(ROOT), profile="analyst"))
+        assert lines_of(tools["list_tables"])[0].startswith(f"{LOCKED_SCHEMA}.secrets | table")
+        assert "open" in tools["sample_rows"].call({"table": "secrets", "schema": LOCKED_SCHEMA})
+
+
+def test_the_line_about_the_database_survives_an_answer_cut_to_the_smallest_budget(db: Database) -> None:
+    """The smallest budget cuts the answer before its last lines. The line that says the database answers
+    stays: install.py reads it to tell whether the server is ready, and it is what the answer is asked for."""
+    tool = by_name(build_tools(db, str(ROOT), budget=MIN_BUDGET))["status"]
+    answer = tool.call({})
+    assert len(answer) <= MIN_BUDGET
+    assert answer.splitlines()[-1].startswith("…")  # something was cut
+    assert any(line.startswith("database: connected to") for line in answer.splitlines())
+    assert install.ready(answer)
+
+
+def test_the_line_about_an_unreachable_database_survives_the_cut_too(unreachable_env: dict[str, str]) -> None:
+    tool = by_name(build_tools(Database(unreachable_env), str(ROOT), budget=MIN_BUDGET))["status"]
+    answer = tool.call({})
+    assert any(line.startswith("database: unavailable.") for line in answer.splitlines())
+    assert not install.ready(answer)
+
+
+def test_check_passes_on_a_working_database_whatever_the_answer_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The smallest budget cuts the status answer before its last lines. The line about the database used to
+    go with them, and --check answered 1 for a database that answers."""
+    for key, value in {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("PG_EXPLORER_MCP_MAX_RESPONSE_CHARS", str(MIN_BUDGET))
+    assert install.main(["--check", "--lang", "en"]) == 0
+    out = capsys.readouterr().out
+    assert "database: connected to" in out
+    assert out.rstrip().splitlines()[-1].startswith("…")  # the rest of the answer was cut
+
+
+HEAVY = "SELECT n, repeat('x', 262144) AS text FROM generate_series(1, 80) AS n"  # 80 values of 256 KiB
+MIB = 1024 * 1024
+
+
+class TestLargeValues:
+    """A value in an answer is cut to 200 characters; the rows were loaded whole all the same, 200 at a time."""
+
+    def test_rows_are_read_a_batch_at_a_time_and_not_far_past_the_limit_of_data(self, db: Database) -> None:
+        """80 values of 256 KiB took 20 MiB of memory for an answer of 8000 characters."""
+        tracemalloc.start()
+        try:
+            names, rows, more = db.read_only(HEAVY, 200, cursor=True)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert (names, more) == (["n", "text"], True)
+        assert 0 < len(rows) <= 8, len(rows)
+        assert all(len(row[1]) == 262144 for row in rows)
+        assert peak < 6 * MIB, peak  # before: about 21 MiB
+
+    def test_the_answer_says_that_rows_were_left_unread_because_they_are_large(self, analyst: dict[str, Tool]) -> None:
+        lines = analyst["run_select"].call({"query": HEAVY}).splitlines()
+        assert lines[0] == "n | text"
+        assert lines[1] == "1 | " + "x" * 199 + "…"  # the value itself is cut, as every long one is
+        assert lines[-1] == (
+            f"({len(lines) - 2} rows); the rest is not read: the rows are large, and at most 1 MiB of data is "
+            "read at once. Select fewer or shorter columns, or narrow the query with WHERE or LIMIT."
+        )
+
+    def test_one_large_row_that_is_the_whole_answer_leaves_nothing_unread(self, analyst: dict[str, Tool]) -> None:
+        lines = analyst["run_select"].call({"query": "SELECT repeat('x', 5242880) AS text"}).splitlines()
+        assert lines[-1] == "(1 row)"
+
+    @pytest.mark.parametrize(("total", "expected"), [(5, (5, False)), (200, (200, False)), (201, (200, True))])
+    def test_small_rows_are_read_to_the_row_limit_as_before(
+        self, db: Database, total: int, expected: tuple[int, bool]
+    ) -> None:
+        _, rows, more = db.read_only(f"SELECT n FROM generate_series(1, {total}) AS n", 200, cursor=True)
+        assert (len(rows), more, rows[0][0], rows[-1][0]) == (*expected, 1, expected[0])
+
+
+def test_a_name_with_its_schema_and_the_same_schema_argument_is_one_table(tools: dict[str, Tool]) -> None:
+    """A model often sends both: "shop.orders" and schema "shop"."""
+    alone = tools["describe_table"].call({"table": "orders", "schema": SCHEMA})
+    assert tools["describe_table"].call({"table": f"{SCHEMA}.orders", "schema": SCHEMA}) == alone
+    assert tools["sample_rows"].call({"table": f"{SCHEMA}.orders", "schema": SCHEMA}) == tools["sample_rows"].call(
+        {"table": "orders", "schema": SCHEMA}
+    )
+    # The schema argument a model makes up is still no obstacle: "public" holds nothing here
+    assert tools["describe_table"].call({"table": f"{SCHEMA}.orders", "schema": "public"}) == alone
+
+
+def test_a_name_with_another_schema_than_the_argument_says_so(tools: dict[str, Tool]) -> None:
+    with pytest.raises(ToolError) as caught:
+        tools["describe_table"].call({"table": f"{ARCHIVE}.orders", "schema": SCHEMA})
+    assert str(caught.value) == (
+        f"'{ARCHIVE}.orders' names schema '{ARCHIVE}', and the schema argument says '{SCHEMA}': pass one of "
+        "them. Nothing was looked up."
+    )
+
+
+def test_describe_table_says_how_a_column_makes_its_values(
+    admin: pg8000.native.Connection, tools: dict[str, Tool]
+) -> None:
+    """An identity column has no default in the catalog, and a generated column keeps its expression where
+    defaults are kept: neither was told apart from a plain column."""
+    admin.run(f"DROP TABLE IF EXISTS {SCHEMA}.numbered")
+    admin.run(
+        f"CREATE TABLE {SCHEMA}.numbered ("
+        "id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "
+        "ref integer GENERATED BY DEFAULT AS IDENTITY, "
+        "doubled integer GENERATED ALWAYS AS (id * 2) STORED, "
+        "plain integer NOT NULL DEFAULT 7, body text)"
+    )
+    try:
+        lines = tools["describe_table"].call({"table": "numbered", "schema": SCHEMA}).splitlines()
+    finally:
+        admin.run(f"DROP TABLE {SCHEMA}.numbered")
+    assert lines[2:7] == [
+        "  id integer NOT NULL GENERATED ALWAYS AS IDENTITY",
+        "  ref integer NOT NULL GENERATED BY DEFAULT AS IDENTITY",  # an identity column always is
+        "  doubled integer GENERATED ALWAYS AS (id * 2) STORED",
+        "  plain integer NOT NULL DEFAULT 7",
+        "  body text",
+    ]

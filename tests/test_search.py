@@ -207,7 +207,7 @@ class ShopAndHr(Database):
         if sql == tools.FIND_RELATION_SQL and params["name"] == "customers":
             return [(1, *self.CUSTOMERS)]
         if sql == tools.COLUMNS_SQL:
-            return [("id", "integer", True, None, None)]
+            return [("id", "integer", True, None, None, "", "")]  # name, type, NOT NULL, default, comment, identity
         return []
 
 
@@ -244,6 +244,26 @@ class TestGuessedSchema:
                 "columns:",
                 "  id integer NOT NULL",
             ]
+
+    def test_a_name_with_its_schema_and_the_same_schema_argument_is_one_table(self) -> None:
+        """A model often sends both: "shop.customers" and schema "shop". They were read as a table named
+        "shop.customers" in shop, and the answer was that there is no such table."""
+        both = described(ShopAndHr(), table="shop.customers", schema="shop")
+        assert both[:3] == [
+            "shop.customers | table | ~50 rows | Покупатели",
+            "columns:",
+            "  id integer NOT NULL",
+        ]
+        assert both == described(ShopAndHr(), table="customers", schema="shop")
+        assert described(ShopAndHr(), table='"shop"."customers"', schema="Shop") == both
+
+    def test_a_name_with_another_schema_than_the_argument_is_refused_with_both_named(self) -> None:
+        with pytest.raises(ToolError) as caught:
+            described(ShopAndHr(), table="hr.contracts", schema="shop")
+        assert str(caught.value) == (
+            "'hr.contracts' names schema 'hr', and the schema argument says 'shop': pass one of them. "
+            "Nothing was looked up."
+        )
 
     def test_a_schema_whose_tables_the_role_cannot_read_is_refused(self) -> None:
         """hr: the answer is that the role reads nothing there, not the tables of shop."""

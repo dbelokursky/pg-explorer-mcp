@@ -1216,7 +1216,7 @@ def test_registering_with_a_client_holds_the_lock_while_its_settings_are_written
 def test_registering_with_an_editor_holds_the_lock_too(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unreachable_env: dict[str, str]
 ) -> None:
-    use_env(monkeypatch, unreachable_env, tmp_path)
+    isolated(monkeypatch, tmp_path, unreachable_env)  # an editor's settings live where XDG_CONFIG_HOME says
     (clients.app_data(os.environ, Path.home()) / "Code" / "User").mkdir(parents=True)
     write = clients.write
     held: list[bool] = []
@@ -1250,6 +1250,76 @@ def test_a_command_that_cannot_get_the_lock_registers_nothing_and_says_why(
         assert before.stdout is not None
         assert before.stdout.readline().strip() == "held"
         assert install.install_into("gigacode", "pg", ENTRY) is False
+        assert "another command of pg-explorer-mcp is writing these files" in capsys.readouterr().out
+        assert not (tmp_path / ".gigacode" / "settings.json").exists()
+    finally:
+        before.kill()
+        before.wait(timeout=10)
+
+
+@pytest.mark.parametrize(
+    "client",
+    [("vscode", ("Code", "User"), "servers"), ("cursor", (".cursor",), "mcpServers")],
+    ids=["vscode", "cursor"],
+)
+def test_a_client_whose_settings_cannot_be_written_fails_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unreachable_env: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+    client: tuple[str, tuple[str, ...], str],
+) -> None:
+    """The command used to answer 0: it paid no attention to whether the server got registered at all."""
+    name, where, key = client
+    isolated(monkeypatch, tmp_path, unreachable_env)  # an editor's settings live where XDG_CONFIG_HOME says
+    base = Path.home() if name == "cursor" else clients.app_data(os.environ, Path.home())
+    folder = base.joinpath(*where)
+    folder.mkdir(parents=True)
+    settings = '{\n  // comments are fine for the editor, not for json\n  "' + key + '": {}\n}\n'
+    (folder / "mcp.json").write_text(settings, encoding="utf-8")
+    checked: list[object] = []
+
+    def checking(entry: dict[str, object]) -> bool:
+        checked.append(entry)
+        return True
+
+    monkeypatch.setattr(install, "check", checking)
+    assert install.main(["--client", name, "--lang", "en"]) == 1
+    assert checked == []  # nothing was registered, so there was nothing to check the reach of
+    out = capsys.readouterr().out
+    assert '"pg"' in out  # the text to paste by hand
+    assert '"type": "stdio"' in out
+    assert (folder / "mcp.json").read_text(encoding="utf-8") == settings
+    assert list(folder.iterdir()) == [folder / "mcp.json"]  # and no dated copy of a writing that did not happen
+
+
+def test_a_lock_another_command_holds_fails_the_command_too(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unreachable_env: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    use_env(monkeypatch, unreachable_env, tmp_path)
+    monkeypatch.setattr(user_files, "LOCK_TIMEOUT_S", 0.3)
+    folder = registry_files(install.shell_env())[0].parent
+    before = subprocess.Popen(  # another command, still writing
+        [sys.executable, "-I", "-c", HOLDER, str(ROOT / "src"), str(folder)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    checked: list[object] = []
+
+    def checking(entry: dict[str, object]) -> bool:
+        checked.append(entry)
+        return True
+
+    monkeypatch.setattr(install, "check", checking)
+    try:
+        assert before.stdout is not None
+        assert before.stdout.readline().strip() == "held"
+        assert install.main(["--client", "gigacode", "--lang", "en"]) == 1
+        assert checked == []
         assert "another command of pg-explorer-mcp is writing these files" in capsys.readouterr().out
         assert not (tmp_path / ".gigacode" / "settings.json").exists()
     finally:

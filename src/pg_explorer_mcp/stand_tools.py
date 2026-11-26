@@ -69,6 +69,7 @@ from .tools import (
     schema_diagram,
     search_schema,
     split_name,
+    split_qualified,
     store_lines,
 )
 
@@ -349,7 +350,8 @@ def stand_status(
         t("status.version", version=__version__, python=platform.python_version(), path=install_dir),
         t("status.name", name=name),
         t("status.read_only"),
-        t("status.stands", count=len(stands), stands=summarize(stands), connections=len(registry.targets)),
+        # Survives the cut of a small budget: install.py reads it to tell whether the entry is ready.
+        Keep(t("status.stands", count=len(stands), stands=summarize(stands), connections=len(registry.targets))),
         t("status.registry", files=", ".join(registry.files) or t("error.none")),
         *about,
         t("status.profile", profile=profile, tools=", ".join(names)),
@@ -415,8 +417,10 @@ def _check(pool: Pool, target: Target, budget: int) -> tuple[DatabaseUnavailable
     try:
         info = database.server_info()
     except DatabaseUnavailableError as exc:
-        return exc, [*lines, t("status.unavailable", reason=exc)]
-    lines.append(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+        return exc, [*lines, Keep(t("status.unavailable", reason=exc))]
+    lines.append(
+        Keep(t("status.connected", database=info["database"], user=info["user"], version=info["server_version"]))
+    )
     lines.append(
         t(
             "status.limits",
@@ -973,6 +977,9 @@ def _table_target(pool: Pool, args: Arguments) -> tuple[Target, str]:
     """The login of the schema the table lives in, and the table's bare name."""
     stand = pool.registry.stand(args.get("stand"))
     table, schema = split_name(args.get("table"), args.get("schema") or None)
+    carried = split_qualified(table)[0]
+    if schema and carried is not None:  # the name carries another schema than the argument: no guessing which
+        raise ToolError(t("error.schema_conflict", name=table, schema=carried.strip().strip('"'), argument=schema))
     if schema:
         return pool.registry.target(stand, schema, args.get("database")), table
     found: list[tuple[str, str]] = []

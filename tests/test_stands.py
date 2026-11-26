@@ -934,9 +934,32 @@ class TestCompareSchema:
             assert params == {"schema": "billing"}
             if sql is RELATIONS_SQL:
                 return [
-                    ("bare", "r", None, None, None, None),  # a table without columns
-                    ("invoices", "r", "id", "integer", True, "nextval('invoices_id_seq'::regclass)"),
-                    ("invoices", "r", "note", "text", False, None),
+                    ("bare", "r", None, None, None, None, None, None, None),  # a table without columns
+                    ("invoices", "r", None, "id", "integer", True, None, "a", ""),
+                    ("invoices", "r", None, "note", "text", False, None, "", ""),
+                    # what a view selects, as its server prints it on several lines
+                    (
+                        "daily",
+                        "v",
+                        " SELECT day\n  FROM invoices\n   WHERE day > now() - 7; ",
+                        "day",
+                        "date",
+                        False,
+                        None,
+                        "",
+                        "",
+                    ),
+                    (
+                        "totals",
+                        "m",
+                        "SELECT sum(total) FROM invoices;",
+                        "sum",
+                        "numeric",
+                        False,
+                        "(total * 2)",
+                        "",
+                        "s",
+                    ),
                 ]
             if sql is SCHEMA_CONSTRAINTS_SQL:
                 return [("invoices", "r", "invoices_pkey", "PRIMARY KEY (id)")]
@@ -950,18 +973,61 @@ class TestCompareSchema:
             "bare": Relation("r"),
             "invoices": Relation(
                 "r",
-                {"id": "integer NOT NULL DEFAULT nextval('invoices_id_seq'::regclass)", "note": "text"},
+                {"id": "integer NOT NULL GENERATED ALWAYS AS IDENTITY", "note": "text"},
                 {"invoices_pkey": "PRIMARY KEY (id)"},
                 {"invoices_pkey": index},
+            ),
+            "daily": Relation("v", {"day": "date"}, definition="SELECT day FROM invoices WHERE day > now() - 7;"),
+            "totals": Relation(
+                "m",
+                {"sum": "numeric GENERATED ALWAYS AS (total * 2) STORED"},
+                definition="SELECT sum(total) FROM invoices;",
             ),
         }
 
     def test_an_empty_schema_has_no_relations(self, pool: Pool, monkeypatch: pytest.MonkeyPatch) -> None:
         def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
-            return [(None,) * 6] if sql is RELATIONS_SQL else []
+            return [(None,) * 9] if sql is RELATIONS_SQL else []
 
         monkeypatch.setattr(Database, "query", query)
         assert read_structure(pool, pool.registry.targets[0]).relations == {}
+
+    @pytest.mark.parametrize(
+        ("printed", "one_line"),
+        [
+            (
+                " SELECT docs.id, docs.body\n   FROM docs\n  WHERE docs.body IS NOT NULL; ",
+                "SELECT id, body FROM docs WHERE body IS NOT NULL;",
+            ),  # what PostgreSQL 13.23 prints; 16 and 18 print the same view as on the right
+            (
+                " SELECT id, body\n  FROM docs\n WHERE body IS NOT NULL; ",
+                "SELECT id, body FROM docs WHERE body IS NOT NULL;",
+            ),
+            (
+                " SELECT d.id, d.body\n FROM shop.docs d\n WHERE d.body IS NOT NULL; ",
+                "SELECT id, body FROM shop.docs d WHERE body IS NOT NULL;",
+            ),
+            (' SELECT "Docs".id\n FROM "Docs"\n WHERE "Docs".id > 1; ', 'SELECT id FROM "Docs" WHERE id > 1;'),
+            (
+                " SELECT a.id, b.note\n FROM a JOIN b ON b.a_id = a.id; ",
+                "SELECT a.id, b.note FROM a JOIN b ON b.a_id = a.id;",
+            ),
+            (" SELECT s.id\n FROM (SELECT a.id FROM a) s; ", "SELECT s.id FROM (SELECT a.id FROM a) s;"),
+        ],
+    )
+    def test_the_way_a_server_prints_a_view_is_not_a_difference(
+        self, pool: Pool, monkeypatch: pytest.MonkeyPatch, printed: str, one_line: str
+    ) -> None:
+        """A view of one relation: its relation is not named at the columns, whichever server printed it."""
+
+        def query(self: Database, sql: str, **params: Any) -> list[tuple[Any, ...]]:  # noqa: ARG001
+            if sql is RELATIONS_SQL:
+                return [("open_docs", "v", printed, "id", "integer", False, None, "", "")]
+            return []
+
+        monkeypatch.setattr(Database, "query", query)
+        definition = read_structure(pool, pool.registry.targets[0]).relations["open_docs"].definition
+        assert definition == one_line
 
 
 def structure(stand: str, **relations: Relation) -> Structure:
@@ -1027,6 +1093,34 @@ class TestDifferences:
             "  shop.orders: constraint orders_total_check only on dev12: CHECK (total > 0::numeric)",
             f"  shop.orders: index orders_customer_idx only on dev7: {CUSTOMER_INDEX}",
         ]
+
+    def test_a_view_defined_otherwise_is_a_difference_and_so_is_how_a_column_generates_its_values(self) -> None:
+        a = structure(
+            "dev7",
+            daily=Relation("v", {"day": "date"}, definition="SELECT day FROM orders WHERE paid;"),
+            docs=Relation("r", {"id": "integer NOT NULL GENERATED ALWAYS AS IDENTITY"}),
+        )
+        b = structure(
+            "dev12",
+            daily=Relation("v", {"day": "date"}, definition="SELECT day FROM orders WHERE NOT paid;"),
+            docs=Relation("r", {"id": "integer NOT NULL GENERATED BY DEFAULT AS IDENTITY"}),
+        )
+        assert differences(a, b) == [
+            "dev7 / orders / shop  vs  dev12 / orders / shop",
+            "differ:",
+            "  shop.daily: dev7 SELECT day FROM orders WHERE paid; | dev12 SELECT day FROM orders WHERE NOT paid;",
+            "  shop.docs.id: dev7 integer NOT NULL GENERATED ALWAYS AS IDENTITY "
+            "| dev12 integer NOT NULL GENERATED BY DEFAULT AS IDENTITY",
+        ]
+
+    def test_definitions_that_differ_only_far_from_their_start_are_shown_from_where_they_differ(self) -> None:
+        same = "SELECT " + ", ".join(f"column_{number}" for number in range(30)) + " FROM orders WHERE "
+        a = structure("dev7", daily=Relation("v", definition=same + "paid;"))
+        b = structure("dev12", daily=Relation("v", definition=same + "NOT paid;"))
+        [line] = differences(a, b)[2:]
+        window = "umn_24, column_25, column_26, column_27, column_28, column_29 FROM orders WHERE "
+        assert line == f"  shop.daily: dev7 …{window}paid; | dev12 …{window}NOT paid;"
+        assert "column_0," not in line  # cut from the start: the answer shows where they differ
 
     @pytest.mark.parametrize(
         ("arguments", "message"),
@@ -1235,7 +1329,11 @@ class Session:
 
     def execute_simple(self, sql: str) -> SimpleNamespace:
         self._send(sql)
-        return SimpleNamespace(columns=[{"name": "n"}], rows=self._rows)
+        rows = self._rows
+        if sql.startswith("FETCH"):  # as a cursor: each fetch takes what it asked for of what is left, then nothing
+            asked = int(sql.split()[2])
+            rows, self._rows = self._rows[:asked], self._rows[asked:]
+        return SimpleNamespace(columns=[{"name": "n"}], rows=rows)
 
     def execute_unnamed(self, sql: str) -> SimpleNamespace:
         self._send(sql)
@@ -1332,9 +1430,11 @@ class TestLateStand:
             (self.LATE, "BEGIN"),
             (self.LATE, "DECLARE"),
             (self.LATE, "FETCH"),
+            (self.LATE, "FETCH"),
             (self.LATE, "ROLLBACK"),
             (call, "BEGIN"),
             (call, "DECLARE"),
+            (call, "FETCH"),
             (call, "FETCH"),
             (call, "ROLLBACK"),
         ]
@@ -1383,7 +1483,14 @@ class TestLateStand:
             assert not thread.is_alive()  # its wait for the session ended with its call, not seconds later
         sessions.going.set()
         first.join(5)
-        assert [word for _thread, word in sessions.sent if word != "SET"] == ["BEGIN", "DECLARE", "FETCH", "ROLLBACK"]
+        # A reading is two fetches: one row, then as many as the data left allows (db._fetch)
+        assert [word for _thread, word in sessions.sent if word != "SET"] == [
+            "BEGIN",
+            "DECLARE",
+            "FETCH",
+            "FETCH",
+            "ROLLBACK",
+        ]
 
     def test_two_threads_that_find_no_session_open_one(
         self, monkeypatch: pytest.MonkeyPatch, sessions: Sessions

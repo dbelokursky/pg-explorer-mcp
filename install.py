@@ -225,8 +225,10 @@ def main(argv: list[str]) -> int:
     if args.print:
         show(clients.CLIENTS[args.client], name, entry)
         return 0
-    if not args.check:
-        install_into(args.client, name, entry)
+    if not args.check and not install_into(args.client, name, entry):
+        # Why it could not register was said: the agent's settings could not be written, or another
+        # command is writing them. There is nothing registered to check the reach of.
+        return 1
     ok = check(entry)
     if not args.check:
         print()
